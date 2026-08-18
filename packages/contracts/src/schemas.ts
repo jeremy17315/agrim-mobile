@@ -16,6 +16,11 @@ import {
   PAYMENT_STATUSES,
   ROLES,
 } from './enums';
+import {
+  FARM_LIMITS,
+  PRODUCTION_LIMITS,
+  PRODUCTION_STATUSES,
+} from './production';
 
 /* ────────────────────────────── Primitives ────────────────────────────── */
 
@@ -314,6 +319,103 @@ export const dashboardSchema = z.object({
   ),
 });
 export type DashboardMetrics = z.infer<typeof dashboardSchema>;
+
+/* ─────────────────────────── Espace producteur ─────────────────────────── */
+
+export const farmSchema = z.object({
+  id: idSchema,
+  name: z.string().max(FARM_LIMITS.maxNameLength),
+  location: z.string().max(FARM_LIMITS.maxLocationLength).nullable(),
+  areaHectares: z
+    .number()
+    .positive()
+    .max(FARM_LIMITS.maxAreaHectares)
+    .nullable(),
+  latitude: z.number().min(-90).max(90).nullable(),
+  longitude: z.number().min(-180).max(180).nullable(),
+  isActive: z.boolean(),
+  productionCount: z.number().int().nonnegative().optional(),
+});
+export type Farm = z.infer<typeof farmSchema>;
+
+export const createFarmSchema = z.object({
+  name: z.string().trim().min(2).max(FARM_LIMITS.maxNameLength),
+  location: z
+    .string()
+    .trim()
+    .max(FARM_LIMITS.maxLocationLength)
+    .optional()
+    .nullable(),
+  areaHectares: z
+    .number()
+    .positive()
+    .max(FARM_LIMITS.maxAreaHectares)
+    .optional()
+    .nullable(),
+  // Coordonnées facultatives : toutes les parcelles ne sont pas relevées au GPS.
+  latitude: z.number().min(-90).max(90).optional().nullable(),
+  longitude: z.number().min(-180).max(180).optional().nullable(),
+});
+export type CreateFarmInput = z.infer<typeof createFarmSchema>;
+
+export const updateFarmSchema = createFarmSchema.partial().extend({
+  isActive: z.boolean().optional(),
+});
+export type UpdateFarmInput = z.infer<typeof updateFarmSchema>;
+
+export const productionSchema = z.object({
+  id: idSchema,
+  farmId: idSchema,
+  farmName: z.string().optional(),
+  season: z.string().max(PRODUCTION_LIMITS.maxSeasonLength),
+  cropVariety: z.string().max(PRODUCTION_LIMITS.maxCropVarietyLength),
+  quantityKg: z.number().int(),
+  targetKg: z.number().int().nullable(),
+  harvestedAt: z.iso.datetime().nullable(),
+  status: z.enum(PRODUCTION_STATUSES),
+  reviewNote: z.string().nullable(),
+  reviewedAt: z.iso.datetime().nullable(),
+  createdAt: z.iso.datetime(),
+});
+export type Production = z.infer<typeof productionSchema>;
+
+export const createProductionSchema = z.object({
+  farmId: idSchema,
+  season: z.string().trim().min(2).max(PRODUCTION_LIMITS.maxSeasonLength),
+  cropVariety: z
+    .string()
+    .trim()
+    .min(2)
+    .max(PRODUCTION_LIMITS.maxCropVarietyLength),
+  quantityKg: z
+    .number()
+    .int()
+    .min(PRODUCTION_LIMITS.minQuantityKg)
+    .max(PRODUCTION_LIMITS.maxQuantityKg),
+  targetKg: z
+    .number()
+    .int()
+    .positive()
+    .max(PRODUCTION_LIMITS.maxQuantityKg)
+    .optional()
+    .nullable(),
+  harvestedAt: z.iso.datetime().optional().nullable(),
+});
+export type CreateProductionInput = z.infer<typeof createProductionSchema>;
+
+/** Synthèse affichée en tête de l'espace producteur. */
+export const producerOverviewSchema = z.object({
+  id: idSchema,
+  displayName: z.string(),
+  region: z.string().nullable(),
+  farmCount: z.number().int().nonnegative(),
+  totalAreaHectares: z.number().nonnegative(),
+  /** Cumul des récoltes réellement réceptionnées, en kilogrammes. */
+  receivedKg: z.number().int().nonnegative(),
+  /** Déclarations en attente de vérification. */
+  pendingCount: z.number().int().nonnegative(),
+});
+export type ProducerOverview = z.infer<typeof producerOverviewSchema>;
 
 /* ─────────────────────────── Enveloppes génériques ─────────────────────── */
 

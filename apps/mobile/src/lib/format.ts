@@ -42,6 +42,32 @@ export function formatWeight(grams: number): string {
   return `${text}${NBSP}kg`;
 }
 
+/**
+ * Masses agricoles, exprimées en kilogrammes.
+ * Au-delà de la tonne on bascule d'unité : « 18 t » se lit mieux que
+ * « 18 000 kg » sur une fiche de synthèse.
+ */
+export function formatKilograms(kg: number): string {
+  if (!Number.isFinite(kg) || kg <= 0) return '—';
+  if (kg < 1000) return `${Math.round(kg)}${NBSP}kg`;
+
+  const tonnes = kg / 1000;
+  const text = Number.isInteger(tonnes)
+    ? String(tonnes)
+    : tonnes.toFixed(1).replace('.', ',');
+  return `${text}${NBSP}t`;
+}
+
+/** Surface d'une parcelle, en hectares. */
+export function formatHectares(hectares: number | null): string {
+  if (hectares === null || !Number.isFinite(hectares) || hectares <= 0)
+    return '—';
+  const text = Number.isInteger(hectares)
+    ? String(hectares)
+    : hectares.toFixed(1).replace('.', ',');
+  return `${text}${NBSP}ha`;
+}
+
 /** Formate un numéro ivoirien : `+2250700000001` → `+225 07 00 00 00 01`. */
 export function formatPhone(phone: string): string {
   const digits = phone.replace(/\D/g, '');

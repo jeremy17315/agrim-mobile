@@ -169,14 +169,40 @@ async function main() {
     include: { farms: true },
   });
 
-  await prisma.production.create({
-    data: {
-      farmId: producer.farms[0].id,
-      season: 'Saison 2026',
-      cropVariety: 'Riz long grain',
-      quantityKg: 18000,
-      harvestedAt: new Date('2026-06-15'),
-    },
+  // Trois déclarations couvrant les états que le producteur rencontrera :
+  // une réceptionnée (saison close), une confirmée, une en attente de revue.
+  await prisma.production.createMany({
+    data: [
+      {
+        farmId: producer.farms[0].id,
+        season: 'Saison 2025',
+        cropVariety: 'Riz long grain',
+        quantityKg: 15400,
+        targetKg: 16000,
+        harvestedAt: new Date('2025-06-20'),
+        status: 'RECEIVED',
+        reviewedAt: new Date('2025-06-28'),
+      },
+      {
+        farmId: producer.farms[0].id,
+        season: 'Saison 2026',
+        cropVariety: 'Riz long grain',
+        quantityKg: 18000,
+        targetKg: 20500,
+        harvestedAt: new Date('2026-06-15'),
+        status: 'CONFIRMED',
+        reviewedAt: new Date('2026-06-18'),
+      },
+      {
+        farmId: producer.farms[0].id,
+        season: 'Saison 2026',
+        cropVariety: 'Riz violet',
+        quantityKg: 2400,
+        targetKg: 3000,
+        harvestedAt: new Date('2026-08-02'),
+        status: 'DECLARED',
+      },
+    ],
   });
 
   /* ── Commande de démonstration (chaîne complète, section 37) ────────── */

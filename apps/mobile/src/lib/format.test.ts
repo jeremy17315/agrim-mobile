@@ -1,6 +1,8 @@
 import {
   formatDistance,
   formatDuration,
+  formatHectares,
+  formatKilograms,
   formatPhone,
   formatRelativeTime,
   formatWeight,
@@ -148,5 +150,32 @@ describe('formatDateTime', () => {
 
   it('ne casse pas sur une date invalide', () => {
     expect(formatDateTime('pas-une-date', now)).toBe('—');
+  });
+});
+
+describe('formatKilograms', () => {
+  it('affiche les petites quantités en kilogrammes', () => {
+    expect(formatKilograms(850)).toBe('850\u202Fkg');
+  });
+
+  it('bascule en tonnes au-delà du millier', () => {
+    expect(formatKilograms(18000)).toBe('18\u202Ft');
+    expect(formatKilograms(15400)).toBe('15,4\u202Ft');
+  });
+
+  it('refuse les valeurs absurdes', () => {
+    expect(formatKilograms(0)).toBe('—');
+    expect(formatKilograms(Number.NaN)).toBe('—');
+  });
+});
+
+describe('formatHectares', () => {
+  it('formate une surface', () => {
+    expect(formatHectares(12.5)).toBe('12,5\u202Fha');
+    expect(formatHectares(4)).toBe('4\u202Fha');
+  });
+
+  it('gère l’absence de surface', () => {
+    expect(formatHectares(null)).toBe('—');
   });
 });

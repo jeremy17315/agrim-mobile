@@ -72,6 +72,16 @@ enum DeliveryStatus {
   FAILED
 }
 
+/// Cycle de vie d'une déclaration de production.
+/// Le producteur déclare ; la coopérative vérifie puis réceptionne. Un
+/// producteur ne fait donc jamais passer sa propre déclaration en RECEIVED.
+enum ProductionStatus {
+  DECLARED
+  CONFIRMED
+  RECEIVED
+  REJECTED
+}
+
 enum NotificationType {
   ORDER_CREATED
   ORDER_CONFIRMED
@@ -446,6 +456,9 @@ model Farm {
   areaHectares Float?
   latitude   Float?
   longitude  Float?
+  /// Une parcelle mise en jachère est conservée pour son historique, mais ne
+  /// doit plus apparaître dans les saisies courantes.
+  isActive   Boolean @default(true)
 
   productions Production[]
 
@@ -463,11 +476,21 @@ model Production {
   cropVariety String   @db.VarChar(80)
   /// Quantité en kilogrammes.
   quantityKg  Int
+  /// Objectif de la saison, en kilogrammes. Sert au taux d'avancement affiché
+  /// au producteur ; facultatif car toutes les saisons n'en fixent pas.
+  targetKg    Int?
   harvestedAt DateTime?
+  status      ProductionStatus @default(DECLARED)
+  /// Renseigné uniquement lors d'un rejet, pour que le producteur sache quoi
+  /// corriger plutôt que de subir un refus opaque.
+  reviewNote  String? @db.VarChar(300)
+  reviewedAt  DateTime?
 
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt @default(now())
 
   @@index([farmId])
+  @@index([status])
 }
 
 /* ─────────────────────────── Fichiers / Config ─────────────────────── */

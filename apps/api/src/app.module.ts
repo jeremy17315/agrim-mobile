@@ -13,6 +13,7 @@ import { validateEnv } from './config/env.validation';
 import { DeliveriesModule } from './deliveries/deliveries.module';
 import { HealthModule } from './health/health.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { ProducersModule } from './producers/producers.module';
 import { StorageModule } from './storage/storage.module';
 import { OrdersModule } from './orders/orders.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -37,6 +38,7 @@ import { ProductsModule } from './products/products.module';
     DeliveriesModule,
     StorageModule,
     NotificationsModule,
+    ProducersModule,
     HealthModule,
   ],
   providers: [

@@ -4,4 +4,5 @@ export * from './cart-totals';
 export * from './company';
 export * from './notifications';
 export * from './order-status';
+export * from './production';
 export * from './tracking';
