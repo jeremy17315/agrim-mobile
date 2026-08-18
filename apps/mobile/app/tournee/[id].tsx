@@ -1,14 +1,10 @@
 import {
   useDelivery,
-  useSubmitProof,
+  useOtpStatus,
   useUpdateDeliveryStatus,
-  uploadProofFile,
+  useVerifyOtp,
   type Delivery,
 } from '@/api/deliveries';
-import {
-  SignaturePad,
-  type SignaturePadHandle,
-} from '@/components/SignaturePad';
 import { MapView, boundsOf, type MapMarker } from '@/components/map';
 import { ErrorState, Skeleton } from '@/components/states';
 import { Button, Card, Icon, Input, Pill, Text } from '@/components/ui';
@@ -16,13 +12,11 @@ import { formatXof } from '@/lib/format';
 import { useCourierTracking } from '@/lib/useCourierTracking';
 import { palette, radius, spacing } from '@/theme/tokens';
 import {
-  DELIVERY_PROOF_DEFAULT_METHOD,
-  type DeliveryProofMethod,
-  type DeliveryStatus,
+  DELIVERY_OTP_CONFIG,
+  type CourierSettableDeliveryStatus,
 } from '@agrim/contracts';
-import * as ImagePicker from 'expo-image-picker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
   Linking,
@@ -37,21 +31,22 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
  * Détail d'une course.
  *
  * L'écran ne décide jamais d'un statut : il propose l'action suivante et
- * laisse le serveur trancher. La preuve est obligatoire avant validation —
- * l'interface le reflète en désactivant le bouton, mais c'est le backend qui
- * l'impose réellement.
+ * laisse le serveur trancher. La livraison se clôt UNIQUEMENT par la saisie du
+ * code dicté par le client — aucune validation manuelle n'existe ici, et le
+ * backend refuserait de toute façon un DELIVERED venu du terrain.
  */
 
-/** Action proposée pour l'état courant. `null` : rien à faire. */
+/** Action proposée pour l'état courant. Absente : rien à faire. */
 const NEXT_ACTION: Partial<
-  Record<Delivery['status'], { label: string; status: DeliveryStatus }>
+  Record<
+    Delivery['status'],
+    { label: string; status: CourierSettableDeliveryStatus }
+  >
 > = {
   ASSIGNED: { label: 'Accepter la course', status: 'ACCEPTED' },
-  ACCEPTED: { label: 'J’ai récupéré le colis', status: 'PICKED_UP' },
-  PICKED_UP: { label: 'Démarrer la livraison', status: 'IN_TRANSIT' },
+  ACCEPTED: { label: 'Démarrer la livraison', status: 'IN_TRANSIT' },
+  IN_TRANSIT: { label: 'Je suis arrivé chez le client', status: 'ARRIVED' },
 };
-
-const SIGNATURE_HEIGHT = 200;
 
 export default function CourseScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -60,30 +55,24 @@ export default function CourseScreen() {
 
   const query = useDelivery(id ?? '');
   const statusMutation = useUpdateDeliveryStatus(id ?? '');
-  const proofMutation = useSubmitProof(id ?? '');
+  const otpMutation = useVerifyOtp(id ?? '');
 
-  const [methods, setMethods] = useState<DeliveryProofMethod[]>([
-    DELIVERY_PROOF_DEFAULT_METHOD,
-  ]);
-  const [signaturePaths, setSignaturePaths] = useState<string[] | null>(null);
-  const [photo, setPhoto] = useState<ImagePicker.ImagePickerAsset | null>(null);
-  const [receivedBy, setReceivedBy] = useState('');
-  const [note, setNote] = useState('');
-  const [isUploading, setUploading] = useState(false);
-  const signatureRef = useRef<SignaturePadHandle>(null);
+  const [code, setCode] = useState('');
+  const [otpError, setOtpError] = useState<string | null>(null);
   const tracking = useCourierTracking(id ?? '');
+  const otpStatus = useOtpStatus(id ?? '');
   const [isDeclaringFailure, setDeclaringFailure] = useState(false);
   const [failureReason, setFailureReason] = useState('');
 
   const delivery = query.data;
 
   /**
-   * Le GPS ne tourne que pendant le trajet : il démarre à la prise en charge
-   * et s'arrête dès que la course est close. La permission n'est donc jamais
-   * demandée à l'ouverture de l'écran.
+   * Le GPS ne tourne que pendant le trajet : il démarre au départ et s'arrête
+   * dès que la course est close. La permission n'est donc jamais demandée à
+   * l'ouverture de l'écran. Elle ne conditionne pas la validation.
    */
   const isRolling =
-    delivery?.status === 'PICKED_UP' || delivery?.status === 'IN_TRANSIT';
+    delivery?.status === 'IN_TRANSIT' || delivery?.status === 'ARRIVED';
 
   const { start: startTracking, stop: stopTracking } = tracking;
   const isTracking = tracking.isTracking;
@@ -100,111 +89,40 @@ export default function CourseScreen() {
     }
   }, [isRolling, isTracking, permissionDenied, startTracking, stopTracking]);
 
-  const toggleMethod = useCallback((method: DeliveryProofMethod) => {
-    setMethods((current) =>
-      current.includes(method)
-        ? current.filter((m) => m !== method)
-        : [...current, method],
-    );
-  }, []);
+  /**
+   * Saisie du code client.
+   *
+   * L'application ne connaît pas le code : elle ne vérifie que la forme
+   * (4 chiffres) pour éviter un aller-retour réseau inutile. Le verdict
+   * appartient au serveur, qui contrôle aussi l'expiration, les tentatives et
+   * l'habilitation du livreur.
+   */
+  const submitOtp = useCallback(async () => {
+    if (!delivery) return;
+    setOtpError(null);
 
-  const pickPhoto = useCallback(async () => {
-    const permission = await ImagePicker.requestCameraPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert(
-        'Appareil photo indisponible',
-        'Autorisez l’accès à l’appareil photo pour joindre une photo de preuve.',
-      );
-      return;
-    }
-    const result = await ImagePicker.launchCameraAsync({
-      quality: 0.6,
-      allowsEditing: false,
-      mediaTypes: ['images'],
-    });
-    if (!result.canceled) setPhoto(result.assets[0] ?? null);
-  }, []);
+    // Position jointe si elle est déjà connue, jamais attendue : le GPS
+    // documente la remise, il ne la conditionne pas.
+    const last = tracking.lastPosition;
 
-  /** Contrôle local, miroir de la règle serveur (qui reste l'autorité). */
-  const proofIssue = useMemo(() => {
-    if (methods.length === 0) return 'Choisissez au moins une preuve.';
-    if (methods.includes('SIGNATURE') && !signaturePaths)
-      return 'La signature est vide.';
-    if (methods.includes('SIGNATURE') && receivedBy.trim().length === 0)
-      return 'Indiquez le nom du réceptionnaire.';
-    if (methods.includes('PHOTO') && !photo) return 'Prenez une photo.';
-    return null;
-  }, [methods, signaturePaths, receivedBy, photo]);
-
-  const submitProof = useCallback(async () => {
-    if (proofIssue || !delivery) return;
-    setUploading(true);
     try {
-      let signatureFileId: string | undefined;
-      let photoFileId: string | undefined;
-
-      if (methods.includes('SIGNATURE') && signaturePaths) {
-        // Export PNG par le moteur natif : le serveur n'accepte que de vraies
-        // images et contrôle leur signature binaire.
-        const base64 = await signatureRef.current?.exportPng();
-        if (!base64) throw new Error('La signature n’a pas pu être capturée.');
-        const uploaded = await uploadProofFile({
-          uri: `data:image/png;base64,${base64}`,
-          name: 'signature.png',
-          type: 'image/png',
-        });
-        signatureFileId = uploaded.id;
-      }
-
-      if (methods.includes('PHOTO') && photo) {
-        const uploaded = await uploadProofFile({
-          uri: photo.uri,
-          name: photo.fileName ?? 'preuve.jpg',
-          type: photo.mimeType ?? 'image/jpeg',
-        });
-        photoFileId = uploaded.id;
-      }
-
-      await proofMutation.mutateAsync({
-        methods,
-        signatureFileId,
-        photoFileId,
-        receivedBy: receivedBy.trim() || undefined,
-        note: note.trim() || undefined,
+      await otpMutation.mutateAsync({
+        code,
+        position: last
+          ? { latitude: last.latitude, longitude: last.longitude }
+          : undefined,
       });
+      setCode('');
+      router.back();
     } catch (error) {
-      Alert.alert(
-        'Preuve non enregistrée',
-        error instanceof Error ? error.message : 'Réessayez dans un instant.',
+      setOtpError(
+        error instanceof Error
+          ? error.message
+          : 'Code refusé. Vérifiez auprès du client.',
       );
-    } finally {
-      setUploading(false);
+      setCode('');
     }
-  }, [
-    proofIssue,
-    delivery,
-    methods,
-    signaturePaths,
-    photo,
-    receivedBy,
-    note,
-    proofMutation,
-  ]);
-
-  const confirmDelivered = useCallback(() => {
-    Alert.alert('Valider la livraison', 'Confirmez-vous la remise du colis ?', [
-      { text: 'Annuler', style: 'cancel' },
-      {
-        text: 'Valider',
-        onPress: () => {
-          statusMutation.mutate(
-            { status: 'DELIVERED' },
-            { onSuccess: () => router.back() },
-          );
-        },
-      },
-    ]);
-  }, [statusMutation, router]);
+  }, [delivery, code, otpMutation, tracking.lastPosition, router]);
 
   /**
    * Déclaration d'échec.
@@ -272,11 +190,11 @@ export default function CourseScreen() {
     : [];
 
   const action = NEXT_ACTION[delivery.status];
-  const canProve =
-    delivery.status === 'PICKED_UP' || delivery.status === 'IN_TRANSIT';
-  const hasProof = delivery.proofSubmittedAt !== null;
+  // Le code ne se saisit qu'une fois sur place : c'est le moment de la remise.
+  const canEnterCode = delivery.status === 'ARRIVED';
   const isClosed =
     delivery.status === 'DELIVERED' || delivery.status === 'FAILED';
+  const isCodeComplete = code.length === DELIVERY_OTP_CONFIG.length;
 
   return (
     <ScrollView
@@ -409,104 +327,62 @@ export default function CourseScreen() {
         </Card>
       ) : null}
 
-      {/* Preuve : disponible une fois le colis récupéré, obligatoire avant
-          la validation. */}
-      {canProve && !hasProof ? (
+      {/* Validation : seule la saisie du code remis par le client clôt la
+          course. Aucun bouton ne permet de s'en passer. */}
+      {canEnterCode ? (
         <Card style={styles.card}>
-          <Text variant="h3">Preuve de livraison</Text>
+          <Text variant="h3">Code de livraison</Text>
           <Text variant="caption" color="muted">
-            La signature est la méthode par défaut. Ajoutez une photo si le
-            client est absent ou refuse de signer.
+            Demandez au client le code à {DELIVERY_OTP_CONFIG.length} chiffres
+            reçu dans son application, puis saisissez-le ci-dessous.
           </Text>
 
-          <View style={styles.methodRow}>
-            {(['SIGNATURE', 'PHOTO'] as const).map((method) => {
-              const selected = methods.includes(method);
-              return (
-                <Pressable
-                  key={method}
-                  onPress={() => toggleMethod(method)}
-                  accessibilityRole="checkbox"
-                  accessibilityState={{ checked: selected }}
-                  style={[styles.method, selected && styles.methodSelected]}
-                >
-                  <Icon
-                    name={method === 'SIGNATURE' ? 'pen-line' : 'camera'}
-                    size={16}
-                    color={selected ? 'green' : 'muted'}
-                  />
-                  <Text variant="caption" color={selected ? 'green' : 'muted'}>
-                    {method === 'SIGNATURE' ? 'Signature' : 'Photo'}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-
-          {methods.includes('SIGNATURE') ? (
-            <View style={styles.block}>
-              <SignaturePad
-                ref={signatureRef}
-                height={SIGNATURE_HEIGHT}
-                onChange={setSignaturePaths}
-              />
-              <Input
-                label="Nom du réceptionnaire"
-                placeholder="Ex. Awa Koné"
-                value={receivedBy}
-                onChangeText={setReceivedBy}
-              />
-            </View>
-          ) : null}
-
-          {methods.includes('PHOTO') ? (
-            <View style={styles.block}>
-              <Button
-                label={photo ? 'Reprendre la photo' : 'Prendre une photo'}
-                variant="outline"
-                size="sm"
-                onPress={() => void pickPhoto()}
-              />
-              {photo ? (
-                <View style={styles.row}>
-                  <Icon name="check" size={15} color="green" />
-                  <Text variant="caption" color="muted">
-                    Photo prête à être envoyée
-                  </Text>
-                </View>
-              ) : null}
-            </View>
-          ) : null}
-
           <Input
-            label="Remarque (facultatif)"
-            placeholder="Ex. remis au gardien"
-            value={note}
-            onChangeText={setNote}
+            label="Code du client"
+            placeholder="0000"
+            value={code}
+            onChangeText={(value) => {
+              // Seuls les chiffres, longueur bornée : la saisie ne peut pas
+              // produire une valeur que le serveur rejetterait sur la forme.
+              setCode(
+                value
+                  .replace(/[^0-9]/g, '')
+                  .slice(0, DELIVERY_OTP_CONFIG.length),
+              );
+              setOtpError(null);
+            }}
+            keyboardType="number-pad"
+            maxLength={DELIVERY_OTP_CONFIG.length}
+            autoFocus
           />
 
-          {proofIssue ? (
+          {otpError ? (
             <Text variant="caption" color="danger">
-              {proofIssue}
+              {otpError}
+            </Text>
+          ) : null}
+
+          {otpStatus.data && !otpStatus.data.isActive ? (
+            <Text variant="caption" color="warn">
+              Aucun code actif. Demandez au client de le faire renvoyer depuis
+              le suivi de sa commande.
+            </Text>
+          ) : null}
+
+          {otpStatus.data?.isActive && otpStatus.data.attemptsRemaining <= 2 ? (
+            <Text variant="caption" color="warn">
+              {otpStatus.data.attemptsRemaining} tentative
+              {otpStatus.data.attemptsRemaining > 1 ? 's' : ''} restante
+              {otpStatus.data.attemptsRemaining > 1 ? 's' : ''}.
             </Text>
           ) : null}
 
           <Button
-            label="Enregistrer la preuve"
-            onPress={() => void submitProof()}
-            loading={isUploading || proofMutation.isPending}
-            disabled={proofIssue !== null}
+            label="Valider la livraison"
+            onPress={() => void submitOtp()}
+            loading={otpMutation.isPending}
+            disabled={!isCodeComplete}
           />
-        </Card>
-      ) : null}
-
-      {hasProof && !isClosed ? (
-        <Card style={styles.proofDone}>
-          <Icon name="shield-check" size={18} color="green" />
-          <Text variant="body" color="body" style={styles.flex}>
-            Preuve enregistrée
-            {delivery.proofReceivedBy ? ` · ${delivery.proofReceivedBy}` : ''}
-          </Text>
         </Card>
       ) : null}
 
@@ -532,15 +408,6 @@ export default function CourseScreen() {
               label={action.label}
               onPress={() => statusMutation.mutate({ status: action.status })}
               loading={statusMutation.isPending}
-            />
-          ) : null}
-
-          {delivery.status === 'IN_TRANSIT' ? (
-            <Button
-              label="Valider la livraison"
-              onPress={confirmDelivered}
-              loading={statusMutation.isPending}
-              disabled={!hasProof}
             />
           ) : null}
 

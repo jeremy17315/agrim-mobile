@@ -26,7 +26,7 @@ export interface StoredFile {
 
 export abstract class StorageProvider {
   /**
-   * Dépose un fichier dans un dossier logique (« proofs », « products »…).
+   * Dépose un fichier dans un dossier logique (« products »…).
    * L'implémentation choisit le nom final : jamais celui fourni par le client.
    */
   abstract put(folder: string, file: StorageUpload): Promise<StoredFile>;

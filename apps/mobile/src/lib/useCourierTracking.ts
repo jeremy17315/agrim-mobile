@@ -33,6 +33,14 @@ export type CourierTrackingState = {
   hasPermission: boolean | null;
   /** Points en attente d'envoi (coupure réseau). */
   queuedCount: number;
+  /**
+   * Dernière position connue, si le suivi a déjà relevé un point.
+   *
+   * Exposée pour joindre une position à la validation par code sans déclencher
+   * de nouvelle demande de permission ni faire attendre le livreur : c'est une
+   * information de traçabilité, jamais une condition.
+   */
+  lastPosition: TrackingPoint | null;
   error: string | null;
 };
 
@@ -41,6 +49,7 @@ export function useCourierTracking(deliveryId: string) {
     isTracking: false,
     hasPermission: null,
     queuedCount: 0,
+    lastPosition: null,
     error: null,
   });
 
@@ -126,7 +135,11 @@ export function useCourierTracking(deliveryId: string) {
         queue.current = [...queue.current, point].slice(
           -TRACKING_CONFIG.offlineQueueMaxPoints,
         );
-        setState((s) => ({ ...s, queuedCount: queue.current.length }));
+        setState((s) => ({
+          ...s,
+          queuedCount: queue.current.length,
+          lastPosition: point,
+        }));
         void flush();
       },
     );

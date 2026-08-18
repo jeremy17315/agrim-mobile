@@ -44,7 +44,8 @@ async function bootstrap(): Promise<void> {
 
   // Les preuves de livraison NE SONT PAS servies en statique : une signature
   // manuscrite est une donnée personnelle. La lecture passe par
-  // `GET /files/proofs/:id`, authentifié et soumis à un contrôle d'accès.
+  // Plus aucun fichier n'est déposé par les utilisateurs depuis le passage à la
+  // validation par OTP : le module de stockage n'expose plus de route HTTP.
 
   // Swagger désactivé en production : ne pas exposer la surface d'API.
   if (!isProd) {

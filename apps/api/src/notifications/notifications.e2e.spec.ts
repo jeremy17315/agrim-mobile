@@ -211,9 +211,9 @@ describe('Notifications (e2e)', () => {
         .send({ status });
 
     await step('ACCEPTED');
-    await step('PICKED_UP');
+    await step('IN_TRANSIT');
 
-    // PICKED_UP bascule la commande en OUT_FOR_DELIVERY : c'est ce mouvement,
+    // IN_TRANSIT bascule la commande en OUT_FOR_DELIVERY : c'est ce mouvement,
     // compréhensible par le client, qui est notifié.
     const notif = await prisma.db.notification.findFirst({
       where: {

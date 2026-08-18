@@ -57,17 +57,13 @@ enum MobileMoneyProvider {
 /// Méthodes de preuve retenues. Le code de confirmation a été écarté :
 /// il échoue précisément quand on en a besoin (téléphone déchargé, tiers
 /// qui réceptionne).
-enum DeliveryProofMethod {
-  SIGNATURE
-  PHOTO
-}
-
 enum DeliveryStatus {
   UNASSIGNED
   ASSIGNED
   ACCEPTED
-  PICKED_UP
   IN_TRANSIT
+  ARRIVED
+  OTP_VERIFIED
   DELIVERED
   FAILED
 }
@@ -91,6 +87,7 @@ enum NotificationType {
   ORDER_DELIVERED
   ORDER_CANCELLED
   DELIVERY_ASSIGNED
+  DELIVERY_OTP
   PAYMENT_SUCCEEDED
   PAYMENT_FAILED
   LOW_STOCK
@@ -363,24 +360,22 @@ model Delivery {
   addressId String  @db.Uuid
   address   Address @relation(fields: [addressId], references: [id])
 
-  /// Preuve de livraison. Décision produit : SIGNATURE par défaut, PHOTO en
-  /// repli, combinables. Aucune validation n'est possible sans preuve, et le
-  /// code de confirmation a été retiré du produit.
-  proofMethods       DeliveryProofMethod[]
-  proofSignatureFile String?               @db.Uuid
-  proofPhotoFile     String?               @db.Uuid
-  proofReceivedBy    String?               @db.VarChar(120)
-  proofNote          String?               @db.VarChar(500)
-  proofLatitude      Float?
-  proofLongitude     Float?
-  proofSubmittedAt   DateTime?
-  failureReason      String?               @db.VarChar(255)
+  failureReason String? @db.VarChar(255)
+
+  /// Traçabilité de la validation par OTP : où et quand la course a été
+  /// close. La position est facultative — le GPS documente la remise, il ne
+  /// la conditionne pas.
+  otpVerifiedAt  DateTime?
+  otpLatitude    Float?
+  otpLongitude   Float?
 
   assignedAt  DateTime?
   acceptedAt  DateTime?
-  pickedUpAt  DateTime?
+  inTransitAt DateTime?
+  arrivedAt   DateTime?
   deliveredAt DateTime?
 
+  otps      DeliveryOtp[]
   locations DeliveryLocation[]
 
   createdAt DateTime @default(now())
@@ -388,6 +383,40 @@ model Delivery {
 
   @@index([courierId, status])
   @@index([status])
+}
+
+/// Code de validation de livraison.
+///
+/// Le code n'est JAMAIS stocké en clair : seule son empreinte l'est, comme un
+/// mot de passe. Une fuite de la base ne permet donc pas de valider une
+/// livraison. Le livreur ne le reçoit par aucun canal — il le saisit sous la
+/// dictée du client.
+///
+/// L'historique est conservé (une ligne par génération) plutôt qu'écrasé : en
+/// cas de litige, il faut pouvoir montrer combien de codes ont été émis et
+/// lequel a validé la remise.
+model DeliveryOtp {
+  id         String   @id @default(uuid()) @db.Uuid
+  deliveryId String   @db.Uuid
+  delivery   Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+
+  /// SHA-256 du code. Jamais le code lui-même.
+  codeHash  String   @db.VarChar(64)
+  expiresAt DateTime
+
+  /// Tentatives de saisie infructueuses, plafonnées.
+  attempts Int @default(0)
+
+  /// Renseigné une seule fois : un code vérifié est définitivement consommé.
+  verifiedAt DateTime?
+
+  /// Invalidation d'un code encore actif lors d'une régénération : à tout
+  /// moment, une livraison n'a qu'un seul code utilisable.
+  invalidatedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([deliveryId, createdAt])
 }
 
 /// Trace GPS d'une course.

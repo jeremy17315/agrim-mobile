@@ -11,7 +11,10 @@ import type { OrderStatus } from './enums';
 
 export type NotificationTemplate = {
   title: string;
-  /** `{reference}` est remplacé par la référence de la commande. */
+  /**
+   * `{reference}` est remplacé par la référence de la commande, `{code}` par
+   * l'OTP de livraison — ce dernier n'est envoyé qu'au client destinataire.
+   */
   body: string;
 };
 
@@ -51,6 +54,10 @@ export const NOTIFICATION_TEMPLATES: Record<
     title: 'Nouvelle course',
     body: 'La commande {reference} vous est affectée.',
   },
+  DELIVERY_OTP: {
+    title: 'Votre code de livraison',
+    body: 'Code {code} pour la commande {reference}. Communiquez-le au livreur à la remise, jamais avant.',
+  },
   PAYMENT_SUCCEEDED: {
     title: 'Paiement reçu',
     body: 'Le paiement de la commande {reference} est confirmé.',
@@ -85,14 +92,14 @@ export const ORDER_STATUS_NOTIFICATION: Partial<
 /** Applique le gabarit : remplace `{reference}` par la valeur réelle. */
 export function renderNotification(
   type: NotificationType,
-  values: { reference?: string } = {},
+  values: { reference?: string; code?: string } = {},
 ): NotificationTemplate {
   const template = NOTIFICATION_TEMPLATES[type];
-  const reference = values.reference ?? '';
   return {
     title: template.title,
     body: template.body
-      .replace('{reference}', reference)
+      .replace('{reference}', values.reference ?? '')
+      .replace('{code}', values.code ?? '')
       .replace(/\s+/g, ' ')
       .trim(),
   };

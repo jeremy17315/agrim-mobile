@@ -40,6 +40,16 @@ const mockCancelMutate = jest.fn();
  */
 jest.mock('@/api/deliveries', () => ({
   useDeliveryTracking: () => ({ data: null, isPending: false }),
+  useResendOtp: () => ({ mutate: jest.fn(), isPending: false }),
+}));
+
+// Le code de livraison est lu dans les notifications du client.
+jest.mock('@/api/notifications', () => ({
+  useNotifications: () => ({
+    data: { data: [], meta: { unread: 0 } },
+    isPending: false,
+    refetch: jest.fn(),
+  }),
 }));
 
 jest.mock('@/api/orders', () => ({

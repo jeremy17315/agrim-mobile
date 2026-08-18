@@ -16,7 +16,7 @@ import 'dotenv/config';
 import { INestApplication } from '@nestjs/common';
 import { APP_FILTER } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import request from 'supertest';
 
 import { AppModule } from './app.module';
@@ -41,7 +41,6 @@ describe('Flux de bout en bout', () => {
 
   const orderIds: string[] = [];
   const addressIds: string[] = [];
-  const fileIds: string[] = [];
   const productionIds: string[] = [];
 
   beforeAll(async () => {
@@ -107,9 +106,6 @@ describe('Flux de bout en bout', () => {
         where: { id: { in: productionIds } },
       });
     }
-    if (fileIds.length > 0) {
-      await prisma.db.fileAsset.deleteMany({ where: { id: { in: fileIds } } });
-    }
     if (addressIds.length > 0) {
       await prisma.db.address.deleteMany({ where: { id: { in: addressIds } } });
     }
@@ -152,18 +148,22 @@ describe('Flux de bout en bout', () => {
       .set(auth(courierToken))
       .send({ status });
 
-  const createFile = async () => {
-    const file = await prisma.db.fileAsset.create({
-      data: {
-        key: `proof/${randomUUID()}.png`,
-        url: `https://files.local/${randomUUID()}.png`,
-        mimeType: 'image/png',
-        sizeBytes: 2048,
-      },
-      select: { id: true },
+  /**
+   * Retrouve le code depuis son empreinte. Réservé aux tests : l'application
+   * n'offre aucun chemin permettant au livreur de le connaître.
+   */
+  const readOtpCode = async (deliveryId: string) => {
+    const otp = await prisma.db.deliveryOtp.findFirstOrThrow({
+      where: { deliveryId, verifiedAt: null, invalidatedAt: null },
+      orderBy: { createdAt: 'desc' },
+      select: { codeHash: true },
     });
-    fileIds.push(file.id);
-    return file.id;
+    for (let i = 0; i < 10_000; i += 1) {
+      const candidate = String(i).padStart(4, '0');
+      if (createHash('sha256').update(candidate).digest('hex') === otp.codeHash)
+        return candidate;
+    }
+    throw new Error('Code introuvable');
   };
 
   /** Amène une commande jusqu'à la remise au livreur. */
@@ -238,7 +238,7 @@ describe('Flux de bout en bout', () => {
     ).toBe(true);
 
     // 6. Le livreur exécute la course.
-    for (const status of ['ACCEPTED', 'PICKED_UP', 'IN_TRANSIT']) {
+    for (const status of ['ACCEPTED', 'IN_TRANSIT', 'ARRIVED']) {
       const res = await courierSets(deliveryId, status);
       expect(res.status).toBe(200);
     }
@@ -248,7 +248,7 @@ describe('Flux de bout en bout', () => {
       .get(`${prefix}/orders/${order.reference}/tracking`)
       .set(auth(clientToken));
     expect(suivi.status).toBe(200);
-    expect(suivi.body.status).toBe('IN_TRANSIT');
+    expect(suivi.body.status).toBe('ARRIVED');
 
     // Et côté client, la commande elle-même bascule en cours de livraison.
     const enRoute = await server()
@@ -256,23 +256,21 @@ describe('Flux de bout en bout', () => {
       .set(auth(clientToken));
     expect(enRoute.body.status).toBe('OUT_FOR_DELIVERY');
 
-    // 8. Livraison avec signature.
-    const signatureFileId = await createFile();
-    const proof = await server()
-      .post(`${prefix}/deliveries/${deliveryId}/proof`)
-      .set(auth(courierToken))
-      .send({
-        methods: ['SIGNATURE'],
-        signatureFileId,
-        receivedBy: 'Awa Koné',
-        position: { latitude: 6.8276, longitude: -5.2893 },
-      });
-    expect(proof.status).toBe(201);
+    // 8. Le client a reçu son code au départ du livreur ; il le dicte.
+    const code = await readOtpCode(deliveryId);
 
-    // 9. La preuve enregistrée, le livreur clôt la course. Deux temps
-    // volontaires : la preuve doit exister AVANT la validation, jamais après.
-    const delivered = await courierSets(deliveryId, 'DELIVERED');
-    expect(delivered.status).toBe(200);
+    // Le livreur ne peut pas s'en passer : sans code, pas de clôture.
+    const sansCode = await courierSets(deliveryId, 'DELIVERED');
+    expect(sansCode.status).toBe(403);
+    expect(sansCode.body.code).toBe('COURIER_CANNOT_SET_STATUS');
+
+    // 9. Saisie du code : le backend valide et clôt la course d'un seul geste.
+    const delivered = await server()
+      .post(`${prefix}/deliveries/${deliveryId}/verify-otp`)
+      .set(auth(courierToken))
+      .send({ code, position: { latitude: 6.8276, longitude: -5.2893 } });
+    expect(delivered.status).toBe(201);
+    expect(delivered.body.status).toBe('DELIVERED');
 
     // 10. La commande est livrée côté client.
     const final = await server()
@@ -319,7 +317,6 @@ describe('Flux de bout en bout', () => {
   it('empêche le client d’annuler une commande déjà partie', async () => {
     const { order, deliveryId } = await prepareAndAssign();
     await courierSets(deliveryId, 'ACCEPTED');
-    await courierSets(deliveryId, 'PICKED_UP');
     await courierSets(deliveryId, 'IN_TRANSIT');
 
     const stockAvant = await prisma.db.productVariant.findUniqueOrThrow({

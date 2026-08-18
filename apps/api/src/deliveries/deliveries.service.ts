@@ -1,20 +1,23 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
   canTransitionDelivery,
-  submitDeliveryProofSchema,
+  isCourierSettable,
   type DeliveryStatus,
   type OrderStatus,
 } from '@agrim/contracts';
 
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
-import type { SubmitProofDto } from './dto/submit-proof.dto';
+import { DeliveryOtpService } from './delivery-otp.service';
 import type { UpdateDeliveryStatusDto } from './dto/update-delivery-status.dto';
+import type { VerifyOtpDto } from './dto/verify-otp.dto';
 
 /** Projection commune : le livreur voit ce qu'il lui faut pour livrer, rien de plus. */
 const deliverySelect = {
@@ -22,12 +25,11 @@ const deliverySelect = {
   status: true,
   assignedAt: true,
   acceptedAt: true,
-  pickedUpAt: true,
+  inTransitAt: true,
+  arrivedAt: true,
   deliveredAt: true,
   failureReason: true,
-  proofMethods: true,
-  proofReceivedBy: true,
-  proofSubmittedAt: true,
+  otpVerifiedAt: true,
   order: {
     select: {
       reference: true,
@@ -65,16 +67,19 @@ const deliverySelect = {
  */
 const ORDER_STATUS_FOR_DELIVERY: Partial<Record<DeliveryStatus, OrderStatus>> =
   {
-    PICKED_UP: 'OUT_FOR_DELIVERY',
     IN_TRANSIT: 'OUT_FOR_DELIVERY',
+    ARRIVED: 'OUT_FOR_DELIVERY',
     DELIVERED: 'DELIVERED',
   };
 
 @Injectable()
 export class DeliveriesService {
+  private readonly logger = new Logger(DeliveriesService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
+    private readonly otp: DeliveryOtpService,
   ) {}
 
   /** Tournée du livreur : ses courses en cours, les plus anciennes d'abord. */
@@ -119,12 +124,7 @@ export class DeliveriesService {
   ) {
     const delivery = await this.prisma.db.delivery.findFirst({
       where: { id, courierId },
-      select: {
-        id: true,
-        status: true,
-        orderId: true,
-        proofSubmittedAt: true,
-      },
+      select: { id: true, status: true, orderId: true },
     });
     if (!delivery) {
       throw new NotFoundException({
@@ -133,19 +133,22 @@ export class DeliveriesService {
       });
     }
 
+    // Frontière de responsabilité : le terrain fait avancer la course jusqu'à
+    // l'arrivée, jamais au-delà. `OTP_VERIFIED` et `DELIVERED` n'appartiennent
+    // qu'au backend, après vérification du code remis par le client.
+    if (!isCourierSettable(dto.status)) {
+      throw new ForbiddenException({
+        code: 'COURIER_CANNOT_SET_STATUS',
+        message:
+          'La livraison se valide avec le code du client, pas manuellement.',
+      });
+    }
+
     if (!canTransitionDelivery(delivery.status, dto.status)) {
       throw new ConflictException({
         code: 'INVALID_DELIVERY_TRANSITION',
         message: 'Cette étape n’est pas possible depuis l’état actuel.',
         details: { from: delivery.status, to: dto.status },
-      });
-    }
-
-    // Règle centrale de la phase : pas de livraison validée sans preuve.
-    if (dto.status === 'DELIVERED' && !delivery.proofSubmittedAt) {
-      throw new ConflictException({
-        code: 'PROOF_REQUIRED',
-        message: 'Enregistrez la preuve de livraison avant de valider.',
       });
     }
 
@@ -159,8 +162,8 @@ export class DeliveriesService {
     const now = new Date();
     const timestamps: Record<string, Date> = {};
     if (dto.status === 'ACCEPTED') timestamps.acceptedAt = now;
-    if (dto.status === 'PICKED_UP') timestamps.pickedUpAt = now;
-    if (dto.status === 'DELIVERED') timestamps.deliveredAt = now;
+    if (dto.status === 'IN_TRANSIT') timestamps.inTransitAt = now;
+    if (dto.status === 'ARRIVED') timestamps.arrivedAt = now;
 
     const nextOrderStatus = ORDER_STATUS_FOR_DELIVERY[dto.status];
 
@@ -203,8 +206,19 @@ export class DeliveriesService {
       return { updated, orderStatusChanged: orderStatusChanged };
     });
 
+    // Départ du livreur : le client reçoit son code de validation, au moment
+    // où il lui devient utile. Une erreur d'envoi ne doit pas annuler le
+    // changement de statut déjà acté — le client pourra faire renvoyer le code.
+    if (dto.status === 'IN_TRANSIT') {
+      try {
+        await this.issueOtpToClient(id);
+      } catch {
+        this.logger.warn(`Code de livraison non transmis (livraison ${id}).`);
+      }
+    }
+
     // Le client est prévenu du mouvement de sa commande, pas de celui de la
-    // course : « en cours de livraison » lui parle, « PICKED_UP » non.
+    // course : « en cours de livraison » lui parle, « IN_TRANSIT » non.
     if (result.orderStatusChanged) {
       const owner = await this.prisma.db.order.findUnique({
         where: { id: delivery.orderId },
@@ -223,17 +237,86 @@ export class DeliveriesService {
     return result.updated;
   }
 
+  /* -------------------------- Validation par OTP ------------------------- */
+
   /**
-   * Enregistre la preuve de livraison.
+   * Émet le code de validation et l'envoie au CLIENT.
    *
-   * La validation fine (méthodes cohérentes avec les fichiers, nom du
-   * réceptionnaire exigé avec une signature) vit dans le contrat partagé et
-   * s'applique ici comme côté mobile.
+   * Appelé au départ du livreur : le client reçoit son code au moment où il
+   * en a besoin, pas des heures à l'avance. Le code ne transite jamais par la
+   * réponse HTTP du livreur — seul le canal de notification du client le porte.
    */
-  async submitProof(courierId: string, id: string, dto: SubmitProofDto) {
+  private async issueOtpToClient(
+    deliveryId: string,
+    options: { isResend?: boolean } = {},
+  ): Promise<void> {
+    const delivery = await this.prisma.db.delivery.findUniqueOrThrow({
+      where: { id: deliveryId },
+      select: {
+        orderId: true,
+        order: { select: { userId: true, reference: true } },
+      },
+    });
+
+    const { code } = await this.otp.issue(deliveryId, options);
+
+    await this.notifications.notify({
+      userId: delivery.order.userId,
+      type: 'DELIVERY_OTP',
+      reference: delivery.order.reference,
+      orderId: delivery.orderId,
+      values: { code },
+    });
+  }
+
+  /**
+   * Régénère un code à la demande du client.
+   *
+   * Réservé au propriétaire de la commande : c'est lui qui constate qu'il n'a
+   * rien reçu, ou que son code a expiré. Le livreur n'a aucun moyen de
+   * déclencher un renvoi, et ne verrait de toute façon pas le résultat.
+   */
+  async resendOtp(userId: string, reference: string) {
+    const order = await this.prisma.db.order.findFirst({
+      where: { reference, userId },
+      select: { delivery: { select: { id: true, status: true } } },
+    });
+
+    if (!order?.delivery) {
+      throw new NotFoundException({
+        code: 'DELIVERY_NOT_FOUND',
+        message: 'Cette livraison est introuvable.',
+      });
+    }
+
+    // Avant le départ du livreur, un code n'aurait aucune utilité ; après la
+    // clôture, il n'en a plus.
+    const eligible: DeliveryStatus[] = ['IN_TRANSIT', 'ARRIVED'];
+    if (!eligible.includes(order.delivery.status)) {
+      throw new ConflictException({
+        code: 'OTP_NOT_AVAILABLE',
+        message:
+          'Le code sera disponible dès que le livreur sera en route avec votre commande.',
+      });
+    }
+
+    await this.issueOtpToClient(order.delivery.id, { isResend: true });
+    return this.otp.status(order.delivery.id);
+  }
+
+  /**
+   * Vérifie le code saisi par le livreur et clôt la livraison.
+   *
+   * C'est le SEUL chemin menant à `DELIVERED`. Les cinq conditions (code
+   * exact, non expiré, non consommé, livraison concernée, livreur autorisé)
+   * sont contrôlées par `DeliveryOtpService.verify` ; la clôture qui suit est
+   * transactionnelle, pour qu'un code consommé corresponde toujours à une
+   * commande livrée.
+   */
+  async verifyOtp(courierId: string, id: string, dto: VerifyOtpDto) {
     const delivery = await this.prisma.db.delivery.findFirst({
       where: { id, courierId },
-      select: { id: true, status: true },
+      select: { id: true, status: true, orderId: true },
     });
     if (!delivery) {
       throw new NotFoundException({
@@ -242,90 +325,92 @@ export class DeliveriesService {
       });
     }
 
-    // Une preuve n'a de sens que sur une course engagée et non close.
     if (delivery.status === 'DELIVERED' || delivery.status === 'FAILED') {
       throw new ConflictException({
         code: 'DELIVERY_ALREADY_CLOSED',
         message: 'Cette livraison est déjà terminée.',
       });
     }
-    if (delivery.status !== 'PICKED_UP' && delivery.status !== 'IN_TRANSIT') {
+
+    // Le code se saisit à la remise, donc sur place. Exiger l'arrivée évite
+    // qu'une course soit validée depuis le dépôt.
+    if (delivery.status !== 'ARRIVED') {
       throw new ConflictException({
-        code: 'DELIVERY_NOT_STARTED',
-        message:
-          'Récupérez d’abord la commande avant d’enregistrer une preuve.',
+        code: 'DELIVERY_NOT_ARRIVED',
+        message: 'Signalez votre arrivée avant de saisir le code du client.',
       });
     }
 
-    // Règle de cohérence PARTAGÉE avec le mobile : une méthode retenue exige
-    // son fichier, un fichier sans méthode est refusé, une signature exige le
-    // nom du réceptionnaire. Une seule implémentation, donc aucune divergence.
-    const parsed = submitDeliveryProofSchema.safeParse({
-      deliveryId: id,
-      methods: dto.methods,
-      signatureFileId: dto.signatureFileId,
-      photoFileId: dto.photoFileId,
-      receivedBy: dto.receivedBy,
-      note: dto.note,
-      position: dto.position
-        ? {
-            latitude: dto.position.latitude,
-            longitude: dto.position.longitude,
-            accuracy: null,
-            heading: null,
-            speed: null,
-            recordedAt: new Date().toISOString(),
-          }
-        : null,
+    // Lève si le code est refusé : rien n'est modifié dans ce cas.
+    await this.otp.verify({ deliveryId: id, courierId, code: dto.code });
+
+    const now = new Date();
+    const updated = await this.prisma.db.$transaction(async (tx) => {
+      // OTP_VERIFIED puis DELIVERED : les deux étapes du contrat sont
+      // franchies ici, par le backend, dans la même transaction.
+      const result = await tx.delivery.update({
+        where: { id },
+        data: {
+          status: 'DELIVERED',
+          otpVerifiedAt: now,
+          deliveredAt: now,
+          // Traçabilité seulement : une position absente n'empêche rien.
+          otpLatitude: dto.position?.latitude ?? null,
+          otpLongitude: dto.position?.longitude ?? null,
+        },
+        select: deliverySelect,
+      });
+
+      const order = await tx.order.findUniqueOrThrow({
+        where: { id: delivery.orderId },
+        select: { status: true },
+      });
+      if (order.status !== 'DELIVERED' && order.status !== 'CANCELLED') {
+        await tx.order.update({
+          where: { id: delivery.orderId },
+          data: { status: 'DELIVERED' },
+        });
+        await tx.orderEvent.create({
+          data: {
+            orderId: delivery.orderId,
+            status: 'DELIVERED',
+            actorId: courierId,
+          },
+        });
+      }
+
+      return result;
     });
-    if (!parsed.success) {
-      throw new BadRequestException({
-        code: 'INVALID_PROOF',
-        message: 'La preuve de livraison est incomplète.',
-        details: parsed.error.issues.map((issue) => ({
-          field: issue.path.join('.'),
-          message: issue.message,
-        })),
+
+    const owner = await this.prisma.db.order.findUnique({
+      where: { id: delivery.orderId },
+      select: { userId: true, reference: true },
+    });
+    if (owner) {
+      await this.notifications.notifyOrderStatus({
+        userId: owner.userId,
+        status: 'DELIVERED',
+        reference: owner.reference,
+        orderId: delivery.orderId,
       });
     }
 
-    await this.assertFilesExist(dto);
-
-    return this.prisma.db.delivery.update({
-      where: { id },
-      data: {
-        proofMethods: dto.methods,
-        proofSignatureFile: dto.signatureFileId ?? null,
-        proofPhotoFile: dto.photoFileId ?? null,
-        proofReceivedBy: dto.receivedBy?.trim() ?? null,
-        proofNote: dto.note?.trim() ?? null,
-        proofLatitude: dto.position?.latitude ?? null,
-        proofLongitude: dto.position?.longitude ?? null,
-        proofSubmittedAt: new Date(),
-      },
-      select: deliverySelect,
-    });
+    return updated;
   }
 
-  /**
-   * Un identifiant de fichier inexistant produirait une preuve vide au moment
-   * du litige — c'est-à-dire trop tard. On vérifie à l'enregistrement.
-   */
-  private async assertFilesExist(dto: SubmitProofDto) {
-    const ids = [dto.signatureFileId, dto.photoFileId].filter(
-      (value): value is string => typeof value === 'string',
-    );
-    if (ids.length === 0) return;
-
-    const found = await this.prisma.db.fileAsset.count({
-      where: { id: { in: ids } },
+  /** État du code, sans jamais le divulguer au livreur. */
+  async otpStatus(courierId: string, id: string) {
+    const delivery = await this.prisma.db.delivery.findFirst({
+      where: { id, courierId },
+      select: { id: true },
     });
-    if (found !== ids.length) {
-      throw new BadRequestException({
-        code: 'PROOF_FILE_NOT_FOUND',
-        message: 'Le fichier de preuve est introuvable.',
+    if (!delivery) {
+      throw new NotFoundException({
+        code: 'DELIVERY_NOT_FOUND',
+        message: 'Cette livraison est introuvable.',
       });
     }
+    return this.otp.status(id);
   }
 
   /* ----------------------------- Affectation ---------------------------- */

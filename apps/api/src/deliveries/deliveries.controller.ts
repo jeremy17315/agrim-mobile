@@ -25,7 +25,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { DeliveriesService } from './deliveries.service';
 import { TrackingService } from './tracking.service';
 import { AssignDeliveryDto } from './dto/assign-delivery.dto';
-import { SubmitProofDto } from './dto/submit-proof.dto';
+import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { PushLocationsDto } from './dto/push-locations.dto';
 import { UpdateDeliveryStatusDto } from './dto/update-delivery-status.dto';
 
@@ -79,16 +79,49 @@ export class DeliveriesController {
   }
 
   @Roles('LIVREUR')
-  @Post(':id/proof')
+  @Post(':id/verify-otp')
   @ApiOperation({
-    summary: 'Enregistrer la preuve de livraison (signature et/ou photo)',
+    summary: 'Valider la livraison avec le code du client',
+    description:
+      'Seul chemin menant à DELIVERED. Le code est vérifié par le backend ; ' +
+      'le livreur ne peut pas clôturer une course autrement.',
   })
-  submitProof(
+  verifyOtp(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: SubmitProofDto,
+    @Body() dto: VerifyOtpDto,
   ) {
-    return this.deliveries.submitProof(user.id, id, dto);
+    return this.deliveries.verifyOtp(user.id, id, dto);
+  }
+
+  @Roles('LIVREUR')
+  @Get(':id/otp-status')
+  @ApiOperation({
+    summary: 'État du code de validation',
+    description:
+      'Indique si un code est actif, expiré ou épuisé. Ne renvoie JAMAIS le ' +
+      'code lui-même : le livreur le reçoit du client, de vive voix.',
+  })
+  otpStatus(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.deliveries.otpStatus(user.id, id);
+  }
+
+  @Roles('CLIENT')
+  @Post('orders/:reference/otp/resend')
+  @ApiOperation({
+    summary: 'Faire renvoyer mon code de livraison',
+    description:
+      'Réservé au propriétaire de la commande. Soumis à un délai entre deux ' +
+      'envois et à un nombre maximum de renvois.',
+  })
+  resendOtp(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('reference') reference: string,
+  ) {
+    return this.deliveries.resendOtp(user.id, reference);
   }
 
   @Roles('LIVREUR')

@@ -209,6 +209,10 @@ const PRESENTATION: Record<
     icon: 'map-pin',
     tint: { bg: palette.greenSoft, icon: 'green' },
   },
+  DELIVERY_OTP: {
+    icon: 'key-round',
+    tint: { bg: palette.goldSoft, icon: 'gold' },
+  },
   PAYMENT_SUCCEEDED: {
     icon: 'credit-card',
     tint: { bg: palette.greenSoft, icon: 'green' },

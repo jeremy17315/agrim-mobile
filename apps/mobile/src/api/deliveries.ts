@@ -1,13 +1,13 @@
 import {
-  DELIVERY_PROOF_METHODS,
+  DELIVERY_STATUSES,
   TRACKING_CONFIG,
-  type DeliveryProofMethod,
-  type DeliveryStatus,
+  deliveryOtpStatusSchema,
+  type CourierSettableDeliveryStatus,
 } from '@agrim/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
 
-import { API_BASE_URL, apiRequest, currentAccessToken } from './client';
+import { apiRequest } from './client';
 
 /**
  * Espace livreur.
@@ -38,23 +38,16 @@ const deliveryAddressSchema = z.object({
 
 const deliverySchema = z.object({
   id: z.uuid(),
-  status: z.enum([
-    'UNASSIGNED',
-    'ASSIGNED',
-    'ACCEPTED',
-    'PICKED_UP',
-    'IN_TRANSIT',
-    'DELIVERED',
-    'FAILED',
-  ]),
+  // Enum du contrat : une valeur ajoutée côté serveur ne doit pas exiger
+  // d'édition ici.
+  status: z.enum(DELIVERY_STATUSES),
   assignedAt: z.iso.datetime().nullable(),
   acceptedAt: z.iso.datetime().nullable(),
-  pickedUpAt: z.iso.datetime().nullable(),
+  inTransitAt: z.iso.datetime().nullable(),
+  arrivedAt: z.iso.datetime().nullable(),
   deliveredAt: z.iso.datetime().nullable(),
   failureReason: z.string().nullable(),
-  proofMethods: z.array(z.enum(DELIVERY_PROOF_METHODS)),
-  proofReceivedBy: z.string().nullable(),
-  proofSubmittedAt: z.iso.datetime().nullable(),
+  otpVerifiedAt: z.iso.datetime().nullable(),
   order: z.object({
     reference: z.string(),
     total: z.number().int(),
@@ -67,13 +60,6 @@ const deliverySchema = z.object({
 export type Delivery = z.infer<typeof deliverySchema>;
 
 const deliveriesSchema = z.array(deliverySchema);
-
-const uploadedFileSchema = z.object({
-  id: z.uuid(),
-  url: z.string(),
-  mimeType: z.string(),
-  sizeBytes: z.number().int(),
-});
 
 export const deliveryKeys = {
   mine: ['deliveries', 'mine'] as const,
@@ -196,7 +182,12 @@ export function useUpdateDeliveryStatus(id: string) {
 
   return useMutation({
     retry: false,
-    mutationFn: (input: { status: DeliveryStatus; failureReason?: string }) =>
+    mutationFn: (input: {
+      // Le type interdit dès la compilation de demander DELIVERED ou
+      // OTP_VERIFIED : ces statuts n'appartiennent pas au terrain.
+      status: CourierSettableDeliveryStatus;
+      failureReason?: string;
+    }) =>
       apiRequest({
         path: `/deliveries/${id}/status`,
         method: 'PATCH',
@@ -212,62 +203,57 @@ export function useUpdateDeliveryStatus(id: string) {
   });
 }
 
-export type SubmitProofInput = {
-  methods: DeliveryProofMethod[];
-  signatureFileId?: string;
-  photoFileId?: string;
-  receivedBy?: string;
-  note?: string;
-  position?: { latitude: number; longitude: number };
-};
-
-export function useSubmitProof(id: string) {
+/**
+ * Validation de la livraison par le code du client.
+ *
+ * Le code n'est jamais connu de l'application livreur : il est dicté sur place
+ * puis envoyé au serveur, seul juge. Une saisie erronée ne modifie rien.
+ */
+export function useVerifyOtp(id: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
     retry: false,
-    mutationFn: (input: SubmitProofInput) =>
+    mutationFn: (input: {
+      code: string;
+      position?: { latitude: number; longitude: number };
+    }) =>
       apiRequest({
-        path: `/deliveries/${id}/proof`,
+        path: `/deliveries/${id}/verify-otp`,
         method: 'POST',
         body: input,
         schema: deliverySchema,
       }),
     onSuccess: (updated) => {
       queryClient.setQueryData(deliveryKeys.detail(id), updated);
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.mine });
+      void queryClient.invalidateQueries({ queryKey: ['orders'] });
     },
   });
 }
 
-/**
- * Dépôt d'un fichier de preuve.
- *
- * `apiRequest` sérialise en JSON : un envoi multipart passe donc par `fetch`
- * directement, en réutilisant le jeton et l'URL de base de la couche API.
- * Le `Content-Type` est laissé à la plateforme, qui doit y placer la frontière
- * multipart — le forcer casserait l'envoi.
- */
-export async function uploadProofFile(file: {
-  uri: string;
-  name: string;
-  type: string;
-}) {
-  const form = new FormData();
-  // La forme { uri, name, type } est celle attendue par React Native.
-  form.append('file', file as unknown as Blob);
-
-  const token = currentAccessToken();
-  const response = await fetch(`${API_BASE_URL}/files/proofs`, {
-    method: 'POST',
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-    body: form,
+/** État du code (actif, expiré, tentatives restantes) — jamais le code. */
+export function useOtpStatus(id: string, enabled = true) {
+  return useQuery({
+    queryKey: [...deliveryKeys.detail(id), 'otp'],
+    enabled: enabled && id.length > 0,
+    queryFn: () =>
+      apiRequest({
+        path: `/deliveries/${id}/otp-status`,
+        schema: deliveryOtpStatusSchema,
+      }),
   });
+}
 
-  const payload: unknown = await response.json().catch(() => null);
-  if (!response.ok) {
-    const detail = payload as { code?: string; message?: string } | null;
-    throw new Error(detail?.message ?? 'Le dépôt du fichier a échoué.');
-  }
-
-  return uploadedFileSchema.parse(payload);
+/** Renvoi du code, à la demande du client depuis le suivi de sa commande. */
+export function useResendOtp(reference: string) {
+  return useMutation({
+    retry: false,
+    mutationFn: () =>
+      apiRequest({
+        path: `/deliveries/orders/${reference}/otp/resend`,
+        method: 'POST',
+        schema: deliveryOtpStatusSchema,
+      }),
+  });
 }

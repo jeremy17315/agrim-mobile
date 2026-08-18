@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { describeError } from '@/api/errors';
 import { useCancelOrder, useOrder } from '@/api/orders';
 import { OrderStatusPill } from '@/components/OrderStatusPill';
+import { DeliveryCodeCard } from '@/components/DeliveryCodeCard';
 import { LiveTrackingCard } from '@/components/LiveTrackingCard';
 import { ErrorState, Skeleton } from '@/components/states';
 import { Banner, Button, Card, Icon, Text } from '@/components/ui';
@@ -129,6 +130,12 @@ export default function SuiviCommandeScreen() {
           {/* Carte temps réel : uniquement pendant que le livreur roule.
               Hors de cette fenêtre, la chronologie suffit. */}
           <LiveTrackingCard
+            reference={order.data.reference}
+            orderStatus={order.data.status}
+          />
+
+          {/* Code de validation : visible pendant que le livreur roule. */}
+          <DeliveryCodeCard
             reference={order.data.reference}
             orderStatus={order.data.status}
           />

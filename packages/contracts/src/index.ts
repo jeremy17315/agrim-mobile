@@ -8,3 +8,4 @@ export * from './notifications';
 export * from './order-status';
 export * from './production';
 export * from './tracking';
+export * from './delivery-otp';

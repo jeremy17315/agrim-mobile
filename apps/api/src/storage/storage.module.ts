@@ -1,22 +1,23 @@
 import { Global, Module } from '@nestjs/common';
 
-import { FilesController } from './files.controller';
-import { FilesService } from './files.service';
 import { LocalStorageProvider } from './local-storage.provider';
 import { STORAGE_PROVIDER } from './storage.provider';
 
 /**
- * Le fournisseur est choisi ici, en un seul point. Ajouter un pilote
- * S3-compatible consistera à changer cette liaison, sans toucher aux modules
- * qui consomment le stockage.
+ * Accès au stockage de fichiers.
+ *
+ * Aucune route HTTP : depuis le passage à la validation par OTP, plus aucun
+ * fichier n'est déposé par les utilisateurs. Les points d'entrée de dépôt et
+ * de consultation des preuves ont été retirés — une route d'upload sans
+ * consommateur reste une surface d'attaque.
+ *
+ * L'abstraction est conservée telle quelle pour le prochain besoin réel
+ * (visuels produits) : le pilote S3-compatible se branchera ici, sans toucher
+ * aux modules métier.
  */
 @Global()
 @Module({
-  controllers: [FilesController],
-  providers: [
-    FilesService,
-    { provide: STORAGE_PROVIDER, useClass: LocalStorageProvider },
-  ],
-  exports: [FilesService, STORAGE_PROVIDER],
+  providers: [{ provide: STORAGE_PROVIDER, useClass: LocalStorageProvider }],
+  exports: [STORAGE_PROVIDER],
 })
 export class StorageModule {}

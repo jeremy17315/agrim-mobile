@@ -35,9 +35,12 @@ export class NotificationsService {
     type: NotificationType;
     reference?: string;
     orderId?: string;
+    /** Valeurs injectées dans le gabarit (ex. le code de livraison). */
+    values?: { code?: string };
   }) {
     const { title, body } = renderNotification(input.type, {
       reference: input.reference,
+      code: input.values?.code,
     });
 
     const notification = await this.prisma.db.notification.create({
@@ -51,8 +54,20 @@ export class NotificationsService {
       select: { id: true, type: true, title: true, body: true },
     });
 
+    // Le code de livraison ne part JAMAIS en notification poussée : celle-ci
+    // transite par un service tiers et s'affiche sur un écran verrouillé, à la
+    // vue de n'importe qui. Le client ouvre l'application pour le lire.
+    const isSensitive = input.type === 'DELIVERY_OTP';
+
     // L'envoi est volontairement détaché du résultat retourné.
-    void this.deliver(input.userId, title, body, input.reference);
+    void this.deliver(
+      input.userId,
+      title,
+      isSensitive
+        ? 'Ouvrez l’application pour voir votre code de livraison.'
+        : body,
+      input.reference,
+    );
 
     return notification;
   }

@@ -3,7 +3,7 @@ import { DELIVERY_STATUSES, type DeliveryStatus } from '@agrim/contracts';
 import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class UpdateDeliveryStatusDto {
-  @ApiProperty({ enum: DELIVERY_STATUSES, example: 'PICKED_UP' })
+  @ApiProperty({ enum: DELIVERY_STATUSES, example: 'IN_TRANSIT' })
   @IsIn(DELIVERY_STATUSES)
   status!: DeliveryStatus;
 

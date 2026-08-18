@@ -335,7 +335,7 @@ describe('Espace gestionnaire (e2e)', () => {
         .send({ status });
 
     await step('ACCEPTED');
-    await step('PICKED_UP');
+    await step('IN_TRANSIT');
 
     const res = await setStatus(order.reference, 'CANCELLED');
     expect(res.status).toBe(409);

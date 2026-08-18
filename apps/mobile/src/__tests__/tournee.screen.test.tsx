@@ -1,11 +1,11 @@
 /**
- * Écrans livreur.
+ * Écran livreur — validation par code.
  *
  * Ce qui est verrouillé ici :
- *  - le bouton de validation reste inactif tant qu'aucune preuve n'est
- *    enregistrée (le serveur l'impose, l'interface ne doit pas le suggérer) ;
- *  - une signature sans nom de réceptionnaire est refusée avant tout envoi ;
- *  - la validation passe par une confirmation explicite ;
+ *  - aucun bouton ne permet au livreur de se déclarer livré ;
+ *  - le champ de code n'apparaît qu'une fois sur place ;
+ *  - la saisie n'accepte que 4 chiffres et rien d'autre ;
+ *  - un code refusé par le serveur laisse la course ouverte ;
  *  - l'action proposée correspond à l'état réel de la course.
  */
 import {
@@ -28,19 +28,11 @@ jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
-jest.mock('expo-image-picker', () => ({
-  requestCameraPermissionsAsync: jest.fn(async () => ({ granted: true })),
-  launchCameraAsync: jest.fn(async () => ({
-    canceled: false,
-    assets: [{ uri: 'file:///photo.jpg', mimeType: 'image/jpeg' }],
-  })),
-}));
-
 const mockStatusMutate = jest.fn();
-const mockProofMutateAsync = jest.fn(async () => undefined);
-const mockUpload = jest.fn(async () => ({ id: 'f1' }));
+const mockVerifyOtp = jest.fn(async () => undefined);
 
 let mockDelivery: Record<string, unknown>;
+let mockOtpStatus: Record<string, unknown> | null;
 
 jest.mock('@/api/deliveries', () => ({
   useDelivery: () => ({
@@ -54,12 +46,11 @@ jest.mock('@/api/deliveries', () => ({
     mutate: mockStatusMutate,
     isPending: false,
   }),
-  useSubmitProof: () => ({
-    mutateAsync: mockProofMutateAsync,
+  useVerifyOtp: () => ({
+    mutateAsync: mockVerifyOtp,
     isPending: false,
   }),
-  uploadProofFile: (...args: unknown[]) => mockUpload(...(args as [])),
-  // Suivi GPS : le hook est appelé par l'écran, sans intérêt ici.
+  useOtpStatus: () => ({ data: mockOtpStatus, isPending: false }),
   usePushLocations: () => ({ mutateAsync: jest.fn(), isPending: false }),
   useDeliveryTracking: () => ({ data: null, isPending: false }),
 }));
@@ -69,15 +60,14 @@ import CourseScreen from '../../app/tournee/[id]';
 /** Course type, personnalisable par test. */
 const buildDelivery = (overrides: Record<string, unknown> = {}) => ({
   id: 'd1',
-  status: 'IN_TRANSIT',
+  status: 'ARRIVED',
   assignedAt: '2026-08-18T08:00:00.000Z',
   acceptedAt: '2026-08-18T08:05:00.000Z',
-  pickedUpAt: '2026-08-18T08:20:00.000Z',
+  inTransitAt: '2026-08-18T08:20:00.000Z',
+  arrivedAt: '2026-08-18T08:40:00.000Z',
   deliveredAt: null,
   failureReason: null,
-  proofMethods: [],
-  proofReceivedBy: null,
-  proofSubmittedAt: null,
+  otpVerifiedAt: null,
   order: {
     reference: 'AGR-2026-0042',
     total: 12000,
@@ -109,6 +99,14 @@ const buildDelivery = (overrides: Record<string, unknown> = {}) => ({
 beforeEach(() => {
   jest.clearAllMocks();
   mockDelivery = buildDelivery();
+  mockOtpStatus = {
+    isActive: true,
+    expiresAt: '2026-08-18T09:40:00.000Z',
+    attemptsRemaining: 5,
+    verifiedAt: null,
+    canResendAt: null,
+    resendsRemaining: 5,
+  };
 });
 
 describe('Écran de course', () => {
@@ -120,6 +118,8 @@ describe('Écran de course', () => {
     expect(screen.getByText(/Royal Grains/)).toBeTruthy();
   });
 
+  /* --------------------------- Progression ------------------------------ */
+
   it('propose d’accepter une course affectée', () => {
     mockDelivery = buildDelivery({ status: 'ASSIGNED' });
     render(<CourseScreen />);
@@ -128,108 +128,134 @@ describe('Écran de course', () => {
     expect(mockStatusMutate).toHaveBeenCalledWith({ status: 'ACCEPTED' });
   });
 
-  it('propose de récupérer le colis une fois la course acceptée', () => {
+  it('propose de démarrer la livraison une fois la course acceptée', () => {
     mockDelivery = buildDelivery({ status: 'ACCEPTED' });
     render(<CourseScreen />);
 
-    fireEvent.press(screen.getByText('J’ai récupéré le colis'));
-    expect(mockStatusMutate).toHaveBeenCalledWith({ status: 'PICKED_UP' });
+    fireEvent.press(screen.getByText('Démarrer la livraison'));
+    expect(mockStatusMutate).toHaveBeenCalledWith({ status: 'IN_TRANSIT' });
   });
 
-  it('n’affiche pas la preuve avant la récupération du colis', () => {
-    mockDelivery = buildDelivery({ status: 'ACCEPTED' });
+  it('propose de signaler l’arrivée pendant le trajet', () => {
+    mockDelivery = buildDelivery({ status: 'IN_TRANSIT' });
     render(<CourseScreen />);
 
-    expect(screen.queryByText('Preuve de livraison')).toBeNull();
+    fireEvent.press(screen.getByText('Je suis arrivé chez le client'));
+    expect(mockStatusMutate).toHaveBeenCalledWith({ status: 'ARRIVED' });
   });
 
-  it('désactive la validation tant qu’aucune preuve n’est enregistrée', () => {
+  /* ------------------------- Validation par code ------------------------ */
+
+  it('ne propose aucun bouton de validation manuelle', () => {
     render(<CourseScreen />);
 
-    const button = screen.getByLabelText('Valider la livraison');
-    expect(button.props.accessibilityState.disabled).toBe(true);
+    // La livraison ne peut être close que par le code : aucune action de
+    // l'interface ne doit laisser croire le contraire.
+    expect(screen.queryByText('Valider la livraison')).toBeTruthy();
+    expect(screen.queryByText('Marquer comme livrée')).toBeNull();
+    expect(screen.queryByText('Confirmer la remise')).toBeNull();
   });
 
-  it('active la validation une fois la preuve enregistrée', () => {
-    mockDelivery = buildDelivery({
-      proofSubmittedAt: '2026-08-18T09:00:00.000Z',
-      proofMethods: ['SIGNATURE'],
-      proofReceivedBy: 'Awa Koné',
-    });
+  it('n’affiche pas le champ de code avant l’arrivée sur place', () => {
+    mockDelivery = buildDelivery({ status: 'IN_TRANSIT' });
     render(<CourseScreen />);
 
-    const button = screen.getByLabelText('Valider la livraison');
-    expect(button.props.accessibilityState.disabled).toBe(false);
-    expect(screen.getByText(/Preuve enregistrée/)).toBeTruthy();
+    expect(screen.queryByText('Code de livraison')).toBeNull();
   });
 
-  it('exige une confirmation avant de valider la livraison', () => {
-    const alertSpy = jest
-      .spyOn(require('react-native').Alert, 'alert')
-      .mockImplementation(() => undefined);
-
-    mockDelivery = buildDelivery({
-      proofSubmittedAt: '2026-08-18T09:00:00.000Z',
-    });
+  it('affiche le champ de code une fois sur place', () => {
     render(<CourseScreen />);
 
-    fireEvent.press(screen.getByLabelText('Valider la livraison'));
-
-    // Rien n'est envoyé tant que le livreur n'a pas confirmé.
-    expect(mockStatusMutate).not.toHaveBeenCalled();
-    expect(alertSpy).toHaveBeenCalled();
-    alertSpy.mockRestore();
+    expect(screen.getByText('Code de livraison')).toBeTruthy();
+    expect(screen.getByText(/Demandez au client le code/)).toBeTruthy();
   });
 
-  it('refuse une signature sans nom de réceptionnaire', () => {
+  it('laisse la validation inactive tant que le code est incomplet', () => {
     render(<CourseScreen />);
 
-    // La signature est proposée par défaut, la surface est vide.
-    expect(screen.getByText('La signature est vide.')).toBeTruthy();
-    const save = screen.getByLabelText('Enregistrer la preuve');
-    expect(save.props.accessibilityState.disabled).toBe(true);
-    expect(mockProofMutateAsync).not.toHaveBeenCalled();
+    fireEvent.changeText(screen.getByLabelText('Code du client'), '12');
+    fireEvent.press(screen.getByText('Valider la livraison'));
+
+    expect(mockVerifyOtp).not.toHaveBeenCalled();
   });
 
-  it('bloque l’envoi si aucune méthode n’est retenue', () => {
+  it('n’accepte que des chiffres, au plus quatre', () => {
     render(<CourseScreen />);
+    const input = screen.getByLabelText('Code du client');
 
-    // On décoche la signature, proposée par défaut.
-    fireEvent.press(screen.getByText('Signature'));
-
-    expect(screen.getByText('Choisissez au moins une preuve.')).toBeTruthy();
+    // Une saisie parasite ne doit pas produire une valeur refusée au serveur.
+    fireEvent.changeText(input, '4a8b2c1d9');
+    expect(input.props.value).toBe('4821');
   });
 
-  it('demande une photo quand la méthode photo est retenue', () => {
+  it('envoie le code saisi au serveur', async () => {
     render(<CourseScreen />);
 
-    fireEvent.press(screen.getByText('Signature')); // décoche
-    fireEvent.press(screen.getByText('Photo')); // coche
-
-    expect(screen.getByText('Prenez une photo.')).toBeTruthy();
-  });
-
-  it('exige un motif avant de déclarer un échec', async () => {
-    render(<CourseScreen />);
-
-    fireEvent.press(screen.getByLabelText('Livraison impossible'));
+    fireEvent.changeText(screen.getByLabelText('Code du client'), '4821');
+    fireEvent.press(screen.getByText('Valider la livraison'));
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Confirmer l’échec')).toBeTruthy();
+      expect(mockVerifyOtp).toHaveBeenCalledWith({
+        code: '4821',
+        position: undefined,
+      });
     });
-    const confirm = screen.getByLabelText('Confirmer l’échec');
-    expect(confirm.props.accessibilityState.disabled).toBe(true);
+  });
+
+  it('affiche l’erreur du serveur et vide le champ après un refus', async () => {
+    mockVerifyOtp.mockRejectedValueOnce(
+      new Error('Code incorrect. 4 tentatives restantes.'),
+    );
+    render(<CourseScreen />);
+
+    fireEvent.changeText(screen.getByLabelText('Code du client'), '0000');
+    fireEvent.press(screen.getByText('Valider la livraison'));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('Code incorrect. 4 tentatives restantes.'),
+      ).toBeTruthy();
+    });
+    // La course reste ouverte : rien n'a été validé.
+    expect(mockBack).not.toHaveBeenCalled();
+  });
+
+  it('avertit quand il ne reste que peu de tentatives', () => {
+    mockOtpStatus = { ...mockOtpStatus, attemptsRemaining: 1 };
+    render(<CourseScreen />);
+
+    expect(screen.getByText(/1 tentative restante/)).toBeTruthy();
+  });
+
+  it('signale l’absence de code actif et oriente vers le renvoi', () => {
+    mockOtpStatus = { ...mockOtpStatus, isActive: false };
+    render(<CourseScreen />);
+
+    expect(screen.getByText(/Aucun code actif/)).toBeTruthy();
+  });
+
+  /* ------------------------------- Échec -------------------------------- */
+
+  it('exige un motif avant de déclarer un échec', () => {
+    render(<CourseScreen />);
+
+    fireEvent.press(screen.getByText('Livraison impossible'));
+    const confirm = screen.getByText('Confirmer l’échec');
+    fireEvent.press(confirm);
+
+    expect(mockStatusMutate).not.toHaveBeenCalled();
   });
 
   it('affiche le résultat d’une course close sans proposer d’action', () => {
     mockDelivery = buildDelivery({
-      status: 'FAILED',
-      failureReason: 'Client absent après deux appels',
+      status: 'DELIVERED',
+      deliveredAt: '2026-08-18T09:00:00.000Z',
+      otpVerifiedAt: '2026-08-18T09:00:00.000Z',
     });
     render(<CourseScreen />);
 
-    expect(screen.getByText('Client absent après deux appels')).toBeTruthy();
-    expect(screen.queryByLabelText('Valider la livraison')).toBeNull();
-    expect(screen.queryByText('Preuve de livraison')).toBeNull();
+    expect(screen.getByText('Livrée')).toBeTruthy();
+    expect(screen.queryByText('Code de livraison')).toBeNull();
+    expect(screen.queryByText('Livraison impossible')).toBeNull();
   });
 });

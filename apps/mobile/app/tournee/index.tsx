@@ -29,8 +29,9 @@ const STATUS_PRESENTATION: Record<
   UNASSIGNED: { label: 'Non affectée', tone: 'neutral' },
   ASSIGNED: { label: 'À accepter', tone: 'warn' },
   ACCEPTED: { label: 'Acceptée', tone: 'info' },
-  PICKED_UP: { label: 'Colis récupéré', tone: 'info' },
   IN_TRANSIT: { label: 'En route', tone: 'info' },
+  ARRIVED: { label: 'Sur place', tone: 'warn' },
+  OTP_VERIFIED: { label: 'Code validé', tone: 'green' },
   DELIVERED: { label: 'Livrée', tone: 'green' },
   FAILED: { label: 'Échec', tone: 'danger' },
 };

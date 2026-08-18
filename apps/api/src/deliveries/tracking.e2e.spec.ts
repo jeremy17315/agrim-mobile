@@ -153,7 +153,7 @@ describe('Suivi GPS (e2e)', () => {
       .send({ courierId });
     const id = assigned.body.id as string;
     await setStatus(id, 'ACCEPTED');
-    await setStatus(id, 'PICKED_UP');
+    await setStatus(id, 'IN_TRANSIT');
     return { id, reference };
   };
 
@@ -329,7 +329,6 @@ describe('Suivi GPS (e2e)', () => {
 
   it('cesse d’exposer une position une fois la course terminée', async () => {
     const { id, reference } = await startedDelivery();
-    await setStatus(id, 'IN_TRANSIT');
     await push(id, [pointNear(new Date().toISOString())]);
     await setStatus(id, 'FAILED', { failureReason: 'Client injoignable' });
 

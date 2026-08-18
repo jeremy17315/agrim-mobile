@@ -78,8 +78,9 @@ export const DELIVERY_STATUSES = [
   'UNASSIGNED',
   'ASSIGNED',
   'ACCEPTED',
-  'PICKED_UP',
   'IN_TRANSIT',
+  'ARRIVED',
+  'OTP_VERIFIED',
   'DELIVERED',
   'FAILED',
 ] as const;
@@ -100,12 +101,40 @@ export const DELIVERY_TRANSITIONS: Record<
   UNASSIGNED: ['ASSIGNED'],
   // Réassignation possible tant que le livreur n'a pas accepté.
   ASSIGNED: ['ACCEPTED', 'UNASSIGNED'],
-  ACCEPTED: ['PICKED_UP', 'FAILED'],
-  PICKED_UP: ['IN_TRANSIT', 'FAILED'],
-  IN_TRANSIT: ['DELIVERED', 'FAILED'],
+  ACCEPTED: ['IN_TRANSIT', 'FAILED'],
+  IN_TRANSIT: ['ARRIVED', 'FAILED'],
+  ARRIVED: ['OTP_VERIFIED', 'FAILED'],
+  // Franchi par le backend seul, après vérification de l'OTP.
+  OTP_VERIFIED: ['DELIVERED'],
   DELIVERED: [],
   FAILED: [],
 } as const;
+
+/**
+ * Statuts qu'un livreur peut positionner lui-même.
+ *
+ * `OTP_VERIFIED` et `DELIVERED` en sont volontairement absents : la clôture
+ * d'une course n'appartient pas au terrain. Elle résulte de la vérification
+ * d'un OTP par le backend, et d'elle seule. Un livreur ne peut donc jamais
+ * déclarer une commande livrée.
+ */
+export const COURIER_SETTABLE_DELIVERY_STATUSES = [
+  'ACCEPTED',
+  'IN_TRANSIT',
+  'ARRIVED',
+  'FAILED',
+] as const satisfies readonly DeliveryStatus[];
+
+export type CourierSettableDeliveryStatus =
+  (typeof COURIER_SETTABLE_DELIVERY_STATUSES)[number];
+
+export function isCourierSettable(
+  status: DeliveryStatus,
+): status is CourierSettableDeliveryStatus {
+  return (
+    COURIER_SETTABLE_DELIVERY_STATUSES as readonly DeliveryStatus[]
+  ).includes(status);
+}
 
 export function canTransitionDelivery(
   from: DeliveryStatus,
@@ -128,6 +157,7 @@ export const NOTIFICATION_TYPES = [
   'ORDER_DELIVERED',
   'ORDER_CANCELLED',
   'DELIVERY_ASSIGNED',
+  'DELIVERY_OTP',
   'PAYMENT_SUCCEEDED',
   'PAYMENT_FAILED',
   'LOW_STOCK',
