@@ -13,6 +13,8 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { z } from 'zod';
 
+import { passwordSchema, phoneSchema } from '@agrim/contracts';
+
 import { describeError } from '@/api/errors';
 import { Banner, Button, Icon, Input, Text } from '@/components/ui';
 import { useAuthStore } from '@/store/auth';
@@ -31,16 +33,10 @@ const schema = z
   .object({
     firstName: z.string().trim().min(1, 'Prénom requis').max(80),
     lastName: z.string().trim().min(1, 'Nom requis').max(80),
-    phone: z
-      .string()
-      .trim()
-      .regex(/^(\+225)?\s?[0-9]{10}$/, 'Numéro ivoirien à 10 chiffres'),
+    // Règle partagée : normalise les espaces de saisie et valide le format.
+    phone: phoneSchema,
     email: z.union([z.literal(''), z.email('Email invalide')]).optional(),
-    password: z
-      .string()
-      .min(8, 'Au moins 8 caractères')
-      .regex(/[A-Za-z]/, 'Doit contenir une lettre')
-      .regex(/[0-9]/, 'Doit contenir un chiffre'),
+    password: passwordSchema,
     confirmPassword: z.string(),
   })
   .refine((values) => values.password === values.confirmPassword, {
@@ -79,7 +75,7 @@ export default function InscriptionScreen() {
       await signUp({
         firstName: values.firstName.trim(),
         lastName: values.lastName.trim(),
-        phone: values.phone.replace(/\s/g, ''),
+        phone: values.phone,
         // Chaîne vide = pas d'email : on n'envoie pas un champ vide au serveur.
         ...(values.email ? { email: values.email.trim() } : {}),
         password: values.password,

@@ -8,6 +8,8 @@ import {
   MinLength,
 } from 'class-validator';
 
+import { NormalizePhone } from '../../common/transforms/normalize-phone';
+
 export class RegisterDto {
   @ApiProperty({ example: 'Awa' })
   @IsString()
@@ -22,6 +24,7 @@ export class RegisterDto {
   lastName!: string;
 
   @ApiProperty({ example: '0700000010' })
+  @NormalizePhone()
   @Matches(/^(\+225)?\s?[0-9]{10}$/, { message: 'Numéro ivoirien invalide' })
   phone!: string;
 

@@ -166,6 +166,9 @@ function Chip({
       onPress={onPress}
       accessibilityRole="button"
       accessibilityState={{ selected: active }}
+      // Le nom de la gamme apparaît aussi sur les cartes produits : sans
+      // libellé explicite, rien ne distingue le filtre du reste de l'écran.
+      accessibilityLabel={`Filtrer par ${label}`}
       style={[styles.chip, active && styles.chipActive]}
     >
       <Text

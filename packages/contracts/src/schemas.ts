@@ -36,10 +36,22 @@ export const moneySchema = z
  * Téléphone ivoirien : 10 chiffres, avec indicatif +225 optionnel.
  * Le numéro est l'identifiant naturel de l'utilisateur en Côte d'Ivoire.
  */
+/**
+ * Téléphone ivoirien.
+ *
+ * Les espaces sont retirés AVANT validation : les utilisateurs saisissent
+ * spontanément « 07 00 00 00 01 », et refuser cette forme serait une faute
+ * d'ergonomie. La valeur validée est toujours compacte, donc directement
+ * comparable en base.
+ */
 export const phoneSchema = z
   .string()
   .trim()
-  .regex(/^(\+225)?\s?[0-9]{10}$/, 'Numéro ivoirien invalide (10 chiffres)');
+  .transform((value) => value.replace(/[\s.-]/g, ''))
+  .refine(
+    (value) => /^(\+225)?[0-9]{10}$/.test(value),
+    'Numéro ivoirien invalide (10 chiffres)',
+  );
 
 export const passwordSchema = z
   .string()

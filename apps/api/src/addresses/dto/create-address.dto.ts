@@ -10,6 +10,8 @@ import {
   MinLength,
 } from 'class-validator';
 
+import { NormalizePhone } from '../../common/transforms/normalize-phone';
+
 /**
  * Adresse de livraison en Côte d'Ivoire.
  *
@@ -59,6 +61,7 @@ export class CreateAddressDto {
   instructions?: string;
 
   @ApiProperty({ example: '0700000001' })
+  @NormalizePhone()
   @Matches(/^(\+225)?\s?[0-9]{10}$/, { message: 'Numéro ivoirien invalide' })
   contactPhone!: string;
 

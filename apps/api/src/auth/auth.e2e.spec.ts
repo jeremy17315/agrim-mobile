@@ -82,6 +82,14 @@ describe('Authentification (e2e)', () => {
     expect(res.status).toBe(200);
   });
 
+  it('accepte un numéro saisi avec des espaces', async () => {
+    // Forme spontanée sur mobile. La rejeter en 400 serait une faute
+    // d'ergonomie : la normalisation doit précéder la validation.
+    const res = await login('07 00 00 00 01');
+    expect(res.status).toBe(200);
+    expect(res.body.user.phone).toBe('0700000001');
+  });
+
   it('refuse un mot de passe incorrect sans révéler si le compte existe', async () => {
     const res = await login('0700000001', 'MauvaisMotDePasse1');
     expect(res.status).toBe(401);

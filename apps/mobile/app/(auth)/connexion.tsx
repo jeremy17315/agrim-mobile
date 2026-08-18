@@ -13,6 +13,8 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { z } from 'zod';
 
+import { phoneSchema } from '@agrim/contracts';
+
 import { describeError } from '@/api/errors';
 import { Banner, Button, Icon, Input, Text } from '@/components/ui';
 import { useAuthStore } from '@/store/auth';
@@ -25,11 +27,10 @@ import { palette, radius, spacing } from '@/theme/tokens';
  * d'adresse e-mail active, mais tout le monde a un numéro.
  */
 
+// La règle de numéro vit dans le contrat partagé : la redéfinir ici l'avait
+// déjà fait diverger (les espaces de saisie étaient rejetés).
 const schema = z.object({
-  phone: z
-    .string()
-    .trim()
-    .regex(/^(\+225)?\s?[0-9]{10}$/, 'Numéro ivoirien à 10 chiffres'),
+  phone: phoneSchema,
   password: z.string().min(8, 'Au moins 8 caractères'),
 });
 
@@ -55,7 +56,7 @@ export default function ConnexionScreen() {
     setSubmitError(null);
     try {
       await signIn({
-        phone: values.phone.replace(/\s/g, ''),
+        phone: values.phone,
         password: values.password,
       });
       // `replace` : revenir en arrière ne doit pas ramener à l'écran de
