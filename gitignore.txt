@@ -1,0 +1,40 @@
+node_modules/
+dist/
+build/
+.env
+.env.local
+*.log
+.expo/
+coverage/
+generated/
+packages/*/dist/
+*.tsbuildinfo
+
+# artefacts de compilation egares dans les sources
+packages/*/src/**/*.js
+packages/*/src/**/*.js.map
+packages/*/src/**/*.d.ts
+
+# Expo
+apps/mobile/.expo/
+apps/mobile/expo-env.d.ts
+
+# artefacts de compilation incrementale
+*.tsbuildinfo
+
+# Secrets et signatures — ne JAMAIS committer
+.env.*
+!.env.example
+*.keystore
+*.jks
+*.p8
+*.p12
+*.mobileprovision
+google-services.json
+GoogleService-Info.plist
+
+# Artefacts de build mobile
+*.apk
+*.aab
+apps/mobile/android/
+apps/mobile/ios/
