@@ -54,9 +54,16 @@ export const NOTIFICATION_TEMPLATES: Record<
     title: 'Nouvelle course',
     body: 'La commande {reference} vous est affectée.',
   },
+  /**
+   * Le code n'apparaît PAS dans ce message.
+   *
+   * Une notification est conservée en base sans limite de durée et s'affiche
+   * sur un écran verrouillé. Le code se consulte dans le suivi de la commande,
+   * où il est déchiffré à la demande pour son seul propriétaire.
+   */
   DELIVERY_OTP: {
     title: 'Votre code de livraison',
-    body: 'Code {code} pour la commande {reference}. Communiquez-le au livreur à la remise, jamais avant.',
+    body: 'Votre commande {reference} arrive. Ouvrez le suivi pour voir le code à communiquer au livreur à la remise.',
   },
   PAYMENT_SUCCEEDED: {
     title: 'Paiement reçu',

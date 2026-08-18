@@ -30,6 +30,8 @@ const deliverySelect = {
   deliveredAt: true,
   failureReason: true,
   otpVerifiedAt: true,
+  closureMode: true,
+  closureReason: true,
   order: {
     select: {
       reference: true,
@@ -354,6 +356,7 @@ export class DeliveriesService {
           status: 'DELIVERED',
           otpVerifiedAt: now,
           deliveredAt: now,
+          closureMode: 'CLIENT_OTP',
           // Traçabilité seulement : une position absente n'empêche rien.
           otpLatitude: dto.position?.latitude ?? null,
           otpLongitude: dto.position?.longitude ?? null,
@@ -394,6 +397,146 @@ export class DeliveriesService {
         orderId: delivery.orderId,
       });
     }
+
+    return updated;
+  }
+
+  /**
+   * Renvoie au CLIENT le code de sa propre livraison.
+   *
+   * Le filtre `userId` est la garantie : un livreur, un gestionnaire ou un
+   * autre client n'obtient rien. Le code n'existe nulle part ailleurs en
+   * clair — ni en base, ni dans une notification, ni dans un journal.
+   */
+  async revealOtp(userId: string, reference: string) {
+    const order = await this.prisma.db.order.findFirst({
+      where: { reference, userId },
+      select: { delivery: { select: { id: true, status: true } } },
+    });
+
+    if (!order?.delivery) {
+      throw new NotFoundException({
+        code: 'DELIVERY_NOT_FOUND',
+        message: 'Cette livraison est introuvable.',
+      });
+    }
+
+    const revealable: DeliveryStatus[] = ['IN_TRANSIT', 'ARRIVED'];
+    if (!revealable.includes(order.delivery.status)) {
+      // Avant le départ le code n'existe pas ; après la clôture il ne sert
+      // plus. Dans les deux cas, ne rien exposer.
+      return { code: null, expiresAt: null };
+    }
+
+    const revealed = await this.otp.revealForClient(order.delivery.id);
+    return revealed ?? { code: null, expiresAt: null };
+  }
+
+  /**
+   * Clôture d'exception par le gestionnaire.
+   *
+   * Raison d'être : une commande peut être réellement remise sans qu'aucun
+   * code ne puisse la valider — téléphone déchargé, réception par un gardien.
+   * Sans cette porte, le livreur n'a que `FAILED`, ce qui fausse les
+   * indicateurs et pousse à contourner le dispositif.
+   *
+   * Ce n'est PAS un contournement pour le livreur : l'action appartient à un
+   * autre rôle, exige un motif écrit, et enregistre son auteur. La règle « le
+   * terrain ne clôt jamais seul » reste entière.
+   */
+  async closeManually(managerId: string, reference: string, reason: string) {
+    const trimmed = reason.trim();
+    if (trimmed.length < 10) {
+      throw new BadRequestException({
+        code: 'CLOSURE_REASON_REQUIRED',
+        message:
+          'Indiquez précisément pourquoi le code n’a pas pu être utilisé.',
+      });
+    }
+
+    const order = await this.prisma.db.order.findUnique({
+      where: { reference },
+      select: {
+        id: true,
+        userId: true,
+        status: true,
+        delivery: { select: { id: true, status: true } },
+      },
+    });
+
+    if (!order?.delivery) {
+      throw new NotFoundException({
+        code: 'DELIVERY_NOT_FOUND',
+        message: 'Cette livraison est introuvable.',
+      });
+    }
+
+    if (
+      order.delivery.status === 'DELIVERED' ||
+      order.delivery.status === 'FAILED'
+    ) {
+      throw new ConflictException({
+        code: 'DELIVERY_ALREADY_CLOSED',
+        message: 'Cette livraison est déjà terminée.',
+      });
+    }
+
+    // Une course jamais partie n'a rien pu être remis : clôturer ici
+    // masquerait un problème au lieu de le traiter.
+    const closable: DeliveryStatus[] = ['IN_TRANSIT', 'ARRIVED'];
+    if (!closable.includes(order.delivery.status)) {
+      throw new ConflictException({
+        code: 'DELIVERY_NOT_STARTED',
+        message:
+          'Cette livraison n’a pas démarré : elle ne peut pas être clôturée.',
+      });
+    }
+
+    const now = new Date();
+    const deliveryId = order.delivery.id;
+
+    const updated = await this.prisma.db.$transaction(async (tx) => {
+      // Tout code encore actif devient caduc : la course est close.
+      await tx.deliveryOtp.updateMany({
+        where: { deliveryId, verifiedAt: null, invalidatedAt: null },
+        data: { invalidatedAt: now },
+      });
+
+      const result = await tx.delivery.update({
+        where: { id: deliveryId },
+        data: {
+          status: 'DELIVERED',
+          deliveredAt: now,
+          closureMode: 'MANAGER_OVERRIDE',
+          closedById: managerId,
+          closureReason: trimmed,
+        },
+        select: deliverySelect,
+      });
+
+      if (order.status !== 'DELIVERED' && order.status !== 'CANCELLED') {
+        await tx.order.update({
+          where: { id: order.id },
+          data: { status: 'DELIVERED' },
+        });
+        await tx.orderEvent.create({
+          data: { orderId: order.id, status: 'DELIVERED', actorId: managerId },
+        });
+      }
+
+      return result;
+    });
+
+    this.logger.warn(
+      `Livraison ${reference} close manuellement par ${managerId}.`,
+    );
+
+    await this.notifications.notifyOrderStatus({
+      userId: order.userId,
+      status: 'DELIVERED',
+      reference,
+      orderId: order.id,
+    });
 
     return updated;
   }

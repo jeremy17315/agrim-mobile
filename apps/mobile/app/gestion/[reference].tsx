@@ -6,6 +6,7 @@ import {
   type OrderStatus,
 } from '@agrim/contracts';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useState } from 'react';
 import {
   Alert,
   Linking,
@@ -22,6 +23,7 @@ import {
   useUpdateOrderStatus,
   useAssignCourier,
 } from '@/api/management';
+import { ManualClosureSheet } from '@/components/ManualClosureSheet';
 import { OrderStatusPill } from '@/components/OrderStatusPill';
 import { EmptyState, ErrorState, Skeleton } from '@/components/states';
 import { Button, Card, Icon, Text } from '@/components/ui';
@@ -41,6 +43,8 @@ export default function GestionCommandeScreen() {
   const router = useRouter();
   const { reference } = useLocalSearchParams<{ reference: string }>();
 
+  const [closing, setClosing] = useState(false);
+
   const orders = useManagedOrders({ search: reference });
   const couriers = useCouriers();
   const updateStatus = useUpdateOrderStatus();
@@ -50,6 +54,9 @@ export default function GestionCommandeScreen() {
   const action = order ? managerActionFor(order.status) : null;
   const needsCourier = order ? awaitsCourierAssignment(order.status) : false;
   const canCancel = order ? isCancellableByManager(order.status) : false;
+  // La clôture d'exception n'a de sens qu'une fois le colis parti : avant, il
+  // n'y a rien à attester.
+  const canClose = order?.status === 'OUT_FOR_DELIVERY';
   const busy = updateStatus.isPending || assignCourier.isPending;
 
   const advance = (next: OrderStatus) => {
@@ -260,6 +267,26 @@ export default function GestionCommandeScreen() {
             ) : null}
           </View>
 
+          {/*
+            Voie de secours, volontairement discrète : elle contourne la
+            confirmation par le client, donc elle ne doit pas devenir le geste
+            réflexe. Le livreur, lui, n'y a pas accès du tout.
+          */}
+          {canClose ? (
+            <View style={styles.override}>
+              <Text variant="caption" color="muted">
+                Le client ne peut pas donner son code ?
+              </Text>
+              <Button
+                label="Clôturer sans code"
+                variant="ghost"
+                size="sm"
+                onPress={() => setClosing(true)}
+                disabled={busy}
+              />
+            </View>
+          ) : null}
+
           {/* Rappel du partage des rôles, pour éviter l'attente inutile. */}
           {order.status === 'READY' && order.hasCourier ? (
             <Text variant="caption" color="muted">
@@ -269,6 +296,15 @@ export default function GestionCommandeScreen() {
           ) : null}
         </ScrollView>
       )}
+
+      {order ? (
+        <ManualClosureSheet
+          reference={order.reference}
+          visible={closing}
+          onClose={() => setClosing(false)}
+          onDone={() => void orders.refetch()}
+        />
+      ) : null}
     </View>
   );
 }
@@ -309,5 +345,12 @@ const styles = StyleSheet.create({
     padding: spacing.md,
   },
   actions: { gap: spacing.sm },
+  override: {
+    alignItems: 'center',
+    gap: spacing.xs,
+    borderTopWidth: 1,
+    borderTopColor: palette.line,
+    paddingTop: spacing.md,
+  },
   flex: { flex: 1 },
 });

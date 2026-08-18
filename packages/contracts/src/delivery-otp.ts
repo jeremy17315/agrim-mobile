@@ -102,6 +102,18 @@ export const deliveryOtpStatusSchema = z.object({
 });
 export type DeliveryOtpStatus = z.infer<typeof deliveryOtpStatusSchema>;
 
+/**
+ * Code tel que renvoyé à son propriétaire.
+ *
+ * Ce schéma n'est utilisé que par la route client. Aucune réponse destinée au
+ * livreur ne l'emploie.
+ */
+export const deliveryOtpRevealSchema = z.object({
+  code: z.string().nullable(),
+  expiresAt: z.iso.datetime().nullable(),
+});
+export type DeliveryOtpReveal = z.infer<typeof deliveryOtpRevealSchema>;
+
 /* ------------------------------ Aides ------------------------------------ */
 
 /** Mise en forme pour l'affichage côté client : « 1234 » → « 12 34 ». */

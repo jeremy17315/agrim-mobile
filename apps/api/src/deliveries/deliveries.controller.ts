@@ -3,6 +3,7 @@ import {
   Controller,
   DefaultValuePipe,
   Get,
+  Header,
   Param,
   ParseBoolPipe,
   ParseUUIDPipe,
@@ -25,6 +26,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { DeliveriesService } from './deliveries.service';
 import { TrackingService } from './tracking.service';
 import { AssignDeliveryDto } from './dto/assign-delivery.dto';
+import { CloseDeliveryDto } from './dto/close-delivery.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { PushLocationsDto } from './dto/push-locations.dto';
 import { UpdateDeliveryStatusDto } from './dto/update-delivery-status.dto';
@@ -107,6 +109,40 @@ export class DeliveriesController {
     @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.deliveries.otpStatus(user.id, id);
+  }
+
+  @Roles('CLIENT')
+  @Get('orders/:reference/otp')
+  @ApiOperation({
+    summary: 'Consulter mon code de livraison',
+    description:
+      'Réservé au propriétaire de la commande. Le code est déchiffré à la ' +
+      'demande : il n’existe en clair ni en base, ni dans une notification.',
+  })
+  // Donnée sensible : aucun cache, même privé.
+  @Header('Cache-Control', 'no-store')
+  revealOtp(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('reference') reference: string,
+  ) {
+    return this.deliveries.revealOtp(user.id, reference);
+  }
+
+  @Roles('GESTIONNAIRE', 'ADMIN')
+  @Post('orders/:reference/close')
+  @ApiOperation({
+    summary: 'Clôturer une livraison sans code (exception)',
+    description:
+      'Pour une remise réelle qu’aucun code ne pouvait valider (téléphone ' +
+      'déchargé, réception par un tiers). Motif obligatoire, auteur ' +
+      'enregistré, clôture comptabilisée séparément.',
+  })
+  closeManually(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('reference') reference: string,
+    @Body() dto: CloseDeliveryDto,
+  ) {
+    return this.deliveries.closeManually(user.id, reference, dto.reason);
   }
 
   @Roles('CLIENT')

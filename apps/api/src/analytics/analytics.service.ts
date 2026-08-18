@@ -72,6 +72,8 @@ export class AnalyticsService {
       previousOrders,
       newCustomers,
       lateDeliveries,
+      manualClosures,
+      deliveredMonth,
       variants,
       productionReceived,
       pendingProductionReviews,
@@ -117,6 +119,18 @@ export class AnalyticsService {
           assignedAt: { lt: lateBefore },
         },
       }),
+      // Clôtures d'exception du mois : une remise validée sans code client.
+      // Suivi explicitement, car c'est le signal qui dira si le parcours par
+      // code tient sur le terrain ou si les gestionnaires le contournent.
+      this.prisma.db.delivery.count({
+        where: {
+          closureMode: 'MANAGER_OVERRIDE',
+          deliveredAt: { gte: monthStart, lt: monthEnd },
+        },
+      }),
+      this.prisma.db.delivery.count({
+        where: { deliveredAt: { gte: monthStart, lt: monthEnd } },
+      }),
       this.prisma.db.productVariant.findMany({
         where: { isAvailable: true },
         select: { stock: true, lowStockThreshold: true },
@@ -154,6 +168,11 @@ export class AnalyticsService {
       averageBasket: averageBasket(revenueMonth, currentOrders),
 
       lateDeliveries,
+      manualClosures,
+      manualClosureRate:
+        deliveredMonth > 0
+          ? Math.round((manualClosures / deliveredMonth) * 100)
+          : 0,
       lowStockCount: variants.filter((v) => v.stock <= v.lowStockThreshold)
         .length,
 

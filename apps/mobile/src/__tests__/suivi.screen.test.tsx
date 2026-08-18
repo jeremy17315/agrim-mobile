@@ -38,15 +38,12 @@ const mockCancelMutate = jest.fn();
  * réclamerait un QueryClient. Le suivi lui-même est couvert par ses propres
  * tests, côté API.
  */
+// Le code de livraison est demandé au serveur, qui seul peut le déchiffrer.
 jest.mock('@/api/deliveries', () => ({
   useDeliveryTracking: () => ({ data: null, isPending: false }),
   useResendOtp: () => ({ mutate: jest.fn(), isPending: false }),
-}));
-
-// Le code de livraison est lu dans les notifications du client.
-jest.mock('@/api/notifications', () => ({
-  useNotifications: () => ({
-    data: { data: [], meta: { unread: 0 } },
+  useDeliveryCode: () => ({
+    data: { code: null, expiresAt: null },
     isPending: false,
     refetch: jest.fn(),
   }),

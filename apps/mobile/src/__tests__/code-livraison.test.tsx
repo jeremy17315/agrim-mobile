@@ -3,37 +3,34 @@
  *
  * Ce qui est verrouillé ici :
  *  - le code n'apparaît que pendant la livraison ;
- *  - il est extrait du message reçu, jamais deviné ni fabriqué ;
+ *  - il vient du serveur, qui seul peut le déchiffrer, et n'est jamais lu
+ *    dans une notification (le corps du message ne le contient plus) ;
  *  - la consigne de ne pas le donner à l'avance est toujours affichée.
  */
 import { render, screen } from '@testing-library/react-native';
 import React from 'react';
 
 const mockResend = jest.fn();
-let mockNotifications: { type: string; body: string }[];
+const mockRefetch = jest.fn();
+const mockUseDeliveryCode = jest.fn();
 
 jest.mock('@/api/deliveries', () => ({
   useResendOtp: () => ({ mutate: mockResend, isPending: false }),
-}));
-
-jest.mock('@/api/notifications', () => ({
-  useNotifications: () => ({
-    data: { data: mockNotifications, meta: { unread: 0 } },
-    isPending: false,
-    refetch: jest.fn(),
-  }),
+  useDeliveryCode: (reference: string, enabled: boolean) =>
+    mockUseDeliveryCode(reference, enabled),
 }));
 
 import { DeliveryCodeCard } from '@/components/DeliveryCodeCard';
 
+const codeState = (code: string | null, isPending = false) => ({
+  data: code === null && isPending ? undefined : { code, expiresAt: null },
+  isPending,
+  refetch: mockRefetch,
+});
+
 beforeEach(() => {
   jest.clearAllMocks();
-  mockNotifications = [
-    {
-      type: 'DELIVERY_OTP',
-      body: 'Code 4821 pour la commande AGR-2026-0042. Communiquez-le au livreur à la remise, jamais avant.',
-    },
-  ];
+  mockUseDeliveryCode.mockReturnValue(codeState('4821'));
 });
 
 describe('Code de livraison (client)', () => {
@@ -58,6 +55,16 @@ describe('Code de livraison (client)', () => {
     expect(screen.queryByText('Votre code de livraison')).toBeNull();
   });
 
+  it('ne demande pas le code au serveur hors livraison', () => {
+    // La requête est désactivée : inutile de faire déchiffrer un secret pour
+    // un écran qui ne l'affichera pas.
+    render(
+      <DeliveryCodeCard reference="AGR-2026-0042" orderStatus="PREPARING" />,
+    );
+
+    expect(mockUseDeliveryCode).toHaveBeenCalledWith('AGR-2026-0042', false);
+  });
+
   it('disparaît une fois la commande livrée', () => {
     render(
       <DeliveryCodeCard reference="AGR-2026-0042" orderStatus="DELIVERED" />,
@@ -79,7 +86,7 @@ describe('Code de livraison (client)', () => {
   });
 
   it('reste utilisable quand aucun code n’est encore arrivé', () => {
-    mockNotifications = [];
+    mockUseDeliveryCode.mockReturnValue(codeState(null));
     render(
       <DeliveryCodeCard
         reference="AGR-2026-0042"
@@ -89,6 +96,18 @@ describe('Code de livraison (client)', () => {
 
     expect(screen.getByText(/apparaîtra ici/)).toBeTruthy();
     expect(screen.getByText('Je n’ai pas reçu mon code')).toBeTruthy();
+  });
+
+  it('annonce le chargement plutôt qu’une absence de code', () => {
+    mockUseDeliveryCode.mockReturnValue(codeState(null, true));
+    render(
+      <DeliveryCodeCard
+        reference="AGR-2026-0042"
+        orderStatus="OUT_FOR_DELIVERY"
+      />,
+    );
+
+    expect(screen.getByText(/Chargement/)).toBeTruthy();
   });
 
   it('énonce le code chiffre par chiffre pour les lecteurs d’écran', () => {
@@ -103,19 +122,5 @@ describe('Code de livraison (client)', () => {
     expect(
       screen.getByLabelText('Votre code de livraison est 4 8 2 1'),
     ).toBeTruthy();
-  });
-
-  it('ignore un message d’un autre type', () => {
-    mockNotifications = [
-      { type: 'ORDER_CONFIRMED', body: 'Commande AGR-2026-0042 confirmée.' },
-    ];
-    render(
-      <DeliveryCodeCard
-        reference="AGR-2026-0042"
-        orderStatus="OUT_FOR_DELIVERY"
-      />,
-    );
-
-    expect(screen.getByText(/apparaîtra ici/)).toBeTruthy();
   });
 });

@@ -1,6 +1,7 @@
 import {
   DELIVERY_STATUSES,
   TRACKING_CONFIG,
+  deliveryOtpRevealSchema,
   deliveryOtpStatusSchema,
   type CourierSettableDeliveryStatus,
 } from '@agrim/contracts';
@@ -241,6 +242,27 @@ export function useOtpStatus(id: string, enabled = true) {
       apiRequest({
         path: `/deliveries/${id}/otp-status`,
         schema: deliveryOtpStatusSchema,
+      }),
+  });
+}
+
+/**
+ * Code de livraison, lu par son propriétaire.
+ *
+ * Le code n'est plus transporté par la notification : il est chiffré en base
+ * et n'est déchiffré que pour le client, à la demande. On ne le met donc pas
+ * en cache (`gcTime: 0`) et on ne le conserve pas après la livraison.
+ */
+export function useDeliveryCode(reference: string, enabled = true) {
+  return useQuery({
+    queryKey: ['deliveries', 'code', reference],
+    enabled: enabled && reference.length > 0,
+    gcTime: 0,
+    staleTime: 0,
+    queryFn: () =>
+      apiRequest({
+        path: `/deliveries/orders/${reference}/otp`,
+        schema: deliveryOtpRevealSchema,
       }),
   });
 }

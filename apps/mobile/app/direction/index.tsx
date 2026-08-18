@@ -1,3 +1,4 @@
+import { MANUAL_CLOSURE_ALERT_RATE } from '@agrim/contracts';
 import { RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -114,6 +115,8 @@ export default function DirectionScreen() {
             lowStock={data.lowStockCount}
             lateDeliveries={data.lateDeliveries}
             pendingReviews={data.pendingProductionReviews}
+            manualClosures={data.manualClosures}
+            manualClosureRate={data.manualClosureRate}
           />
         ) : null}
 
@@ -299,10 +302,14 @@ function Alerts({
   lowStock,
   lateDeliveries,
   pendingReviews,
+  manualClosures,
+  manualClosureRate,
 }: {
   lowStock: number;
   lateDeliveries: number;
   pendingReviews: number;
+  manualClosures: number;
+  manualClosureRate: number;
 }) {
   const items: { icon: IconName; text: string; tone: 'danger' | 'warn' }[] = [];
 
@@ -324,6 +331,18 @@ function Alerts({
         lateDeliveries === 1
           ? '1 livraison au-delà du délai de référence'
           : `${lateDeliveries} livraisons au-delà du délai de référence`,
+    });
+  }
+  if (manualClosures > 0) {
+    // Le seuil vient du contrat : au-delà, ce n'est plus une exception.
+    const excessive = manualClosureRate >= MANUAL_CLOSURE_ALERT_RATE;
+    items.push({
+      icon: 'shield-alert',
+      tone: excessive ? 'danger' : 'warn',
+      text:
+        `${manualClosures} ${manualClosures === 1 ? 'livraison close' : 'livraisons closes'} sans code client ` +
+        `(${manualClosureRate} % du mois)` +
+        (excessive ? ' — le parcours par code est à revoir' : ''),
     });
   }
   if (pendingReviews > 0) {

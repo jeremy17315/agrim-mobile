@@ -161,6 +161,14 @@ describe('Livraisons (e2e)', () => {
    * aucun chemin permettant au livreur de connaître ce code — c'est le sens
    * même de la fonctionnalité.
    */
+  /** Lecture par la route client : chemin réel de l'application. */
+  const clientReadsCode = async (reference: string) => {
+    const res = await request(app.getHttpServer())
+      .get(`${prefix}/deliveries/orders/${reference}/otp`)
+      .set('Authorization', `Bearer ${clientToken}`);
+    return res;
+  };
+
   const readOtpCode = async (deliveryId: string) => {
     const otp = await prisma.db.deliveryOtp.findFirstOrThrow({
       where: { deliveryId, verifiedAt: null, invalidatedAt: null },
@@ -378,14 +386,22 @@ describe('Livraisons (e2e)', () => {
     const code = await readOtpCode(id);
     const order = await prisma.db.order.findFirstOrThrow({
       where: { reference },
-      select: { id: true },
+      select: { id: true, userId: true },
     });
-    const notification = await prisma.db.notification.findFirst({
+    const notification = await prisma.db.notification.findFirstOrThrow({
       where: { type: 'DELIVERY_OTP', orderId: order.id },
       select: { body: true, userId: true },
     });
-    // Le client, et lui seul, reçoit le code.
-    expect(notification?.body).toContain(code);
+
+    // Le client est prévenu, mais le message ne porte PAS le code : une
+    // notification est conservée sans limite de durée et s'affiche sur un
+    // écran verrouillé. Le code se consulte dans le suivi.
+    expect(notification.userId).toBe(order.userId);
+    expect(notification.body).not.toContain(code);
+
+    // Et il est bien lisible par son propriétaire, là où il faut.
+    const revealed = await clientReadsCode(reference);
+    expect(revealed.body.code).toBe(code);
   });
 
   it('ne divulgue pas le code par la route d’état', async () => {
@@ -610,6 +626,173 @@ describe('Livraisons (e2e)', () => {
       .set('Authorization', `Bearer ${courierToken}`);
 
     expect([403, 404]).toContain(res.status);
+  });
+
+  /* ------------------ Confidentialité du code stocké -------------------- */
+
+  it('ne conserve le code en clair nulle part', async () => {
+    const { id, reference } = await deliveryArrived();
+    const code = await readOtpCode(id);
+
+    // 1. En base : seuls une empreinte et un texte chiffré.
+    const otp = await prisma.db.deliveryOtp.findFirstOrThrow({
+      where: { deliveryId: id, verifiedAt: null },
+    });
+    expect(otp.codeHash).not.toContain(code);
+    expect(otp.codeCipher).not.toContain(code);
+
+    // 2. Dans la notification : le code n'y figure plus. C'était le défaut —
+    // hacher une colonne pendant que l'autre gardait la valeur en clair.
+    const order = await prisma.db.order.findFirstOrThrow({
+      where: { reference },
+      select: { id: true },
+    });
+    const notification = await prisma.db.notification.findFirstOrThrow({
+      where: { type: 'DELIVERY_OTP', orderId: order.id },
+      select: { body: true },
+    });
+    expect(notification.body).not.toContain(code);
+
+    // 3. Dans la réponse faite au livreur.
+    const detail = await request(app.getHttpServer())
+      .get(`${prefix}/deliveries/${id}`)
+      .set('Authorization', `Bearer ${courierToken}`);
+    expect(JSON.stringify(detail.body)).not.toContain(code);
+  });
+
+  it('restitue le code à son propriétaire, et à lui seul', async () => {
+    const { id, reference } = await deliveryArrived();
+    const code = await readOtpCode(id);
+
+    const mine = await clientReadsCode(reference);
+    expect(mine.status).toBe(200);
+    expect(mine.body.code).toBe(code);
+    // Donnée sensible : pas de mise en cache.
+    expect(mine.headers['cache-control']).toContain('no-store');
+
+    // Le livreur n'a pas accès à cette route.
+    const courier = await request(app.getHttpServer())
+      .get(`${prefix}/deliveries/orders/${reference}/otp`)
+      .set('Authorization', `Bearer ${courierToken}`);
+    expect([403, 404]).toContain(courier.status);
+
+    // Le gestionnaire non plus : il clôture, il ne se substitue pas au client.
+    const manager = await request(app.getHttpServer())
+      .get(`${prefix}/deliveries/orders/${reference}/otp`)
+      .set('Authorization', `Bearer ${managerToken}`);
+    expect([403, 404]).toContain(manager.status);
+  });
+
+  it('cesse d’exposer le code une fois la livraison close', async () => {
+    const { id, reference } = await deliveryArrived();
+    const code = await readOtpCode(id);
+    await verifyOtp(id, code);
+
+    const after = await clientReadsCode(reference);
+    expect(after.status).toBe(200);
+    expect(after.body.code).toBeNull();
+  });
+
+  /* -------------------- Clôture d'exception (gestionnaire) --------------- */
+
+  it('permet au gestionnaire de clôturer une remise sans code', async () => {
+    const { reference } = await deliveryArrived();
+
+    const res = await request(app.getHttpServer())
+      .post(`${prefix}/deliveries/orders/${reference}/close`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({
+        reason: 'Téléphone du client déchargé, colis remis en main propre',
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.status).toBe('DELIVERED');
+    expect(res.body.closureMode).toBe('MANAGER_OVERRIDE');
+
+    const order = await request(app.getHttpServer())
+      .get(`${prefix}/orders/${reference}`)
+      .set('Authorization', `Bearer ${clientToken}`);
+    expect(order.body.status).toBe('DELIVERED');
+  });
+
+  it('exige un motif circonstancié', async () => {
+    const { reference } = await deliveryArrived();
+
+    // « ok » n'explique rien : en cas de litige, ce champ est la seule trace.
+    const res = await request(app.getHttpServer())
+      .post(`${prefix}/deliveries/orders/${reference}/close`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({ reason: 'ok' });
+
+    expect(res.status).toBe(400);
+  });
+
+  it('interdit au livreur de clôturer par cette porte', async () => {
+    const { reference } = await deliveryArrived();
+
+    // Le point central : l'exception appartient à un AUTRE rôle. Sinon elle
+    // rendrait toute la validation par code décorative.
+    const res = await request(app.getHttpServer())
+      .post(`${prefix}/deliveries/orders/${reference}/close`)
+      .set('Authorization', `Bearer ${courierToken}`)
+      .send({ reason: 'Client absent mais colis déposé devant la porte' });
+
+    expect(res.status).toBe(403);
+  });
+
+  it('enregistre l’auteur de la clôture', async () => {
+    const { id, reference } = await deliveryArrived();
+
+    await request(app.getHttpServer())
+      .post(`${prefix}/deliveries/orders/${reference}/close`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({
+        reason: 'Colis remis au gardien de l’immeuble, client injoignable',
+      });
+
+    const delivery = await prisma.db.delivery.findUniqueOrThrow({
+      where: { id },
+      select: { closedById: true, closureReason: true },
+    });
+    expect(delivery.closedById).not.toBeNull();
+    expect(delivery.closureReason).toContain('gardien');
+  });
+
+  it('invalide le code encore actif lors d’une clôture d’exception', async () => {
+    const { id, reference } = await deliveryArrived();
+    const code = await readOtpCode(id);
+
+    await request(app.getHttpServer())
+      .post(`${prefix}/deliveries/orders/${reference}/close`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({ reason: 'Réseau indisponible chez le client, remise constatée' });
+
+    // Le code ne doit plus rien pouvoir valider après coup.
+    const res = await verifyOtp(id, code);
+    expect(res.status).toBe(409);
+  });
+
+  it('refuse de clôturer une course qui n’a pas démarré', async () => {
+    const reference = await createOrder();
+    const assigned = await assign(reference);
+    await setStatus(assigned.body.id, 'ACCEPTED');
+
+    const res = await request(app.getHttpServer())
+      .post(`${prefix}/deliveries/orders/${reference}/close`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({ reason: 'Tentative de clôture anticipée à des fins de test' });
+
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('DELIVERY_NOT_STARTED');
+  });
+
+  it('marque les livraisons validées par code comme telles', async () => {
+    const { id } = await deliveryArrived();
+    const code = await readOtpCode(id);
+    const res = await verifyOtp(id, code);
+
+    // Les deux modes doivent être distinguables pour être mesurables.
+    expect(res.body.closureMode).toBe('CLIENT_OTP');
   });
 
   /* --------------------- Répercussion sur la commande ------------------- */

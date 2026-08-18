@@ -140,6 +140,26 @@ function useManagementMutation<TInput, TOutput>(
   });
 }
 
+/**
+ * Clôture d'exception d'une livraison.
+ *
+ * Voie de secours quand le client ne peut pas donner son code (téléphone
+ * déchargé, remise à un tiers). Réservée à la gestion : si le livreur pouvait
+ * s'en servir, la validation par code ne vaudrait plus rien. Le motif est
+ * conservé et ces clôtures sont comptées à part au tableau de bord.
+ */
+export function useCloseDelivery() {
+  return useManagementMutation(
+    ({ reference, reason }: { reference: string; reason: string }) =>
+      apiRequest({
+        path: `/deliveries/orders/${reference}/close`,
+        method: 'POST',
+        body: { reason },
+        schema: z.object({ id: z.uuid(), status: z.string() }),
+      }),
+  );
+}
+
 export function useUpdateOrderStatus() {
   return useManagementMutation(
     ({ reference, status }: { reference: string; status: OrderStatus }) =>

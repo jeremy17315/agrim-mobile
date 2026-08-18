@@ -89,3 +89,11 @@ export function distributionShares<T extends { revenue: number }>(
 
   return withShares;
 }
+
+/**
+ * Seuil d'alerte sur les clôtures d'exception, en pourcentage des livraisons.
+ *
+ * Au-delà, le parcours par code ne fonctionne pas sur le terrain : le problème
+ * est à corriger dans le produit, pas à absorber par les gestionnaires.
+ */
+export const MANUAL_CLOSURE_ALERT_RATE = 10;

@@ -417,6 +417,17 @@ export const executiveDashboardSchema = z.object({
 
   /** Courses en cours au-delà du délai de référence. */
   lateDeliveries: z.number().int().nonnegative(),
+
+  /**
+   * Livraisons closes par un gestionnaire, sans code du client.
+   *
+   * Suivi à part des livraisons confirmées : c'est la mesure de ce que la
+   * validation par code laisse passer. Un taux qui monte signale un défaut du
+   * parcours, pas un manquement des gestionnaires.
+   */
+  manualClosures: z.number().int().nonnegative(),
+  /** Part des clôtures d'exception dans les livraisons du mois, en pourcent. */
+  manualClosureRate: z.number().int().min(0).max(100),
   lowStockCount: z.number().int().nonnegative(),
 
   /** Récoltes réceptionnées dans le mois, en kilogrammes. */

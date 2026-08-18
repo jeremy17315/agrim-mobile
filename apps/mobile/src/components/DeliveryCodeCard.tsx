@@ -1,22 +1,16 @@
-import { useNotifications } from '@/api/notifications';
-import { useResendOtp } from '@/api/deliveries';
+import { useDeliveryCode, useResendOtp } from '@/api/deliveries';
 import { Button, Card, Icon, Text } from '@/components/ui';
 import { palette, radius, spacing } from '@/theme/tokens';
-import {
-  DELIVERY_OTP_CONFIG,
-  formatOtpForDisplay,
-  type OrderStatus,
-} from '@agrim/contracts';
-import { useMemo, useState } from 'react';
+import { formatOtpForDisplay, type OrderStatus } from '@agrim/contracts';
+import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 /**
  * Code de livraison, côté client.
  *
- * Le code n'est jamais poussé en notification (un écran verrouillé est
- * visible de tous) : il n'existe que dans le message consultable en
- * application. Cette carte l'extrait et le met en évidence au moment où le
- * client en a besoin — quand le livreur est en route.
+ * Le code n'est jamais poussé en notification (un écran verrouillé est visible
+ * de tous) et n'est pas stocké en clair : il est chiffré en base et demandé au
+ * serveur au moment où le client en a besoin — quand le livreur est en route.
  *
  * Consigne affichée volontairement : le code ne se communique qu'au moment de
  * la remise, jamais par téléphone à l'avance.
@@ -34,23 +28,10 @@ export function DeliveryCodeCard({
   // Le code n'a de sens qu'une fois le livreur parti.
   const isRelevant = orderStatus === 'OUT_FOR_DELIVERY';
 
-  const notifications = useNotifications(isRelevant);
+  const otp = useDeliveryCode(reference, isRelevant);
   const resend = useResendOtp(reference);
 
-  const code = useMemo(() => {
-    if (!notifications.data) return null;
-
-    // Le message le plus récent fait foi : un renvoi invalide le précédent.
-    const message = notifications.data.data.find(
-      (item) => item.type === 'DELIVERY_OTP',
-    );
-    if (!message) return null;
-
-    const match = new RegExp(`\\b(\\d{${DELIVERY_OTP_CONFIG.length}})\\b`).exec(
-      message.body,
-    );
-    return match?.[1] ?? null;
-  }, [notifications.data]);
+  const code = otp.data?.code ?? null;
 
   if (!isRelevant) return null;
 
@@ -75,7 +56,7 @@ export function DeliveryCodeCard({
         </View>
       ) : (
         <Text variant="caption" color="muted">
-          {notifications.isPending
+          {otp.isPending
             ? 'Chargement de votre code…'
             : 'Votre code apparaîtra ici dès que le livreur sera en route.'}
         </Text>
@@ -109,7 +90,7 @@ export function DeliveryCodeCard({
           resend.mutate(undefined, {
             onSuccess: () => {
               setResent(true);
-              void notifications.refetch();
+              void otp.refetch();
             },
             onError: (error) =>
               setResendError(

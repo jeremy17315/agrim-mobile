@@ -8,6 +8,7 @@ import {
 import { createHash, randomInt } from 'node:crypto';
 
 import { DELIVERY_OTP_CONFIG } from '@agrim/contracts';
+import { SecretBoxService } from '../common/crypto/secret-box.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
@@ -28,7 +29,10 @@ import { PrismaService } from '../prisma/prisma.service';
 export class DeliveryOtpService {
   private readonly logger = new Logger(DeliveryOtpService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly secretBox: SecretBoxService,
+  ) {}
 
   /**
    * Tire un code à 4 chiffres.
@@ -85,7 +89,12 @@ export class DeliveryOtpService {
       });
 
       await tx.deliveryOtp.create({
-        data: { deliveryId, codeHash: this.hash(code), expiresAt },
+        data: {
+          deliveryId,
+          codeHash: this.hash(code),
+          codeCipher: this.secretBox.encrypt(code),
+          expiresAt,
+        },
       });
     });
 
@@ -219,6 +228,34 @@ export class DeliveryOtpService {
     }
 
     return { otpId: otp.id };
+  }
+
+  /**
+   * Renvoie le code en clair à son PROPRIÉTAIRE.
+   *
+   * L'habilitation est vérifiée par l'appelant (le demandeur doit être le
+   * client de la commande). Aucune route livreur n'atteint cette méthode :
+   * c'est le pivot de la garantie « le livreur ne voit jamais le code ».
+   */
+  async revealForClient(deliveryId: string): Promise<{
+    code: string;
+    expiresAt: string;
+  } | null> {
+    const otp = await this.prisma.db.deliveryOtp.findFirst({
+      where: { deliveryId, verifiedAt: null, invalidatedAt: null },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!otp || otp.expiresAt.getTime() <= Date.now()) return null;
+
+    // Clé changée ou donnée altérée : on répond « pas de code » plutôt que de
+    // laisser remonter une erreur technique. Le client régénérera.
+    const code = this.secretBox.decrypt(otp.codeCipher);
+    if (!code) {
+      this.logger.warn(`Code illisible pour la livraison ${deliveryId}`);
+      return null;
+    }
+
+    return { code, expiresAt: otp.expiresAt.toISOString() };
   }
 
   /**

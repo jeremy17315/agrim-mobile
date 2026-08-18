@@ -45,6 +45,8 @@ const dashboard = (
   newCustomers: 198,
   averageBasket: 12_528,
   lateDeliveries: 0,
+  manualClosures: 0,
+  manualClosureRate: 0,
   lowStockCount: 0,
   productionReceivedKg: 15_400,
   pendingProductionReviews: 0,
@@ -188,6 +190,40 @@ it('détaille chaque point de vigilance', () => {
     screen.getByText('1 livraison au-delà du délai de référence'),
   ).toBeTruthy();
   expect(screen.getByText('3 déclarations de récolte à examiner')).toBeTruthy();
+});
+
+it('signale les clôtures sans code du client', () => {
+  mockDashboard = state(dashboard({ manualClosures: 2, manualClosureRate: 4 }));
+
+  render(<DirectionScreen />);
+
+  expect(
+    screen.getByText('2 livraisons closes sans code client (4 % du mois)'),
+  ).toBeTruthy();
+});
+
+it('alerte quand la clôture sans code cesse d’être une exception', () => {
+  // Au-delà du seuil, le message change de sens : ce n'est plus un incident
+  // isolé mais un défaut du parcours, et la direction doit le lire ainsi.
+  mockDashboard = state(
+    dashboard({ manualClosures: 9, manualClosureRate: 18 }),
+  );
+
+  render(<DirectionScreen />);
+
+  expect(
+    screen.getByText(
+      '9 livraisons closes sans code client (18 % du mois) — le parcours par code est à revoir',
+    ),
+  ).toBeTruthy();
+});
+
+it('n’affiche rien quand aucune livraison n’a été close sans code', () => {
+  mockDashboard = state(dashboard({ manualClosures: 0, manualClosureRate: 0 }));
+
+  render(<DirectionScreen />);
+
+  expect(screen.queryByText(/sans code client/)).toBeNull();
 });
 
 it('accorde les libellés au singulier', () => {

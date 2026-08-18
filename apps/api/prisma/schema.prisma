@@ -57,6 +57,16 @@ enum MobileMoneyProvider {
 /// Méthodes de preuve retenues. Le code de confirmation a été écarté :
 /// il échoue précisément quand on en a besoin (téléphone déchargé, tiers
 /// qui réceptionne).
+/// Origine de la clôture d'une livraison.
+enum DeliveryClosureMode {
+  /// Code dicté par le client et vérifié par le backend. Cas nominal.
+  CLIENT_OTP
+
+  /// Clôture par un gestionnaire, pour une remise réelle qu'aucun code ne
+  /// pouvait valider. Motif obligatoire, auteur enregistré.
+  MANAGER_OVERRIDE
+}
+
 enum DeliveryStatus {
   UNASSIGNED
   ASSIGNED
@@ -112,6 +122,7 @@ model User {
   notifications  Notification[]
   refreshTokens  RefreshToken[]
   deliveries     Delivery[]     @relation("CourierDeliveries")
+  closedDeliveries Delivery[]   @relation("ClosedDeliveries")
   producer       Producer?
   pushTokens     PushToken[]
 
@@ -365,9 +376,19 @@ model Delivery {
   /// Traçabilité de la validation par OTP : où et quand la course a été
   /// close. La position est facultative — le GPS documente la remise, il ne
   /// la conditionne pas.
-  otpVerifiedAt  DateTime?
-  otpLatitude    Float?
-  otpLongitude   Float?
+  otpVerifiedAt DateTime?
+  otpLatitude   Float?
+  otpLongitude  Float?
+
+  /// Comment la course a été close.
+  ///
+  /// Mesurable délibérément : une clôture d'exception reste légitime, mais si
+  /// elle devient fréquente, c'est le signe que le parcours par code ne
+  /// fonctionne pas sur le terrain. Sans cette colonne, personne ne le verrait.
+  closureMode   DeliveryClosureMode?
+  closedById    String?              @db.Uuid
+  closedBy      User?                @relation("ClosedDeliveries", fields: [closedById], references: [id])
+  closureReason String?              @db.VarChar(500)
 
   assignedAt  DateTime?
   acceptedAt  DateTime?
@@ -383,6 +404,7 @@ model Delivery {
 
   @@index([courierId, status])
   @@index([status])
+  @@index([closureMode])
 }
 
 /// Code de validation de livraison.
@@ -400,8 +422,16 @@ model DeliveryOtp {
   deliveryId String   @db.Uuid
   delivery   Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
 
-  /// SHA-256 du code. Jamais le code lui-même.
-  codeHash  String   @db.VarChar(64)
+  /// SHA-256 du code, pour la vérification (comparaison d'empreintes).
+  codeHash String @db.VarChar(64)
+
+  /// Le code CHIFFRÉ (AES-256-GCM), pour que son propriétaire puisse le relire.
+  ///
+  /// Le hachage seul ne suffisait pas : le client doit pouvoir consulter son
+  /// code afin de le dicter. Tant qu'il vivait en clair dans le corps de la
+  /// notification, hacher cette colonne ne protégeait rien.
+  codeCipher String
+
   expiresAt DateTime
 
   /// Tentatives de saisie infructueuses, plafonnées.

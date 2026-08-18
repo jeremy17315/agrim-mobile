@@ -10,6 +10,7 @@ describe('validateEnv', () => {
     DATABASE_URL: 'postgresql://user:pwd@127.0.0.1:5432/db',
     JWT_ACCESS_SECRET: 'a'.repeat(40),
     JWT_REFRESH_SECRET: 'b'.repeat(40),
+    ENCRYPTION_KEY: 'c'.repeat(40),
   };
 
   it('accepte une configuration de développement minimale', () => {
@@ -27,6 +28,20 @@ describe('validateEnv', () => {
         JWT_REFRESH_SECRET: base.JWT_ACCESS_SECRET,
       }),
     ).toThrow(/différents/);
+  });
+
+  it('refuse une clé de chiffrement égale à un secret JWT', () => {
+    // Une clé qui signe des jetons ne doit pas aussi déchiffrer des données :
+    // la fuite de l'une compromettrait les deux usages d'un coup.
+    expect(() =>
+      validateEnv({ ...base, ENCRYPTION_KEY: base.JWT_ACCESS_SECRET }),
+    ).toThrow(/ENCRYPTION_KEY/);
+  });
+
+  it('refuse une clé de chiffrement absente', () => {
+    const incomplete: Record<string, unknown> = { ...base };
+    delete incomplete.ENCRYPTION_KEY;
+    expect(() => validateEnv(incomplete)).toThrow(/ENCRYPTION_KEY/);
   });
 
   it('refuse un secret absent', () => {

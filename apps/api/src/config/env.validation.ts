@@ -23,6 +23,13 @@ const envSchema = z.object({
   STORAGE_LOCAL_ROOT: z.string().default('storage'),
   STORAGE_PUBLIC_URL: z.string().default('http://127.0.0.1:3000/files'),
 
+  /**
+   * Clé de chiffrement des données courtes réversibles (code de livraison).
+   * Distincte des secrets JWT : la rotation de l'une ne doit pas rendre
+   * l'autre inutilisable.
+   */
+  ENCRYPTION_KEY: z.string().min(32),
+
   // Origines navigateur autorisées en production (séparées par des virgules).
   // Sans front web, laisser vide : l'application mobile n'envoie pas d'Origin.
   CORS_ORIGINS: z.string().default(''),
@@ -54,12 +61,21 @@ export function validateEnv(raw: Record<string, unknown>): AppEnv {
     );
   }
 
+  // Réutiliser un secret JWT comme clé de chiffrement lierait deux périmètres
+  // qui doivent pouvoir tourner indépendamment.
+  if (
+    env.ENCRYPTION_KEY === env.JWT_ACCESS_SECRET ||
+    env.ENCRYPTION_KEY === env.JWT_REFRESH_SECRET
+  ) {
+    throw new Error('ENCRYPTION_KEY doit être distincte des secrets JWT.');
+  }
+
   if (env.NODE_ENV === 'production') {
     // Un secret d'exemple laissé en place permet de forger n'importe quelle
     // session : l'API doit refuser de démarrer, pas se contenter d'un avertissement.
     const placeholders = ['dev_only', 'change', 'secret', 'example', 'test'];
     const suspicious = (
-      ['JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET'] as const
+      ['JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET', 'ENCRYPTION_KEY'] as const
     ).filter((key) =>
       placeholders.some((p) => env[key].toLowerCase().includes(p)),
     );
@@ -71,7 +87,7 @@ export function validateEnv(raw: Record<string, unknown>): AppEnv {
 
     // 16 caractères suffisent à démarrer, pas à résister à une attaque hors ligne.
     const tooShort = (
-      ['JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET'] as const
+      ['JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET', 'ENCRYPTION_KEY'] as const
     ).filter((key) => env[key].length < 32);
     if (tooShort.length > 0) {
       throw new Error(
