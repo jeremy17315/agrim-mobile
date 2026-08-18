@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { EmptyState, Skeleton } from '@/components/states';
 import { Banner, Button, Card, Icon, Text } from '@/components/ui';
 import { formatWeight, formatXof } from '@/lib/format';
+import { useIsAuthenticated } from '@/store/auth';
 import {
   DELIVERY_RULES,
   useAmountUntilFreeDelivery,
@@ -25,6 +26,7 @@ export default function PanierScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
 
+  const isAuthenticated = useIsAuthenticated();
   const items = useCartStore((s) => s.items);
   const hydrated = useCartStore((s) => s.hydrated);
   const increment = useCartStore((s) => s.increment);
@@ -38,6 +40,19 @@ export default function PanierScreen() {
     1,
     totals.subtotal / DELIVERY_RULES.freeDeliveryThreshold,
   );
+
+  /**
+   * Commander exige un compte : le serveur rattache la commande à un
+   * utilisateur. On envoie donc vers la connexion plutôt que d'échouer sur un
+   * 401 incompréhensible.
+   */
+  const goToCheckout = () => {
+    if (!isAuthenticated) {
+      router.push('/(auth)/connexion');
+      return;
+    }
+    router.push('/commande');
+  };
 
   const confirmClear = () => {
     Alert.alert('Vider le panier', 'Tous les articles seront retirés.', [
@@ -179,12 +194,7 @@ export default function PanierScreen() {
           <Button
             label="Commander"
             icon={<Icon name="arrow-right" size={16} color="white" />}
-            onPress={() =>
-              Alert.alert(
-                'Bientôt disponible',
-                'Le tunnel de commande arrive à la prochaine étape.',
-              )
-            }
+            onPress={goToCheckout}
           />
         </View>
       </View>

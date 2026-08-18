@@ -42,6 +42,34 @@ export function setTokenProvider(provider: TokenProvider): void {
   getAccessToken = provider;
 }
 
+/**
+ * Tente de renouveler la session ; renvoie le nouveau token ou `null`.
+ * Injecté par le store d'auth, pour la même raison que ci-dessus.
+ */
+type SessionRefresher = () => Promise<string | null>;
+
+let refreshSessionToken: SessionRefresher | null = null;
+
+export function setSessionRefresher(refresher: SessionRefresher | null): void {
+  refreshSessionToken = refresher;
+}
+
+/**
+ * Un access token dure peu. Sans ce mécanisme, l'utilisateur serait éjecté en
+ * pleine commande. Les requêtes concurrentes partagent UNE seule tentative de
+ * renouvellement : sinon dix requêtes qui expirent ensemble déclencheraient dix
+ * rotations, et la détection de réutilisation du serveur révoquerait la session.
+ */
+let inFlightRefresh: Promise<string | null> | null = null;
+
+function refreshOnce(): Promise<string | null> {
+  if (!refreshSessionToken) return Promise.resolve(null);
+  inFlightRefresh ??= refreshSessionToken().finally(() => {
+    inFlightRefresh = null;
+  });
+  return inFlightRefresh;
+}
+
 export type RequestOptions<TSchema extends z.ZodTypeAny> = {
   method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
   path: string;
@@ -73,6 +101,13 @@ function buildUrl(
 
 export async function apiRequest<TSchema extends z.ZodTypeAny>(
   options: RequestOptions<TSchema>,
+): Promise<z.infer<TSchema>> {
+  return performRequest(options, true);
+}
+
+async function performRequest<TSchema extends z.ZodTypeAny>(
+  options: RequestOptions<TSchema>,
+  allowRetry: boolean,
 ): Promise<z.infer<TSchema>> {
   const {
     method = 'GET',
@@ -125,6 +160,13 @@ export async function apiRequest<TSchema extends z.ZodTypeAny>(
   const raw: unknown = await response.json().catch(() => null);
 
   if (!response.ok) {
+    // Session expirée : on renouvelle une seule fois puis on rejoue. Sans
+    // cela, l'utilisateur perdrait son panier au milieu du tunnel.
+    if (response.status === 401 && allowRetry && !isPublic) {
+      const renewed = await refreshOnce();
+      if (renewed) return performRequest(options, false);
+    }
+
     // Le backend renvoie { statusCode, code, message, details }.
     const payload = (raw ?? {}) as Record<string, unknown>;
     throw new ApiError({
