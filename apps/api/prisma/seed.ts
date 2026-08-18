@@ -144,6 +144,9 @@ async function main() {
             price: pricing[f.weightGrams as keyof typeof pricing],
             // PROVISOIRE : stocks réels non communiqués.
             stock: f.weightGrams === 22500 ? 40 : 200,
+            // Les gros formats tournent moins vite : un seuil plus bas évite
+            // une alerte permanente qui finirait par être ignorée.
+            lowStockThreshold: f.weightGrams === 22500 ? 10 : 30,
           })),
         },
       },

@@ -320,6 +320,58 @@ export const dashboardSchema = z.object({
 });
 export type DashboardMetrics = z.infer<typeof dashboardSchema>;
 
+/* ────────────────────────── Espace gestionnaire ────────────────────────── */
+
+/** Ligne de la file de préparation : de quoi décider sans ouvrir la commande. */
+export const managedOrderSchema = z.object({
+  id: idSchema,
+  reference: z.string(),
+  status: z.enum(ORDER_STATUSES),
+  total: z.number().int(),
+  itemCount: z.number().int(),
+  createdAt: z.iso.datetime(),
+  customerName: z.string(),
+  customerPhone: z.string(),
+  city: z.string().nullable(),
+  /** Présence d'une course déjà affectée : évite une double assignation. */
+  hasCourier: z.boolean(),
+});
+export type ManagedOrder = z.infer<typeof managedOrderSchema>;
+
+/** Indicateurs du jour, calculés par le serveur. */
+export const managerDashboardSchema = z.object({
+  revenueToday: z.number().int().nonnegative(),
+  ordersToday: z.number().int().nonnegative(),
+  toPrepare: z.number().int().nonnegative(),
+  activeDeliveries: z.number().int().nonnegative(),
+  lowStockCount: z.number().int().nonnegative(),
+  /** Commandes en attente depuis trop longtemps. */
+  stalePendingCount: z.number().int().nonnegative(),
+});
+export type ManagerDashboard = z.infer<typeof managerDashboardSchema>;
+
+export const stockItemSchema = z.object({
+  variantId: idSchema,
+  sku: z.string(),
+  productName: z.string(),
+  label: z.string(),
+  weightGrams: z.number().int(),
+  stock: z.number().int(),
+  lowStockThreshold: z.number().int(),
+  isAvailable: z.boolean(),
+});
+export type StockItem = z.infer<typeof stockItemSchema>;
+
+export const courierSummarySchema = z.object({
+  id: idSchema,
+  firstName: z.string(),
+  lastName: z.string(),
+  phone: z.string(),
+  /** Courses non terminées, pour répartir la charge. */
+  activeDeliveries: z.number().int().nonnegative(),
+});
+export type CourierSummary = z.infer<typeof courierSummarySchema>;
+
 /* ─────────────────────────── Espace producteur ─────────────────────────── */
 
 export const farmSchema = z.object({

@@ -75,6 +75,16 @@ export default function CompteScreen() {
                   onPress={() => router.push('/tournee')}
                 />
               ) : null}
+              {user.role === 'GESTIONNAIRE' ||
+              user.role === 'ADMIN' ||
+              user.role === 'DG' ? (
+                <MenuRow
+                  icon="layout-dashboard"
+                  label="Tableau de bord"
+                  hint="Commandes, stocks et livreurs"
+                  onPress={() => router.push('/gestion')}
+                />
+              ) : null}
               {user.role === 'PRODUCTEUR' ? (
                 <MenuRow
                   icon="sprout"

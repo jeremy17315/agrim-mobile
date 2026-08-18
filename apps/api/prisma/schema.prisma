@@ -220,6 +220,9 @@ model ProductVariant {
   weightGrams Int
   price       Int
   stock       Int     @default(0)
+  /// Seuil d'alerte de réapprovisionnement, propre à chaque variante : un
+  /// format 22,5 kg ne se réapprovisionne pas au même rythme qu'un 900 g.
+  lowStockThreshold Int @default(20)
   isAvailable Boolean @default(true)
 
   cartItems  CartItem[]
