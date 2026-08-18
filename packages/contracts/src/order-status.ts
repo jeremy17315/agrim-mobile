@@ -64,13 +64,23 @@ export const ORDER_PROGRESS_STEPS = [
 
 export type OrderProgressStep = (typeof ORDER_PROGRESS_STEPS)[number];
 
-/** Statuts pour lesquels le client peut encore annuler lui-même. */
+/**
+ * Statuts pour lesquels le client peut encore annuler lui-même.
+ *
+ * `OUT_FOR_DELIVERY` en est volontairement exclu : la marchandise est déjà
+ * partie avec le livreur. Annuler à ce stade recréditerait un stock qui n'est
+ * pas revenu en entrepôt et laisserait une course active vers un client qui
+ * croit avoir annulé. Passé ce point, la sortie se fait par le terrain — le
+ * livreur clôt la course en échec — et non par un bouton dans l'application.
+ *
+ * Même frontière que `isCancellableByManager` : bureau et client s'arrêtent où
+ * commence la route.
+ */
 export const CLIENT_CANCELLABLE_STATUSES = [
   'PENDING',
   'CONFIRMED',
   'PREPARING',
   'READY',
-  'OUT_FOR_DELIVERY',
 ] as const satisfies readonly OrderStatus[];
 
 export function isCancellableByClient(status: OrderStatus): boolean {

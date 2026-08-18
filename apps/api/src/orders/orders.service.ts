@@ -4,8 +4,11 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { computeCartTotals, PROVISIONAL_DELIVERY } from '@agrim/contracts';
-import type { OrderStatus } from '@agrim/contracts';
+import {
+  computeCartTotals,
+  isCancellableByClient,
+  PROVISIONAL_DELIVERY,
+} from '@agrim/contracts';
 
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -336,14 +339,9 @@ export class OrdersService {
       });
     }
 
-    const cancellable: OrderStatus[] = [
-      'PENDING',
-      'CONFIRMED',
-      'PREPARING',
-      'READY',
-      'OUT_FOR_DELIVERY',
-    ];
-    if (!cancellable.includes(order.status)) {
+    // La règle vit dans le contrat partagé : la dupliquer ici les ferait
+    // diverger, et c'est exactement ce qui s'était produit.
+    if (!isCancellableByClient(order.status)) {
       throw new ConflictException({
         code: 'ORDER_NOT_CANCELLABLE',
         message: 'Cette commande ne peut plus être annulée.',
