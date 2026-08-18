@@ -67,7 +67,9 @@ describe('Suivi GPS (e2e)', () => {
     };
 
     clientToken = (await login('0700000001')).accessToken;
-    managerToken = (await login('0700000005')).accessToken;
+    // 0700000004 = GESTIONNAIRE. 0700000005 est ADMIN : l'utiliser ici
+    // laisserait le rôle de gestion sans aucune couverture.
+    managerToken = (await login('0700000004')).accessToken;
     const courier = await login('0700000002');
     courierToken = courier.accessToken;
     courierId = courier.user.id;

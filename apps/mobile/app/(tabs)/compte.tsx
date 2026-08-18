@@ -85,6 +85,14 @@ export default function CompteScreen() {
                   onPress={() => router.push('/gestion')}
                 />
               ) : null}
+              {user.role === 'DG' || user.role === 'ADMIN' ? (
+                <MenuRow
+                  icon="chart-column"
+                  label="Direction"
+                  hint="Chiffre d’affaires, ventes et alertes"
+                  onPress={() => router.push('/direction')}
+                />
+              ) : null}
               {user.role === 'PRODUCTEUR' ? (
                 <MenuRow
                   icon="sprout"

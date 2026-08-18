@@ -61,7 +61,9 @@ describe('Espace producteur (e2e)', () => {
     };
 
     producerToken = (await login('0700000003')).accessToken;
-    managerToken = (await login('0700000005')).accessToken;
+    // 0700000004 = GESTIONNAIRE. 0700000005 est ADMIN : l'utiliser ici
+    // laisserait le rôle de gestion sans aucune couverture.
+    managerToken = (await login('0700000004')).accessToken;
     clientToken = (await login('0700000001')).accessToken;
 
     // Second producteur : sans lui, l'isolation n'est pas démontrable.

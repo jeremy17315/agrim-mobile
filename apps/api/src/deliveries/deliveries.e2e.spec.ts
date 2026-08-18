@@ -68,7 +68,9 @@ describe('Livraisons (e2e)', () => {
     courierToken = courier.accessToken;
     courierId = courier.user.id;
 
-    managerToken = (await login('0700000005')).accessToken;
+    // 0700000004 = GESTIONNAIRE. 0700000005 est ADMIN : l'utiliser ici
+    // laisserait le rôle de gestion sans aucune couverture.
+    managerToken = (await login('0700000004')).accessToken;
 
     // Second livreur, pour prouver l'isolation entre tournées.
     const other = await prisma.db.user.findFirst({
@@ -83,7 +85,11 @@ describe('Livraisons (e2e)', () => {
             firstName: 'Autre',
             lastName: 'Livreur',
             phone: '0700009999',
-            passwordHash: 'placeholder',
+            // Ce livreur ne sert qu'à vérifier le cloisonnement des courses.
+            // Empreinte réelle : une chaîne arbitraire ferait lever argon2 à
+            // la connexion. Le compte reste actif, sans quoi il ne serait plus
+            // assignable et les tests d'isolation perdraient leur objet.
+            passwordHash: await (await import('argon2')).hash('Agrim2026!'),
             role: 'LIVREUR',
           },
           select: { id: true },

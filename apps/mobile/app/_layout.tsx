@@ -44,6 +44,11 @@ export default function RootLayout() {
       s.user?.role === 'ADMIN' ||
       s.user?.role === 'DG',
   );
+  // Direction : périmètre plus étroit que le back-office, l'espace consolide
+  // les chiffres de toute l'entreprise.
+  const isExecutive = useAuthStore(
+    (s) => s.user?.role === 'DG' || s.user?.role === 'ADMIN',
+  );
   const restore = useAuthStore((s) => s.restore);
 
   useEffect(() => {
@@ -88,6 +93,10 @@ export default function RootLayout() {
 
             <Stack.Protected guard={isAuthenticated && isProducer}>
               <Stack.Screen name="exploitation" />
+            </Stack.Protected>
+
+            <Stack.Protected guard={isAuthenticated && isExecutive}>
+              <Stack.Screen name="direction" />
             </Stack.Protected>
 
             <Stack.Protected guard={isAuthenticated && isManager}>

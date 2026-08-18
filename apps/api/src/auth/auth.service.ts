@@ -73,7 +73,13 @@ export class AuthService {
     });
     if (!user || !user.isActive) throw invalid;
 
-    const ok = await argon2.verify(user.passwordHash, dto.password);
+    // `argon2.verify` lève si l'empreinte stockée est illisible (compte hérité,
+    // donnée corrompue). Sans ce filet, l'appelant recevrait une 500 et une
+    // trace technique là où la réponse correcte reste « identifiants
+    // invalides ».
+    const ok = await argon2
+      .verify(user.passwordHash, dto.password)
+      .catch(() => false);
     if (!ok) throw invalid;
 
     const tokens = await this.issueTokens(user.id, user.phone, user.role);

@@ -2,6 +2,7 @@ export * from './enums';
 export * from './schemas';
 export * from './cart-totals';
 export * from './company';
+export * from './analytics';
 export * from './management';
 export * from './notifications';
 export * from './order-status';

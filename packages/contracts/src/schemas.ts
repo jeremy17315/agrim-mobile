@@ -362,6 +362,60 @@ export const stockItemSchema = z.object({
 });
 export type StockItem = z.infer<typeof stockItemSchema>;
 
+/* ───────────────────────── Direction générale ──────────────────────────── */
+
+/** Un point de l'historique des ventes : un mois calendaire. */
+export const salesPointSchema = z.object({
+  /** Format `YYYY-MM`, non ambigu et triable. */
+  month: z.string().regex(/^\d{4}-\d{2}$/),
+  label: z.string(),
+  revenue: z.number().int().nonnegative(),
+  orders: z.number().int().nonnegative(),
+});
+export type SalesPoint = z.infer<typeof salesPointSchema>;
+
+/** Part d'une gamme dans le chiffre d'affaires de la période. */
+export const categoryShareSchema = z.object({
+  categoryId: idSchema,
+  name: z.string(),
+  revenue: z.number().int().nonnegative(),
+  share: z.number().int().min(0).max(100),
+});
+export type CategoryShare = z.infer<typeof categoryShareSchema>;
+
+/**
+ * Vue d'ensemble de la direction. Lecture seule, agrégée côté serveur : le
+ * mobile ne recalcule aucun montant.
+ */
+export const executiveDashboardSchema = z.object({
+  /** Mois en cours, format `YYYY-MM`. */
+  month: z.string().regex(/^\d{4}-\d{2}$/),
+  monthLabel: z.string(),
+
+  revenueMonth: z.number().int().nonnegative(),
+  /** Variation vs mois précédent. `null` si le mois de référence est vide. */
+  revenueGrowth: z.number().nullable(),
+
+  ordersMonth: z.number().int().nonnegative(),
+  ordersGrowth: z.number().nullable(),
+
+  /** Comptes clients créés dans le mois. */
+  newCustomers: z.number().int().nonnegative(),
+  averageBasket: z.number().int().nonnegative(),
+
+  /** Courses en cours au-delà du délai de référence. */
+  lateDeliveries: z.number().int().nonnegative(),
+  lowStockCount: z.number().int().nonnegative(),
+
+  /** Récoltes réceptionnées dans le mois, en kilogrammes. */
+  productionReceivedKg: z.number().int().nonnegative(),
+  pendingProductionReviews: z.number().int().nonnegative(),
+
+  sales: z.array(salesPointSchema),
+  categories: z.array(categoryShareSchema),
+});
+export type ExecutiveDashboard = z.infer<typeof executiveDashboardSchema>;
+
 export const courierSummarySchema = z.object({
   id: idSchema,
   firstName: z.string(),

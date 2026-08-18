@@ -69,7 +69,9 @@ describe('Notifications (e2e)', () => {
     courierToken = courier.accessToken;
     courierId = courier.user.id;
 
-    managerToken = (await login('0700000005')).accessToken;
+    // 0700000004 = GESTIONNAIRE. 0700000005 est ADMIN : l'utiliser ici
+    // laisserait le rôle de gestion sans aucune couverture.
+    managerToken = (await login('0700000004')).accessToken;
 
     const address = await request(app.getHttpServer())
       .post(`${prefix}/addresses`)

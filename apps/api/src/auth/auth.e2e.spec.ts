@@ -11,10 +11,13 @@ import request from 'supertest';
 
 import { AppModule } from '../app.module';
 import { HttpExceptionFilter } from '../common/filters/http-exception.filter';
+import { PrismaService } from '../prisma/prisma.service';
 
 describe('Authentification (e2e)', () => {
   let app: INestApplication;
+  let prisma: PrismaService;
   const prefix = '/api/v1';
+  let corruptedUserId: string | null = null;
 
   beforeAll(async () => {
     // Le rate limiting est couvert par throttling.e2e.spec.ts ; ici il
@@ -35,9 +38,13 @@ describe('Authentification (e2e)', () => {
       }),
     );
     await app.init();
+    prisma = app.get(PrismaService);
   });
 
   afterAll(async () => {
+    if (corruptedUserId) {
+      await prisma.db.user.delete({ where: { id: corruptedUserId } });
+    }
     await app.close();
     delete process.env.THROTTLE_DISABLED;
   });
@@ -83,6 +90,26 @@ describe('Authentification (e2e)', () => {
 
   it('renvoie le même message pour un compte inexistant', async () => {
     const res = await login('0799999999');
+    expect(res.status).toBe(401);
+    expect(res.body.code).toBe('INVALID_CREDENTIALS');
+  });
+
+  it('répond 401, pas 500, si l’empreinte stockée est illisible', async () => {
+    // Compte hérité ou donnée corrompue : argon2.verify lève. La réponse
+    // correcte reste « identifiants invalides » — jamais une erreur technique.
+    const user = await prisma.db.user.create({
+      data: {
+        firstName: 'Empreinte',
+        lastName: 'Corrompue',
+        phone: '0709998877',
+        passwordHash: 'pas-un-hash-argon2',
+        role: 'CLIENT',
+      },
+      select: { id: true },
+    });
+    corruptedUserId = user.id;
+
+    const res = await login('0709998877');
     expect(res.status).toBe(401);
     expect(res.body.code).toBe('INVALID_CREDENTIALS');
   });

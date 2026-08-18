@@ -12,6 +12,7 @@ import { RolesGuard } from './common/guards/roles.guard';
 import { validateEnv } from './config/env.validation';
 import { DeliveriesModule } from './deliveries/deliveries.module';
 import { HealthModule } from './health/health.module';
+import { AnalyticsModule } from './analytics/analytics.module';
 import { ManagementModule } from './management/management.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { ProducersModule } from './producers/producers.module';
@@ -39,6 +40,7 @@ import { ProductsModule } from './products/products.module';
     DeliveriesModule,
     StorageModule,
     NotificationsModule,
+    AnalyticsModule,
     ManagementModule,
     ProducersModule,
     HealthModule,
