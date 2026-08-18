@@ -1,6 +1,6 @@
 import { SELLING_POINTS, type ProductVariant } from '@agrim/contracts';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -8,6 +8,7 @@ import { useProduct } from '@/api/catalog';
 import { ErrorState, Skeleton } from '@/components/states';
 import { Banner, Button, Card, Icon, Pill, Text } from '@/components/ui';
 import { formatWeight, formatXof } from '@/lib/format';
+import { MAX_QUANTITY_PER_LINE, useCartStore } from '@/store/cart';
 import { palette, radius, shadow, spacing } from '@/theme/tokens';
 
 /**
@@ -23,7 +24,23 @@ export default function ProductScreen() {
   const router = useRouter();
 
   const product = useProduct(slug ?? '');
+  const addItem = useCartStore((s) => s.addItem);
+
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [quantity, setQuantity] = useState(1);
+  // Confirmation brève après l'ajout : le client doit voir que son geste a
+  // abouti sans quitter la fiche.
+  const [justAdded, setJustAdded] = useState(false);
+  const addedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Sans ce nettoyage, quitter la fiche juste après un ajout déclencherait un
+  // setState sur un composant démonté.
+  useEffect(
+    () => () => {
+      if (addedTimer.current) clearTimeout(addedTimer.current);
+    },
+    [],
+  );
 
   const variants = useMemo(() => product.data?.variants ?? [], [product.data]);
 
@@ -35,6 +52,20 @@ export default function ProductScreen() {
 
   const canOrder =
     selected !== undefined && selected.isAvailable && selected.stock > 0;
+
+  const maxQuantity = selected
+    ? Math.min(MAX_QUANTITY_PER_LINE, Math.max(1, selected.stock))
+    : 1;
+
+  const handleAdd = () => {
+    if (!product.data || !selected || !canOrder) return;
+    addItem(product.data, selected, quantity);
+    setJustAdded(true);
+    setQuantity(1);
+
+    if (addedTimer.current) clearTimeout(addedTimer.current);
+    addedTimer.current = setTimeout(() => setJustAdded(false), 2200);
+  };
 
   return (
     <View style={styles.screen}>
@@ -103,7 +134,10 @@ export default function ProductScreen() {
                     <Pressable
                       key={variant.id}
                       disabled={disabled}
-                      onPress={() => setSelectedId(variant.id)}
+                      onPress={() => {
+                        setSelectedId(variant.id);
+                        setQuantity(1);
+                      }}
                       accessibilityRole="radio"
                       accessibilityState={{ selected: active, disabled }}
                       accessibilityLabel={`${variant.label}, ${formatXof(variant.price)}${
@@ -140,6 +174,62 @@ export default function ProductScreen() {
                 />
               ) : null}
             </View>
+
+            {canOrder ? (
+              <View style={styles.section}>
+                <Text variant="micro" color="muted">
+                  QUANTITÉ
+                </Text>
+                <View style={styles.quantityRow}>
+                  <View style={styles.stepper}>
+                    <Pressable
+                      onPress={() => setQuantity((q) => Math.max(1, q - 1))}
+                      disabled={quantity <= 1}
+                      accessibilityRole="button"
+                      accessibilityLabel="Diminuer la quantité"
+                      style={styles.stepButton}
+                      hitSlop={6}
+                    >
+                      <Icon
+                        name="minus"
+                        size={15}
+                        color={quantity <= 1 ? 'muted' : 'green'}
+                      />
+                    </Pressable>
+                    <Text variant="h2" style={styles.quantityValue}>
+                      {quantity}
+                    </Text>
+                    <Pressable
+                      onPress={() =>
+                        setQuantity((q) => Math.min(maxQuantity, q + 1))
+                      }
+                      disabled={quantity >= maxQuantity}
+                      accessibilityRole="button"
+                      accessibilityLabel="Augmenter la quantité"
+                      style={styles.stepButton}
+                      hitSlop={6}
+                    >
+                      <Icon
+                        name="plus"
+                        size={15}
+                        color={quantity >= maxQuantity ? 'muted' : 'green'}
+                      />
+                    </Pressable>
+                  </View>
+                  <Text variant="caption" color="muted">
+                    Sous-total {formatXof(selected.price * quantity)}
+                  </Text>
+                </View>
+              </View>
+            ) : null}
+
+            {justAdded ? (
+              <Banner
+                tone="success"
+                message="Ajouté au panier."
+                icon={<Icon name="circle-check" size={14} color="green" />}
+              />
+            ) : null}
 
             {product.data.description ? (
               <View style={styles.section}>
@@ -182,6 +272,7 @@ export default function ProductScreen() {
               <Button
                 label={canOrder ? 'Ajouter au panier' : 'Indisponible'}
                 disabled={!canOrder}
+                onPress={handleAdd}
                 icon={
                   canOrder ? (
                     <Icon name="shopping-cart" size={16} color="white" />
@@ -238,6 +329,26 @@ const styles = StyleSheet.create({
   },
   formatActive: { borderColor: palette.green, backgroundColor: '#FCFEFB' },
   formatDisabled: { opacity: 0.5 },
+  quantityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  stepper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: palette.card,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: palette.line,
+  },
+  stepButton: {
+    width: 42,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quantityValue: { minWidth: 30, textAlign: 'center' },
   args: { gap: spacing.sm },
   argRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
   argText: { flex: 1, lineHeight: 17 },
