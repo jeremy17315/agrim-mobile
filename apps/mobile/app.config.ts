@@ -38,6 +38,9 @@ const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_ANDROID_KEY ?? '';
 const config: ExpoConfig = {
   name: 'AGRIM',
   slug: 'agrim-mobile',
+  // Compte propriétaire du projet EAS. Doit correspondre au `slug` enregistré
+  // chez Expo, sinon les builds partent sur un projet différent.
+  owner: process.env.EAS_PROJECT_OWNER ?? 'jeremy1731',
   version: '1.0.0',
   orientation: 'portrait',
   scheme: 'agrim',
@@ -127,8 +130,20 @@ const config: ExpoConfig = {
   extra: {
     apiUrl: API_URL,
     eas: {
-      // Renseigné par `eas init` ; laissé vide pour ne pas figer un ID factice.
-      projectId: process.env.EAS_PROJECT_ID ?? undefined,
+      /**
+       * Identifiant du projet EAS.
+       *
+       * Écrit en clair volontairement : ce n'est pas un secret. Il figure de
+       * toute façon dans le bundle livré, et sert d'identifiant public pour
+       * les builds et les notifications poussées.
+       *
+       * `eas init` ne peut pas écrire dans une configuration dynamique (.ts) :
+       * la valeur est donc renseignée ici. La variable d'environnement reste
+       * prioritaire, pour rattacher le projet à un autre compte sans modifier
+       * le dépôt.
+       */
+      projectId:
+        process.env.EAS_PROJECT_ID ?? '35eb97ae-3d76-48ec-8424-3bd75584ca72',
     },
   },
 };
