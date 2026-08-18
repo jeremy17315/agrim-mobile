@@ -32,6 +32,9 @@ export default function RootLayout() {
 
   const hydrated = useAuthStore((s) => s.hydrated);
   const isAuthenticated = useAuthStore((s) => s.accessToken !== null);
+  // L'espace livreur n'a de sens que pour un livreur. Ce guard masque l'onglet
+  // et la route ; le serveur reste seul juge des droits réels.
+  const isCourier = useAuthStore((s) => s.user?.role === 'LIVREUR');
   const restore = useAuthStore((s) => s.restore);
 
   useEffect(() => {
@@ -64,6 +67,10 @@ export default function RootLayout() {
             <Stack.Protected guard={isAuthenticated}>
               <Stack.Screen name="commande" />
               <Stack.Screen name="commandes" />
+            </Stack.Protected>
+
+            <Stack.Protected guard={isAuthenticated && isCourier}>
+              <Stack.Screen name="tournee" />
             </Stack.Protected>
           </Stack>
         ) : (

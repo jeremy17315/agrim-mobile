@@ -64,6 +64,15 @@ export default function CompteScreen() {
             </Card>
 
             <View style={styles.menu}>
+              {/* Espace métier : visible uniquement pour un livreur. */}
+              {user.role === 'LIVREUR' ? (
+                <MenuRow
+                  icon="truck"
+                  label="Ma tournée"
+                  hint="Courses à livrer"
+                  onPress={() => router.push('/tournee')}
+                />
+              ) : null}
               <MenuRow
                 icon="package"
                 label="Mes commandes"

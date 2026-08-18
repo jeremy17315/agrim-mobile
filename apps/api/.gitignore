@@ -1,0 +1,4 @@
+# Fichiers deposes en developpement (pilote de stockage local).
+# Motif ANCRE : sans le "/" initial, "storage/" excluait aussi src/storage/,
+# c'est-a-dire le code du module lui-meme.
+/storage/

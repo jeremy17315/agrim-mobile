@@ -5,13 +5,17 @@ import 'reflect-metadata';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
+import { resolve } from 'node:path';
 
 import { AppModule } from './app.module';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    bufferLogs: true,
+  });
   const config = app.get(ConfigService);
 
   const port = config.getOrThrow<number>('API_PORT');
@@ -23,6 +27,16 @@ async function bootstrap(): Promise<void> {
 
   // CORS ouvert en développement uniquement ; à restreindre en production.
   app.enableCors({ origin: isProd ? [] : true, credentials: true });
+
+  // Les fichiers déposés (preuves de livraison) sont servis en statique par le
+  // pilote local. Avec un stockage S3-compatible, cette ligne disparaît au
+  // profit des URL du fournisseur.
+  app.useStaticAssets(
+    resolve(config.get<string>('STORAGE_LOCAL_ROOT') ?? 'storage'),
+    {
+      prefix: '/files/',
+    },
+  );
 
   app.useGlobalPipes(
     new ValidationPipe({

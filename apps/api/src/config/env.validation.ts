@@ -16,6 +16,12 @@ const envSchema = z.object({
   JWT_ACCESS_TTL: z.string().default('15m'),
   JWT_REFRESH_SECRET: z.string().min(16),
   JWT_REFRESH_TTL: z.string().default('30d'),
+
+  // Stockage de fichiers. Le pilote local convient au développement et à un
+  // déploiement mono-serveur ; un pilote S3-compatible viendra derrière la
+  // même interface sans changer ces réglages métier.
+  STORAGE_LOCAL_ROOT: z.string().default('storage'),
+  STORAGE_PUBLIC_URL: z.string().default('http://127.0.0.1:3000/files'),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;

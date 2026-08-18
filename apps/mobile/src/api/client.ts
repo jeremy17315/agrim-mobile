@@ -43,6 +43,15 @@ export function setTokenProvider(provider: TokenProvider): void {
 }
 
 /**
+ * Jeton courant, pour les rares appels qui ne passent pas par `apiRequest`
+ * (envoi multipart d'un fichier, par exemple). Aucun secret n'est exposé :
+ * c'est le même access token que celui porté par les autres requêtes.
+ */
+export function currentAccessToken(): string | null {
+  return getAccessToken();
+}
+
+/**
  * Tente de renouveler la session ; renvoie le nouveau token ou `null`.
  * Injecté par le store d'auth, pour la même raison que ci-dessus.
  */
