@@ -1,43 +1,48 @@
 /**
- * Preuve de livraison : le livreur retient UNE méthode, ou DEUX combinées
- * (décision produit v1). Aucune livraison ne peut être validée sans preuve.
+ * Preuve de livraison v1 (décision produit) :
+ *  - SIGNATURE par défaut, PHOTO en repli, combinables ;
+ *  - au moins une preuve exigée, deux au maximum ;
+ *  - le nom du réceptionnaire est obligatoire avec une signature.
  *
- * Ces tests verrouillent deux risques :
- *  - une preuve incomplète acceptée (méthode retenue sans son champ) ;
+ * Ces tests verrouillent trois risques :
+ *  - une preuve incomplète acceptée (méthode retenue sans son fichier) ;
  *  - un fichier résiduel enregistré comme preuve alors que sa méthode
- *    n'a pas été retenue.
+ *    n'a pas été retenue ;
+ *  - une signature anonyme, inexploitable en cas de litige.
  */
 import {
+  DELIVERY_PROOF_DEFAULT_METHOD,
   DELIVERY_PROOF_METHODS,
   submitDeliveryProofSchema,
 } from '@agrim/contracts';
 
 const DELIVERY_ID = '11111111-1111-4111-8111-111111111111';
-const PHOTO_ID = '22222222-2222-4222-8222-222222222222';
-const SIGN_ID = '33333333-3333-4333-8333-333333333333';
+const SIGN_ID = '22222222-2222-4222-8222-222222222222';
+const PHOTO_ID = '33333333-3333-4333-8333-333333333333';
 
 const base = { deliveryId: DELIVERY_ID, position: null };
 
 describe('submitDeliveryProofSchema', () => {
-  it('expose exactement les trois méthodes prévues', () => {
-    expect(DELIVERY_PROOF_METHODS).toEqual([
-      'CONFIRMATION_CODE',
-      'PHOTO',
-      'SIGNATURE',
-    ]);
+  it('expose exactement les deux méthodes retenues', () => {
+    expect(DELIVERY_PROOF_METHODS).toEqual(['SIGNATURE', 'PHOTO']);
+  });
+
+  it('propose la signature comme méthode par défaut', () => {
+    expect(DELIVERY_PROOF_DEFAULT_METHOD).toBe('SIGNATURE');
   });
 
   describe('méthode unique', () => {
-    it('accepte le code seul', () => {
+    it('accepte la signature avec le nom du réceptionnaire', () => {
       const r = submitDeliveryProofSchema.safeParse({
         ...base,
-        methods: ['CONFIRMATION_CODE'],
-        code: '5831',
+        methods: ['SIGNATURE'],
+        signatureFileId: SIGN_ID,
+        receivedBy: 'Awa Koné',
       });
       expect(r.success).toBe(true);
     });
 
-    it('accepte la photo seule', () => {
+    it('accepte la photo seule, sans nom', () => {
       const r = submitDeliveryProofSchema.safeParse({
         ...base,
         methods: ['PHOTO'],
@@ -45,53 +50,26 @@ describe('submitDeliveryProofSchema', () => {
       });
       expect(r.success).toBe(true);
     });
-
-    it('accepte la signature seule', () => {
-      const r = submitDeliveryProofSchema.safeParse({
-        ...base,
-        methods: ['SIGNATURE'],
-        signatureFileId: SIGN_ID,
-      });
-      expect(r.success).toBe(true);
-    });
   });
 
-  describe('combinaison de deux méthodes', () => {
-    it('accepte code + photo', () => {
+  describe('combinaison signature + photo', () => {
+    it('accepte les deux preuves ensemble', () => {
       const r = submitDeliveryProofSchema.safeParse({
         ...base,
-        methods: ['CONFIRMATION_CODE', 'PHOTO'],
-        code: '5831',
-        photoFileId: PHOTO_ID,
-      });
-      expect(r.success).toBe(true);
-    });
-
-    it('accepte code + signature', () => {
-      const r = submitDeliveryProofSchema.safeParse({
-        ...base,
-        methods: ['CONFIRMATION_CODE', 'SIGNATURE'],
-        code: '5831',
+        methods: ['SIGNATURE', 'PHOTO'],
         signatureFileId: SIGN_ID,
-      });
-      expect(r.success).toBe(true);
-    });
-
-    it('accepte photo + signature', () => {
-      const r = submitDeliveryProofSchema.safeParse({
-        ...base,
-        methods: ['PHOTO', 'SIGNATURE'],
         photoFileId: PHOTO_ID,
-        signatureFileId: SIGN_ID,
+        receivedBy: 'Awa Koné',
       });
       expect(r.success).toBe(true);
     });
 
-    it('refuse une combinaison incomplète (code + photo sans la photo)', () => {
+    it('refuse la combinaison si la photo annoncée manque', () => {
       const r = submitDeliveryProofSchema.safeParse({
         ...base,
-        methods: ['CONFIRMATION_CODE', 'PHOTO'],
-        code: '5831',
+        methods: ['SIGNATURE', 'PHOTO'],
+        signatureFileId: SIGN_ID,
+        receivedBy: 'Awa Koné',
       });
       expect(r.success).toBe(false);
     });
@@ -103,17 +81,6 @@ describe('submitDeliveryProofSchema', () => {
       expect(r.success).toBe(false);
     });
 
-    it('refuse trois méthodes', () => {
-      const r = submitDeliveryProofSchema.safeParse({
-        ...base,
-        methods: ['CONFIRMATION_CODE', 'PHOTO', 'SIGNATURE'],
-        code: '5831',
-        photoFileId: PHOTO_ID,
-        signatureFileId: SIGN_ID,
-      });
-      expect(r.success).toBe(false);
-    });
-
     it('refuse une méthode en double', () => {
       const r = submitDeliveryProofSchema.safeParse({
         ...base,
@@ -122,28 +89,25 @@ describe('submitDeliveryProofSchema', () => {
       });
       expect(r.success).toBe(false);
     });
-  });
 
-  describe('champs requis manquants', () => {
-    it('refuse le code annoncé mais absent', () => {
+    it('refuse une méthode retirée du contrat', () => {
       const r = submitDeliveryProofSchema.safeParse({
         ...base,
         methods: ['CONFIRMATION_CODE'],
       });
       expect(r.success).toBe(false);
     });
+  });
 
-    it.each(['583', '58311', 'abcd', ''])(
-      'refuse le code invalide "%s"',
-      (code) => {
-        const r = submitDeliveryProofSchema.safeParse({
-          ...base,
-          methods: ['CONFIRMATION_CODE'],
-          code,
-        });
-        expect(r.success).toBe(false);
-      },
-    );
+  describe('champs requis manquants', () => {
+    it('refuse la signature annoncée mais absente', () => {
+      const r = submitDeliveryProofSchema.safeParse({
+        ...base,
+        methods: ['SIGNATURE'],
+        receivedBy: 'Awa Koné',
+      });
+      expect(r.success).toBe(false);
+    });
 
     it('refuse la photo annoncée mais absente', () => {
       const r = submitDeliveryProofSchema.safeParse({
@@ -152,55 +116,68 @@ describe('submitDeliveryProofSchema', () => {
       });
       expect(r.success).toBe(false);
     });
-
-    it('refuse la signature annoncée mais absente', () => {
-      const r = submitDeliveryProofSchema.safeParse({
-        ...base,
-        methods: ['SIGNATURE'],
-      });
-      expect(r.success).toBe(false);
-    });
   });
 
-  describe('champs étrangers à la sélection', () => {
-    it('refuse une photo transmise alors que seul le code est retenu', () => {
-      const r = submitDeliveryProofSchema.safeParse({
-        ...base,
-        methods: ['CONFIRMATION_CODE'],
-        code: '5831',
-        photoFileId: PHOTO_ID,
-      });
-      expect(r.success).toBe(false);
-    });
-
-    it('refuse un code transmis alors que seule la signature est retenue', () => {
+  describe('nom du réceptionnaire', () => {
+    it('refuse une signature sans nom', () => {
       const r = submitDeliveryProofSchema.safeParse({
         ...base,
         methods: ['SIGNATURE'],
         signatureFileId: SIGN_ID,
-        code: '5831',
       });
       expect(r.success).toBe(false);
     });
+
+    it('refuse un nom composé uniquement d’espaces', () => {
+      const r = submitDeliveryProofSchema.safeParse({
+        ...base,
+        methods: ['SIGNATURE'],
+        signatureFileId: SIGN_ID,
+        receivedBy: '   ',
+      });
+      expect(r.success).toBe(false);
+    });
+
+    it('n’exige pas de nom pour une photo seule', () => {
+      const r = submitDeliveryProofSchema.safeParse({
+        ...base,
+        methods: ['PHOTO'],
+        photoFileId: PHOTO_ID,
+      });
+      expect(r.success).toBe(true);
+    });
   });
 
-  describe('métadonnées', () => {
-    it('conserve le nom du réceptionnaire quand ce n’est pas le client', () => {
+  describe('champs étrangers à la sélection', () => {
+    it('refuse une photo transmise alors que seule la signature est retenue', () => {
       const r = submitDeliveryProofSchema.safeParse({
         ...base,
         methods: ['SIGNATURE'],
         signatureFileId: SIGN_ID,
         receivedBy: 'Awa Koné',
+        photoFileId: PHOTO_ID,
       });
-      expect(r.success).toBe(true);
-      if (r.success) expect(r.data.receivedBy).toBe('Awa Koné');
+      expect(r.success).toBe(false);
     });
 
-    it('accepte une position GPS complète au moment de la validation', () => {
+    it('refuse une signature transmise alors que seule la photo est retenue', () => {
+      const r = submitDeliveryProofSchema.safeParse({
+        ...base,
+        methods: ['PHOTO'],
+        photoFileId: PHOTO_ID,
+        signatureFileId: SIGN_ID,
+      });
+      expect(r.success).toBe(false);
+    });
+  });
+
+  describe('position GPS', () => {
+    it('accepte une position complète au moment de la validation', () => {
       const r = submitDeliveryProofSchema.safeParse({
         deliveryId: DELIVERY_ID,
-        methods: ['CONFIRMATION_CODE'],
-        code: '5831',
+        methods: ['SIGNATURE'],
+        signatureFileId: SIGN_ID,
+        receivedBy: 'Awa Koné',
         position: {
           latitude: 6.8189,
           longitude: -5.2767,
@@ -213,11 +190,20 @@ describe('submitDeliveryProofSchema', () => {
       expect(r.success).toBe(true);
     });
 
+    it('accepte une position nulle (GPS indisponible)', () => {
+      const r = submitDeliveryProofSchema.safeParse({
+        ...base,
+        methods: ['PHOTO'],
+        photoFileId: PHOTO_ID,
+      });
+      expect(r.success).toBe(true);
+    });
+
     it('refuse une latitude hors bornes', () => {
       const r = submitDeliveryProofSchema.safeParse({
         deliveryId: DELIVERY_ID,
-        methods: ['CONFIRMATION_CODE'],
-        code: '5831',
+        methods: ['PHOTO'],
+        photoFileId: PHOTO_ID,
         position: {
           latitude: 120,
           longitude: -5.2767,

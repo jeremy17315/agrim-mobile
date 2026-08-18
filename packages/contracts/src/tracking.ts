@@ -133,25 +133,30 @@ export function isTrackable(status: DeliveryStatus): boolean {
   );
 }
 
-/* --------------------- Preuve de livraison (au choix) -------------------- */
+/* ---------------------- Preuve de livraison (v1) ------------------------- */
 
 /**
- * Méthodes de preuve (décision client) : le livreur retient UNE méthode, ou
- * DEUX combinées s'il veut renforcer la preuve.
+ * Méthodes de preuve retenues (décision client) :
  *
- * - CONFIRMATION_CODE : code à 4 chiffres communiqué par le client. Seule
- *   méthode qui atteste la présence du destinataire.
- * - PHOTO : cliché du colis remis, horodaté et géolocalisé.
- * - SIGNATURE : tracé au doigt, avec le nom du réceptionnaire.
+ * - SIGNATURE : méthode PAR DÉFAUT. Tracé au doigt du réceptionnaire. Elle
+ *   fonctionne hors ligne et ne dépend pas du téléphone du client — décisif
+ *   quand la batterie est vide ou qu'un tiers réceptionne.
+ * - PHOTO : REPLI. Cliché du colis remis, horodaté et géolocalisé. Utilisée
+ *   quand le client est absent, refuse de signer, ou en cas de doute.
  *
- * Il n'existe pas de validation sans preuve : au moins une méthode est exigée.
+ * Les deux peuvent être combinées. Au moins une est exigée : aucune livraison
+ * ne se valide sans preuve.
+ *
+ * Note d'ingénierie : une signature au doigt n'est comparable à aucun
+ * spécimen de référence. Elle atteste un geste de réception, pas l'identité
+ * du signataire. C'est précisément pourquoi la photo reste disponible et
+ * pourquoi la position GPS est capturée dans tous les cas.
  */
-export const DELIVERY_PROOF_METHODS = [
-  'CONFIRMATION_CODE',
-  'PHOTO',
-  'SIGNATURE',
-] as const;
+export const DELIVERY_PROOF_METHODS = ['SIGNATURE', 'PHOTO'] as const;
 export type DeliveryProofMethod = (typeof DELIVERY_PROOF_METHODS)[number];
+
+/** Méthode proposée d'emblée par l'interface livreur. */
+export const DELIVERY_PROOF_DEFAULT_METHOD: DeliveryProofMethod = 'SIGNATURE';
 
 /** Nombre de méthodes combinables : au moins une, au plus deux. */
 export const DELIVERY_PROOF_MIN_METHODS = 1;
@@ -162,11 +167,8 @@ export const DELIVERY_PROOF_MAX_METHODS = 2;
  *
  * `methods` porte la ou les méthodes retenues ; les champs associés deviennent
  * requis en conséquence, et tout champ étranger à la sélection est refusé —
- * pour qu'une photo oubliée d'un écran précédent ne soit jamais enregistrée
- * comme preuve d'une livraison validée par code.
- *
- * Le serveur reste seul juge : il revalide le code et ne fait jamais confiance
- * à un résultat calculé côté mobile.
+ * pour qu'une photo prise puis abandonnée ne soit jamais enregistrée comme
+ * preuve d'une livraison validée par signature.
  */
 export const submitDeliveryProofSchema = z
   .object({
@@ -177,16 +179,14 @@ export const submitDeliveryProofSchema = z
       .min(DELIVERY_PROOF_MIN_METHODS, 'Au moins une preuve est requise')
       .max(DELIVERY_PROOF_MAX_METHODS, 'Deux preuves au maximum')
       .refine((m) => new Set(m).size === m.length, 'Méthode en double'),
-    /** Requis si CONFIRMATION_CODE est retenu. */
-    code: z
-      .string()
-      .regex(/^\d{4}$/, 'Le code doit comporter 4 chiffres')
-      .optional(),
-    /** Requis si PHOTO est retenue : identifiant renvoyé par l'upload. */
-    photoFileId: z.uuid().optional(),
     /** Requis si SIGNATURE est retenue : identifiant renvoyé par l'upload. */
     signatureFileId: z.uuid().optional(),
-    /** Nom de la personne ayant réceptionné, utile quand ce n'est pas le client. */
+    /** Requis si PHOTO est retenue : identifiant renvoyé par l'upload. */
+    photoFileId: z.uuid().optional(),
+    /**
+     * Nom du réceptionnaire. Obligatoire avec une signature : un tracé
+     * anonyme n'est exploitable dans aucun litige.
+     */
     receivedBy: z.string().max(120).optional(),
     /** Commentaire libre du livreur (incident, précision). */
     note: z.string().max(500).optional(),
@@ -194,21 +194,19 @@ export const submitDeliveryProofSchema = z
     position: geoPointSchema.nullable(),
   })
   .superRefine((value, ctx) => {
-    const has = (m: DeliveryProofMethod) => value.methods.includes(m);
-
     const required: ReadonlyArray<
-      [DeliveryProofMethod, 'code' | 'photoFileId' | 'signatureFileId', string]
+      [DeliveryProofMethod, 'signatureFileId' | 'photoFileId', string]
     > = [
-      ['CONFIRMATION_CODE', 'code', 'Code de confirmation requis'],
-      ['PHOTO', 'photoFileId', 'Photo requise'],
       ['SIGNATURE', 'signatureFileId', 'Signature requise'],
+      ['PHOTO', 'photoFileId', 'Photo requise'],
     ];
 
     for (const [method, field, message] of required) {
-      if (has(method) && !value[field]) {
+      const selected = value.methods.includes(method);
+      if (selected && !value[field]) {
         ctx.addIssue({ code: 'custom', path: [field], message });
       }
-      if (!has(method) && value[field]) {
+      if (!selected && value[field]) {
         ctx.addIssue({
           code: 'custom',
           path: [field],
@@ -216,16 +214,22 @@ export const submitDeliveryProofSchema = z
         });
       }
     }
+
+    if (value.methods.includes('SIGNATURE') && !value.receivedBy?.trim()) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['receivedBy'],
+        message: 'Nom du réceptionnaire requis avec une signature',
+      });
+    }
   });
 export type SubmitDeliveryProof = z.infer<typeof submitDeliveryProofSchema>;
 
 /** Preuve telle que relue (gestionnaire, litige client). */
 export const deliveryProofSchema = z.object({
   methods: z.array(z.enum(DELIVERY_PROOF_METHODS)).min(1),
-  photoUrl: z.url().nullable(),
   signatureUrl: z.url().nullable(),
-  /** true si le code fourni a été validé PAR LE SERVEUR. */
-  codeVerified: z.boolean(),
+  photoUrl: z.url().nullable(),
   receivedBy: z.string().nullable(),
   note: z.string().nullable(),
   latitude: latitudeSchema.nullable(),
