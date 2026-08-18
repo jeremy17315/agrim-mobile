@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 
+import { AddressesModule } from './addresses/addresses.module';
 import { AuthModule } from './auth/auth.module';
 import { CategoriesModule } from './categories/categories.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
@@ -10,6 +11,7 @@ import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { validateEnv } from './config/env.validation';
 import { HealthModule } from './health/health.module';
+import { OrdersModule } from './orders/orders.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProductsModule } from './products/products.module';
 
@@ -27,6 +29,8 @@ import { ProductsModule } from './products/products.module';
     AuthModule,
     ProductsModule,
     CategoriesModule,
+    AddressesModule,
+    OrdersModule,
     HealthModule,
   ],
   providers: [

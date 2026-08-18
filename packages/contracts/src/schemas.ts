@@ -77,6 +77,24 @@ export const addressSchema = z.object({
 });
 export type Address = z.infer<typeof addressSchema>;
 
+/**
+ * Saisie d'une adresse. `landmark` (point de repère) compte autant que la
+ * commune : c'est souvent lui qui permet réellement au livreur de trouver.
+ */
+export const createAddressSchema = z.object({
+  label: z.string().min(1).max(60),
+  city: z.string().min(1).max(80),
+  commune: z.string().max(80).optional(),
+  district: z.string().max(120).optional(),
+  landmark: z.string().max(255).optional(),
+  instructions: z.string().max(500).optional(),
+  contactPhone: phoneSchema,
+  latitude: z.number().min(-90).max(90).optional(),
+  longitude: z.number().min(-180).max(180).optional(),
+  isDefault: z.boolean().optional(),
+});
+export type CreateAddressInput = z.infer<typeof createAddressSchema>;
+
 /* ───────────────────────── Catalogue / Produits ────────────────────────── */
 
 export const categorySchema = z.object({
@@ -177,12 +195,27 @@ export const orderSchema = z.object({
 export type Order = z.infer<typeof orderSchema>;
 
 /**
+ * Ligne envoyée à la création d'une commande.
+ *
+ * On transmet UNIQUEMENT la variante et la quantité : aucun prix. Le panier
+ * vit sur l'appareil, mais un prix venant du client n'est jamais digne de
+ * confiance — le serveur relit ses propres tarifs et recalcule tout.
+ */
+export const createOrderItemSchema = z.object({
+  variantId: idSchema,
+  quantity: z.number().int().min(1).max(999),
+});
+export type CreateOrderItemInput = z.infer<typeof createOrderItemSchema>;
+
+/**
  * Création de commande.
  * `idempotencyKey` est OBLIGATOIRE : une reconnexion après perte réseau ne
  * doit jamais créer de commande en double (contexte connectivité dégradée).
  */
 export const createOrderSchema = z.object({
   addressId: idSchema,
+  /** Le panier est local : ses lignes sont envoyées ici au moment de valider. */
+  items: z.array(createOrderItemSchema).min(1).max(50),
   paymentMethod: z.enum(PAYMENT_METHODS),
   mobileMoneyProvider: z.enum(MOBILE_MONEY_PROVIDERS).optional(),
   idempotencyKey: z.uuid(),
