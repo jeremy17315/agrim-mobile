@@ -1,0 +1,451 @@
+// AGRIM-Mobile — schéma PostgreSQL
+// Toute modification passe par une migration Prisma (section 12).
+// Montants : entiers XOF, sans décimales. Poids : grammes entiers.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/* ─────────────────────────────── Enums ─────────────────────────────── */
+
+enum Role {
+  CLIENT
+  LIVREUR
+  PRODUCTEUR
+  GESTIONNAIRE
+  ADMIN
+  DG
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PREPARING
+  READY
+  OUT_FOR_DELIVERY
+  DELIVERED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  PENDING
+  AWAITING_CONFIRMATION
+  SUCCEEDED
+  FAILED
+  EXPIRED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  MOBILE_MONEY
+  CARD
+  CASH_ON_DELIVERY
+}
+
+enum MobileMoneyProvider {
+  ORANGE_MONEY
+  MTN_MOMO
+  MOOV_MONEY
+  WAVE
+}
+
+enum DeliveryStatus {
+  UNASSIGNED
+  ASSIGNED
+  ACCEPTED
+  PICKED_UP
+  IN_TRANSIT
+  DELIVERED
+  FAILED
+}
+
+enum NotificationType {
+  ORDER_CREATED
+  ORDER_CONFIRMED
+  ORDER_PREPARING
+  ORDER_READY
+  ORDER_OUT_FOR_DELIVERY
+  ORDER_DELIVERED
+  ORDER_CANCELLED
+  DELIVERY_ASSIGNED
+  PAYMENT_SUCCEEDED
+  PAYMENT_FAILED
+  LOW_STOCK
+}
+
+/* ──────────────────────────── Utilisateurs ─────────────────────────── */
+
+model User {
+  id           String  @id @default(uuid()) @db.Uuid
+  firstName    String  @db.VarChar(80)
+  lastName     String  @db.VarChar(80)
+  // Le téléphone est l'identifiant naturel en Côte d'Ivoire.
+  phone        String  @unique @db.VarChar(20)
+  email        String? @unique @db.VarChar(160)
+  passwordHash String
+  role         Role    @default(CLIENT)
+  isActive     Boolean @default(true)
+
+  addresses      Address[]
+  cart           Cart?
+  orders         Order[]
+  notifications  Notification[]
+  refreshTokens  RefreshToken[]
+  deliveries     Delivery[]     @relation("CourierDeliveries")
+  producer       Producer?
+  pushTokens     PushToken[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([role])
+}
+
+/// Refresh tokens hachés + rotation. Jamais stockés en clair.
+model RefreshToken {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @db.Uuid
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+}
+
+model PushToken {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  platform  String   @db.VarChar(10)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+/// Adresse adaptée au contexte ivoirien : GPS + repères, pas une simple rue.
+model Address {
+  id           String  @id @default(uuid()) @db.Uuid
+  userId       String  @db.Uuid
+  user         User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label        String  @db.VarChar(60)
+  city         String  @db.VarChar(80)
+  commune      String? @db.VarChar(80)
+  district     String? @db.VarChar(120)
+  landmark     String? @db.VarChar(255)
+  instructions String? @db.VarChar(500)
+  contactPhone String  @db.VarChar(20)
+  latitude     Float?
+  longitude    Float?
+  isDefault    Boolean @default(false)
+
+  orders     Order[]
+  deliveries Delivery[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+/* ───────────────────────────── Catalogue ───────────────────────────── */
+
+model Category {
+  id          String    @id @default(uuid()) @db.Uuid
+  slug        String    @unique @db.VarChar(60)
+  name        String    @db.VarChar(120)
+  description String?   @db.VarChar(500)
+  imageUrl    String?
+  sortOrder   Int       @default(0)
+  products    Product[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Product {
+  id               String  @id @default(uuid()) @db.Uuid
+  slug             String  @unique @db.VarChar(80)
+  name             String  @db.VarChar(120)
+  shortDescription String? @db.VarChar(200)
+  description      String? @db.VarChar(2000)
+  brand            String  @default("RIZ BOAGNI") @db.VarChar(80)
+  imageUrl         String?
+  isFeatured       Boolean @default(false)
+  isActive         Boolean @default(true)
+
+  categoryId String           @db.Uuid
+  category   Category         @relation(fields: [categoryId], references: [id])
+  variants   ProductVariant[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([categoryId])
+  @@index([isActive, isFeatured])
+}
+
+/// Variante = format commercial. Prix en XOF entier, poids en grammes.
+model ProductVariant {
+  id          String  @id @default(uuid()) @db.Uuid
+  productId   String  @db.Uuid
+  product     Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  sku         String  @unique @db.VarChar(60)
+  label       String  @db.VarChar(40)
+  weightGrams Int
+  price       Int
+  stock       Int     @default(0)
+  isAvailable Boolean @default(true)
+
+  cartItems  CartItem[]
+  orderItems OrderItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([productId])
+}
+
+/* ─────────────────────────────── Panier ────────────────────────────── */
+
+model Cart {
+  id     String     @id @default(uuid()) @db.Uuid
+  userId String     @unique @db.Uuid
+  user   User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items  CartItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model CartItem {
+  id        String         @id @default(uuid()) @db.Uuid
+  cartId    String         @db.Uuid
+  cart      Cart           @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  variantId String         @db.Uuid
+  variant   ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  quantity  Int
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Un seul item par variante et par panier.
+  @@unique([cartId, variantId])
+  @@index([cartId])
+}
+
+/* ────────────────────────────── Commandes ──────────────────────────── */
+
+model Order {
+  id        String      @id @default(uuid()) @db.Uuid
+  reference String      @unique @db.VarChar(20)
+  userId    String      @db.Uuid
+  user      User        @relation(fields: [userId], references: [id])
+  status    OrderStatus @default(PENDING)
+
+  // Prix figés au moment de la commande (ne suivent pas le catalogue).
+  subtotal    Int
+  deliveryFee Int
+  total       Int
+
+  addressId String  @db.Uuid
+  address   Address @relation(fields: [addressId], references: [id])
+  note      String? @db.VarChar(500)
+
+  /// Empêche les doublons quand le réseau coupe et que le mobile rejoue.
+  idempotencyKey String @unique @db.Uuid
+
+  items    OrderItem[]
+  payment  Payment?
+  delivery Delivery?
+  events   OrderEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, status])
+  @@index([status, createdAt])
+}
+
+model OrderItem {
+  id        String         @id @default(uuid()) @db.Uuid
+  orderId   String         @db.Uuid
+  order     Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  variantId String         @db.Uuid
+  variant   ProductVariant @relation(fields: [variantId], references: [id])
+
+  // Dénormalisé volontairement : l'historique doit rester lisible même si
+  // le produit est renommé ou supprimé du catalogue.
+  productName  String @db.VarChar(120)
+  variantLabel String @db.VarChar(40)
+  unitPrice    Int
+  quantity     Int
+  lineTotal    Int
+
+  @@index([orderId])
+}
+
+/// Journal d'audit des transitions de statut.
+model OrderEvent {
+  id        String      @id @default(uuid()) @db.Uuid
+  orderId   String      @db.Uuid
+  order     Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  status    OrderStatus
+  actorId   String?     @db.Uuid
+  comment   String?     @db.VarChar(500)
+  createdAt DateTime    @default(now())
+
+  @@index([orderId])
+}
+
+/* ────────────────────────────── Paiement ───────────────────────────── */
+
+/// Le statut fait foi côté serveur uniquement (webhook), jamais côté mobile.
+model Payment {
+  id       String               @id @default(uuid()) @db.Uuid
+  orderId  String               @unique @db.Uuid
+  order    Order                @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  method   PaymentMethod
+  provider MobileMoneyProvider?
+  status   PaymentStatus        @default(PENDING)
+  amount   Int
+
+  providerReference String?   @db.VarChar(120)
+  failureReason     String?   @db.VarChar(255)
+  expiresAt         DateTime?
+  paidAt            DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+}
+
+/* ────────────────────────────── Livraison ──────────────────────────── */
+
+model Delivery {
+  id      String         @id @default(uuid()) @db.Uuid
+  orderId String         @unique @db.Uuid
+  order   Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  status  DeliveryStatus @default(UNASSIGNED)
+
+  courierId String? @db.Uuid
+  courier   User?   @relation("CourierDeliveries", fields: [courierId], references: [id])
+
+  addressId String  @db.Uuid
+  address   Address @relation(fields: [addressId], references: [id])
+
+  // Preuve de livraison (section 32), activable progressivement.
+  proofOtp       String?   @db.VarChar(10)
+  proofPhotoUrl  String?
+  proofLatitude  Float?
+  proofLongitude Float?
+  failureReason  String?   @db.VarChar(255)
+
+  assignedAt  DateTime?
+  acceptedAt  DateTime?
+  deliveredAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([courierId, status])
+  @@index([status])
+}
+
+/* ──────────────────────────── Notifications ────────────────────────── */
+
+model Notification {
+  id      String           @id @default(uuid()) @db.Uuid
+  userId  String           @db.Uuid
+  user    User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type    NotificationType
+  title   String           @db.VarChar(120)
+  body    String           @db.VarChar(500)
+  isRead  Boolean          @default(false)
+  orderId String?          @db.Uuid
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, isRead])
+}
+
+/* ───────────────────────────── Producteur ──────────────────────────── */
+
+model Producer {
+  id          String @id @default(uuid()) @db.Uuid
+  userId      String @unique @db.Uuid
+  user        User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  displayName String @db.VarChar(120)
+  region      String? @db.VarChar(80)
+  farms       Farm[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Farm {
+  id         String  @id @default(uuid()) @db.Uuid
+  producerId String  @db.Uuid
+  producer   Producer @relation(fields: [producerId], references: [id], onDelete: Cascade)
+  name       String  @db.VarChar(120)
+  location   String? @db.VarChar(160)
+  areaHectares Float?
+  latitude   Float?
+  longitude  Float?
+
+  productions Production[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([producerId])
+}
+
+model Production {
+  id          String   @id @default(uuid()) @db.Uuid
+  farmId      String   @db.Uuid
+  farm        Farm     @relation(fields: [farmId], references: [id], onDelete: Cascade)
+  season      String   @db.VarChar(40)
+  cropVariety String   @db.VarChar(80)
+  /// Quantité en kilogrammes.
+  quantityKg  Int
+  harvestedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([farmId])
+}
+
+/* ─────────────────────────── Fichiers / Config ─────────────────────── */
+
+model FileAsset {
+  id         String   @id @default(uuid()) @db.Uuid
+  key        String   @unique
+  url        String
+  mimeType   String   @db.VarChar(100)
+  sizeBytes  Int
+  uploadedBy String?  @db.Uuid
+  createdAt  DateTime @default(now())
+}
+
+/// Paramètres société modifiables sans redéploiement (section 20).
+model CompanySetting {
+  id    String @id @default(uuid()) @db.Uuid
+  key   String @unique @db.VarChar(60)
+  value String
+  updatedAt DateTime @updatedAt
+}
+
+/// Compteur de références de commande, par année. Évite les collisions.
+model OrderCounter {
+  year    Int @id
+  current Int @default(0)
+}

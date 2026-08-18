@@ -1,0 +1,11 @@
+node_modules/
+dist/
+build/
+.env
+.env.local
+*.log
+.expo/
+coverage/
+generated/
+packages/*/dist/
+*.tsbuildinfo
