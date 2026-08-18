@@ -9,3 +9,8 @@ coverage/
 generated/
 packages/*/dist/
 *.tsbuildinfo
+
+# artefacts de compilation egares dans les sources
+packages/*/src/**/*.js
+packages/*/src/**/*.js.map
+packages/*/src/**/*.d.ts
