@@ -4,14 +4,19 @@
  */
 import 'dotenv/config';
 
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 
 import { AppModule } from '../app.module';
+import { configureApp } from '../bootstrap';
+import { PrismaService } from '../prisma/prisma.service';
 
 describe('Rate limiting de la connexion (e2e)', () => {
   let app: INestApplication;
+  let prisma: PrismaService;
+  // Préfixe réservé à cette suite : permet un nettoyage sans risque.
+  const testPhonePrefix = '075555';
 
   beforeAll(async () => {
     // Cette suite exige le rate limiting actif.
@@ -22,13 +27,17 @@ describe('Rate limiting de la connexion (e2e)', () => {
 
     app = moduleRef.createNestApplication();
     app.setGlobalPrefix('api/v1');
-    app.useGlobalPipes(
-      new ValidationPipe({ whitelist: true, transform: true }),
-    );
+    configureApp(app, { isProd: false });
     await app.init();
+    prisma = app.get(PrismaService);
   });
 
   afterAll(async () => {
+    // Les tentatives d'inscription non bloquées créent de vrais comptes :
+    // les laisser fausserait les suites suivantes.
+    await prisma.db.user.deleteMany({
+      where: { phone: { startsWith: testPhonePrefix } },
+    });
     await app.close();
   });
 
@@ -47,5 +56,35 @@ describe('Rate limiting de la connexion (e2e)', () => {
     expect(statuses).toContain(401);
     expect(statuses).toContain(429);
     expect(statuses.at(-1)).toBe(429);
+  });
+
+  it('borne aussi la création de comptes (limite 5 / 5 min)', async () => {
+    // Sans limite, un robot inscrit des milliers de comptes.
+    const statuses: number[] = [];
+    for (let i = 0; i < 7; i += 1) {
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/register')
+        .send({
+          firstName: 'Robot',
+          lastName: 'Test',
+          phone: `${testPhonePrefix}00${String(i).padStart(2, '0')}`,
+          password: 'Agrim2026!',
+        });
+      statuses.push(res.status);
+    }
+
+    expect(statuses).toContain(429);
+  });
+
+  it('borne le renouvellement de jeton (limite 20/min)', async () => {
+    const statuses: number[] = [];
+    for (let i = 0; i < 25; i += 1) {
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/auth/refresh')
+        .send({ refreshToken: 'jeton-invalide' });
+      statuses.push(res.status);
+    }
+
+    expect(statuses).toContain(429);
   });
 });

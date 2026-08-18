@@ -2,15 +2,14 @@
 import 'dotenv/config';
 import 'reflect-metadata';
 
-import { Logger, ValidationPipe } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import helmet from 'helmet';
-import { resolve } from 'node:path';
 
 import { AppModule } from './app.module';
+import { configureApp } from './bootstrap';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -23,29 +22,29 @@ async function bootstrap(): Promise<void> {
   const isProd = config.get<string>('NODE_ENV') === 'production';
 
   app.setGlobalPrefix(prefix);
-  app.use(helmet({ contentSecurityPolicy: isProd }));
 
-  // CORS ouvert en développement uniquement ; à restreindre en production.
-  app.enableCors({ origin: isProd ? [] : true, credentials: true });
+  // Réglages partagés avec les tests d'intégration : voir `bootstrap.ts`.
+  configureApp(app, { isProd });
 
-  // Les fichiers déposés (preuves de livraison) sont servis en statique par le
-  // pilote local. Avec un stockage S3-compatible, cette ligne disparaît au
-  // profit des URL du fournisseur.
-  app.useStaticAssets(
-    resolve(config.get<string>('STORAGE_LOCAL_ROOT') ?? 'storage'),
-    {
-      prefix: '/files/',
-    },
-  );
+  // CORS. L'application mobile n'est pas un navigateur : elle n'envoie pas
+  // d'Origin et n'est donc pas concernée. La liste ne sert qu'à un éventuel
+  // client web (back-office). Vide en production = aucun navigateur autorisé,
+  // ce qui est le bon défaut tant qu'aucun front web n'existe.
+  const corsOrigins = (config.get<string>('CORS_ORIGINS') ?? '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
 
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
-      transformOptions: { enableImplicitConversion: true },
-    }),
-  );
+  app.enableCors({
+    origin: isProd ? corsOrigins : true,
+    // Pas de cookie de session : l'authentification passe par un en-tête
+    // Bearer. Autoriser les credentials élargirait la surface sans usage.
+    credentials: false,
+  });
+
+  // Les preuves de livraison NE SONT PAS servies en statique : une signature
+  // manuscrite est une donnée personnelle. La lecture passe par
+  // `GET /files/proofs/:id`, authentifié et soumis à un contrôle d'accès.
 
   // Swagger désactivé en production : ne pas exposer la surface d'API.
   if (!isProd) {

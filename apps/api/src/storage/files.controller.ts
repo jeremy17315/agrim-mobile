@@ -1,15 +1,22 @@
 import {
   Controller,
+  Get,
+  Header,
+  Param,
+  ParseUUIDPipe,
   Post,
+  Res,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
   ApiBearerAuth,
   ApiBody,
   ApiConsumes,
   ApiOperation,
+  ApiParam,
   ApiTags,
 } from '@nestjs/swagger';
 
@@ -52,5 +59,29 @@ export class FilesController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.files.uploadProof(file, user.id);
+  }
+
+  /**
+   * Consultation d'une preuve.
+   *
+   * Ces fichiers étaient auparavant servis en statique sur `/files/` : une
+   * signature manuscrite était lisible par quiconque connaissait l'URL. La
+   * lecture passe désormais par ce point d'entrée authentifié.
+   */
+  @Get('proofs/:id')
+  @ApiOperation({ summary: 'Consulter une preuve de livraison' })
+  @ApiParam({ name: 'id', description: 'Identifiant du fichier' })
+  // Donnée personnelle : ni cache partagé, ni conservation par un intermédiaire.
+  @Header('Cache-Control', 'private, no-store')
+  @Header('X-Content-Type-Options', 'nosniff')
+  // Le contenu est téléchargé, jamais interprété comme une page.
+  @Header('Content-Disposition', 'inline')
+  async readProof(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Res() res: Response,
+  ): Promise<void> {
+    const { content, mimeType } = await this.files.readProof(id, user);
+    res.type(mimeType).send(content);
   }
 }

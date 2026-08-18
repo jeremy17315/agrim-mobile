@@ -10,13 +10,14 @@
  */
 import 'dotenv/config';
 
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication } from '@nestjs/common';
 import { APP_FILTER } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 
 import { AppModule } from '../app.module';
+import { configureApp } from '../bootstrap';
 import { HttpExceptionFilter } from '../common/filters/http-exception.filter';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -45,13 +46,7 @@ describe('Espace gestionnaire (e2e)', () => {
 
     app = moduleRef.createNestApplication();
     app.setGlobalPrefix('api/v1');
-    app.useGlobalPipes(
-      new ValidationPipe({
-        whitelist: true,
-        forbidNonWhitelisted: true,
-        transform: true,
-      }),
-    );
+    configureApp(app, { isProd: false });
     await app.init();
     prisma = app.get(PrismaService);
 

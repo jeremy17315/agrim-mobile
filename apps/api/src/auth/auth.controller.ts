@@ -27,6 +27,8 @@ export class AuthController {
 
   @Public()
   @Post('register')
+  // Sans limite, un robot crée des milliers de comptes et pollue la base.
+  @Throttle({ default: { limit: 5, ttl: 300_000 } })
   @ApiOperation({ summary: 'Créer un compte client' })
   register(@Body() dto: RegisterDto) {
     return this.auth.register(dto);
@@ -45,6 +47,8 @@ export class AuthController {
   @Public()
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
+  // Route publique : on borne les tentatives de devinette de jeton.
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @ApiOperation({ summary: 'Renouveler les tokens (avec rotation)' })
   refresh(@Body() dto: RefreshDto) {
     return this.auth.refresh(dto.refreshToken);
@@ -70,6 +74,9 @@ export class AuthController {
 
   @Post('change-password')
   @HttpCode(HttpStatus.NO_CONTENT)
+  // Exige le mot de passe actuel : même limite que la connexion, pour qu'une
+  // session volée ne serve pas à le retrouver par essais successifs.
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Changer son mot de passe' })
   async changePassword(

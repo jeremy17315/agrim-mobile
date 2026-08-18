@@ -23,6 +23,10 @@ const envSchema = z.object({
   STORAGE_LOCAL_ROOT: z.string().default('storage'),
   STORAGE_PUBLIC_URL: z.string().default('http://127.0.0.1:3000/files'),
 
+  // Origines navigateur autorisées en production (séparées par des virgules).
+  // Sans front web, laisser vide : l'application mobile n'envoie pas d'Origin.
+  CORS_ORIGINS: z.string().default(''),
+
   // Notifications poussées. Désactivé par défaut : en développement et en
   // test, aucun appel au service Expo n'est émis, les notifications restent
   // consultables dans l'application.
@@ -39,11 +43,42 @@ export function validateEnv(raw: Record<string, unknown>): AppEnv {
       .join('\n');
     throw new Error(`Configuration invalide :\n${details}`);
   }
-  if (
-    parsed.data.NODE_ENV === 'production' &&
-    parsed.data.JWT_ACCESS_SECRET.startsWith('dev_only')
-  ) {
-    throw new Error('Secrets de développement interdits en production.');
+  const env = parsed.data;
+
+  // Les deux jetons n'ont pas la même durée de vie ni le même usage. Avec un
+  // secret commun, un access token vaudrait refresh token (et l'inverse) :
+  // la rotation et la révocation ne protégeraient plus rien.
+  if (env.JWT_ACCESS_SECRET === env.JWT_REFRESH_SECRET) {
+    throw new Error(
+      'JWT_ACCESS_SECRET et JWT_REFRESH_SECRET doivent être différents.',
+    );
   }
-  return parsed.data;
+
+  if (env.NODE_ENV === 'production') {
+    // Un secret d'exemple laissé en place permet de forger n'importe quelle
+    // session : l'API doit refuser de démarrer, pas se contenter d'un avertissement.
+    const placeholders = ['dev_only', 'change', 'secret', 'example', 'test'];
+    const suspicious = (
+      ['JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET'] as const
+    ).filter((key) =>
+      placeholders.some((p) => env[key].toLowerCase().includes(p)),
+    );
+    if (suspicious.length > 0) {
+      throw new Error(
+        `Secrets de développement interdits en production : ${suspicious.join(', ')}.`,
+      );
+    }
+
+    // 16 caractères suffisent à démarrer, pas à résister à une attaque hors ligne.
+    const tooShort = (
+      ['JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET'] as const
+    ).filter((key) => env[key].length < 32);
+    if (tooShort.length > 0) {
+      throw new Error(
+        `Secrets trop courts en production (32 caractères minimum) : ${tooShort.join(', ')}.`,
+      );
+    }
+  }
+
+  return env;
 }

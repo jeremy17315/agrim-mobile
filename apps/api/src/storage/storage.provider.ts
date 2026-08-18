@@ -31,6 +31,12 @@ export abstract class StorageProvider {
    */
   abstract put(folder: string, file: StorageUpload): Promise<StoredFile>;
 
+  /**
+   * Lit un fichier. Renvoie `null` s'il n'existe pas, pour que l'appelant
+   * réponde 404 plutôt que de laisser fuiter une erreur système.
+   */
+  abstract read(key: string): Promise<Buffer | null>;
+
   /** Supprime un fichier. Idempotent : l'absence n'est pas une erreur. */
   abstract remove(key: string): Promise<void>;
 }

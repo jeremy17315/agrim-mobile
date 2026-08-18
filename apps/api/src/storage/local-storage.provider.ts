@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
-import { mkdir, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 
 import {
@@ -48,6 +48,15 @@ export class LocalStorageProvider extends StorageProvider {
       sizeBytes: file.buffer.byteLength,
       mimeType: file.mimeType,
     };
+  }
+
+  async read(key: string): Promise<Buffer | null> {
+    try {
+      return await readFile(this.resolveKey(key));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    }
   }
 
   async remove(key: string): Promise<void> {

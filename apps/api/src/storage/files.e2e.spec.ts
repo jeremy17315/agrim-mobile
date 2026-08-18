@@ -8,15 +8,17 @@
  */
 import 'dotenv/config';
 
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication } from '@nestjs/common';
 import { APP_FILTER } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 
 import { AppModule } from '../app.module';
+import { configureApp } from '../bootstrap';
 import { HttpExceptionFilter } from '../common/filters/http-exception.filter';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -39,6 +41,7 @@ describe('Dépôt de fichiers (e2e)', () => {
 
   let courierToken: string;
   let clientToken: string;
+  let managerToken: string;
   const createdFileIds: string[] = [];
 
   beforeAll(async () => {
@@ -50,13 +53,7 @@ describe('Dépôt de fichiers (e2e)', () => {
 
     app = moduleRef.createNestApplication<NestExpressApplication>();
     app.setGlobalPrefix('api/v1');
-    app.useGlobalPipes(
-      new ValidationPipe({
-        whitelist: true,
-        forbidNonWhitelisted: true,
-        transform: true,
-      }),
-    );
+    configureApp(app, { isProd: false });
     await app.init();
     prisma = app.get(PrismaService);
 
@@ -68,6 +65,7 @@ describe('Dépôt de fichiers (e2e)', () => {
     };
     courierToken = await login('0700000002');
     clientToken = await login('0700000001');
+    managerToken = await login('0700000004');
   });
 
   afterAll(async () => {
@@ -198,5 +196,70 @@ describe('Dépôt de fichiers (e2e)', () => {
     });
     // Traçabilité : savoir qui a déposé une preuve compte en cas de litige.
     expect(asset.uploadedBy).toEqual(expect.any(String));
+  });
+
+  describe('consultation d’une preuve', () => {
+    let fileId: string;
+
+    beforeAll(async () => {
+      const res = await upload(PNG_1PX, 'preuve.png', 'image/png');
+      fileId = res.body.id;
+      createdFileIds.push(fileId);
+    });
+
+    it('refuse un accès sans jeton', async () => {
+      // Ces fichiers étaient auparavant servis en statique, sans aucun contrôle.
+      const res = await request(app.getHttpServer()).get(
+        `${prefix}/files/proofs/${fileId}`,
+      );
+      expect(res.status).toBe(401);
+    });
+
+    it('laisse le livreur relire la preuve qu’il a déposée', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`${prefix}/files/proofs/${fileId}`)
+        .set('Authorization', `Bearer ${courierToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.headers['content-type']).toContain('image/png');
+      // Donnée personnelle : aucun cache intermédiaire.
+      expect(res.headers['cache-control']).toContain('no-store');
+    });
+
+    it('autorise l’encadrement, qui traite les litiges', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`${prefix}/files/proofs/${fileId}`)
+        .set('Authorization', `Bearer ${managerToken}`);
+
+      expect(res.status).toBe(200);
+    });
+
+    it('refuse un client étranger à la livraison', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`${prefix}/files/proofs/${fileId}`)
+        .set('Authorization', `Bearer ${clientToken}`);
+
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe('FILE_ACCESS_DENIED');
+    });
+
+    it('renvoie 404 pour un fichier inexistant', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`${prefix}/files/proofs/${randomUUID()}`)
+        .set('Authorization', `Bearer ${managerToken}`);
+
+      expect(res.status).toBe(404);
+    });
+
+    it('rejette un identifiant mal formé plutôt que de toucher au disque', async () => {
+      // Le paramètre est validé comme UUID : une tentative de traversée
+      // n'atteint jamais la couche de stockage.
+      const res = await request(app.getHttpServer())
+        .get(`${prefix}/files/proofs/${encodeURIComponent('../../etc/passwd')}`)
+        .set('Authorization', `Bearer ${managerToken}`);
+
+      expect(res.status).toBe(400);
+      expect(JSON.stringify(res.body)).not.toMatch(/ENOENT|passwd|prisma/i);
+    });
   });
 });
