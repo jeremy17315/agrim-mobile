@@ -1,0 +1,98 @@
+import {
+  Body,
+  Controller,
+  DefaultValuePipe,
+  Get,
+  Param,
+  ParseBoolPipe,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Query,
+} from '@nestjs/common';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiQuery,
+  ApiTags,
+} from '@nestjs/swagger';
+
+import {
+  CurrentUser,
+  type AuthenticatedUser,
+} from '../common/decorators/current-user.decorator';
+import { Roles } from '../common/decorators/roles.decorator';
+import { DeliveriesService } from './deliveries.service';
+import { AssignDeliveryDto } from './dto/assign-delivery.dto';
+import { SubmitProofDto } from './dto/submit-proof.dto';
+import { UpdateDeliveryStatusDto } from './dto/update-delivery-status.dto';
+
+/**
+ * Espace livreur.
+ *
+ * Chaque route est restreinte au rôle LIVREUR et filtrée sur l'identifiant du
+ * JWT : un livreur ne voit et ne modifie que SES courses. L'affectation, elle,
+ * relève du gestionnaire.
+ */
+@ApiTags('deliveries')
+@ApiBearerAuth()
+@Controller('deliveries')
+export class DeliveriesController {
+  constructor(private readonly deliveries: DeliveriesService) {}
+
+  @Roles('LIVREUR')
+  @Get('mine')
+  @ApiOperation({ summary: 'Ma tournée' })
+  @ApiQuery({ name: 'includeDone', required: false, type: Boolean })
+  listMine(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('includeDone', new DefaultValuePipe(false), ParseBoolPipe)
+    includeDone = false,
+  ) {
+    return this.deliveries.listMine(user.id, includeDone);
+  }
+
+  @Roles('LIVREUR')
+  @Get(':id')
+  @ApiOperation({ summary: 'Détail d’une course' })
+  findOne(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.deliveries.findOne(user.id, id);
+  }
+
+  @Roles('LIVREUR')
+  @Patch(':id/status')
+  @ApiOperation({ summary: 'Faire avancer la course' })
+  updateStatus(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateDeliveryStatusDto,
+  ) {
+    return this.deliveries.updateStatus(user.id, id, dto);
+  }
+
+  @Roles('LIVREUR')
+  @Post(':id/proof')
+  @ApiOperation({
+    summary: 'Enregistrer la preuve de livraison (signature et/ou photo)',
+  })
+  submitProof(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SubmitProofDto,
+  ) {
+    return this.deliveries.submitProof(user.id, id, dto);
+  }
+
+  @Roles('GESTIONNAIRE', 'ADMIN', 'DG')
+  @Post('orders/:reference/assign')
+  @ApiOperation({ summary: 'Affecter un livreur à une commande' })
+  assign(
+    @Param('reference') reference: string,
+    @Body() dto: AssignDeliveryDto,
+  ) {
+    return this.deliveries.assign(reference, dto.courierId);
+  }
+}

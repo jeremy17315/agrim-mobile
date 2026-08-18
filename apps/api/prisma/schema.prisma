@@ -54,6 +54,14 @@ enum MobileMoneyProvider {
   WAVE
 }
 
+/// Méthodes de preuve retenues. Le code de confirmation a été écarté :
+/// il échoue précisément quand on en a besoin (téléphone déchargé, tiers
+/// qui réceptionne).
+enum DeliveryProofMethod {
+  SIGNATURE
+  PHOTO
+}
+
 enum DeliveryStatus {
   UNASSIGNED
   ASSIGNED
@@ -342,15 +350,22 @@ model Delivery {
   addressId String  @db.Uuid
   address   Address @relation(fields: [addressId], references: [id])
 
-  // Preuve de livraison (section 32), activable progressivement.
-  proofOtp       String?   @db.VarChar(10)
-  proofPhotoUrl  String?
-  proofLatitude  Float?
-  proofLongitude Float?
-  failureReason  String?   @db.VarChar(255)
+  /// Preuve de livraison. Décision produit : SIGNATURE par défaut, PHOTO en
+  /// repli, combinables. Aucune validation n'est possible sans preuve, et le
+  /// code de confirmation a été retiré du produit.
+  proofMethods       DeliveryProofMethod[]
+  proofSignatureFile String?               @db.Uuid
+  proofPhotoFile     String?               @db.Uuid
+  proofReceivedBy    String?               @db.VarChar(120)
+  proofNote          String?               @db.VarChar(500)
+  proofLatitude      Float?
+  proofLongitude     Float?
+  proofSubmittedAt   DateTime?
+  failureReason      String?               @db.VarChar(255)
 
   assignedAt  DateTime?
   acceptedAt  DateTime?
+  pickedUpAt  DateTime?
   deliveredAt DateTime?
 
   createdAt DateTime @default(now())

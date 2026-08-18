@@ -85,6 +85,40 @@ export const DELIVERY_STATUSES = [
 ] as const;
 export type DeliveryStatus = (typeof DELIVERY_STATUSES)[number];
 
+/**
+ * Transitions autorisées d'une livraison. Comme pour les commandes, cette
+ * table est la SEULE source de vérité : le backend la fait respecter, l'UI ne
+ * fait que la refléter.
+ *
+ * `FAILED` reste accessible depuis toute course engagée : un livreur peut
+ * trouver porte close à n'importe quel moment du trajet.
+ */
+export const DELIVERY_TRANSITIONS: Record<
+  DeliveryStatus,
+  readonly DeliveryStatus[]
+> = {
+  UNASSIGNED: ['ASSIGNED'],
+  // Réassignation possible tant que le livreur n'a pas accepté.
+  ASSIGNED: ['ACCEPTED', 'UNASSIGNED'],
+  ACCEPTED: ['PICKED_UP', 'FAILED'],
+  PICKED_UP: ['IN_TRANSIT', 'FAILED'],
+  IN_TRANSIT: ['DELIVERED', 'FAILED'],
+  DELIVERED: [],
+  FAILED: [],
+} as const;
+
+export function canTransitionDelivery(
+  from: DeliveryStatus,
+  to: DeliveryStatus,
+): boolean {
+  return DELIVERY_TRANSITIONS[from].includes(to);
+}
+
+/** Statuts depuis lesquels la course est terminée. */
+export function isDeliveryTerminal(status: DeliveryStatus): boolean {
+  return status === 'DELIVERED' || status === 'FAILED';
+}
+
 export const NOTIFICATION_TYPES = [
   'ORDER_CREATED',
   'ORDER_CONFIRMED',
