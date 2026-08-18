@@ -165,11 +165,7 @@ describe('Écran de course', () => {
 
   it('exige une confirmation avant de valider la livraison', () => {
     const alertSpy = jest
-      .spyOn(
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        require('react-native').Alert,
-        'alert',
-      )
+      .spyOn(require('react-native').Alert, 'alert')
       .mockImplementation(() => undefined);
 
     mockDelivery = buildDelivery({

@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
   FlatList,
   Pressable,
@@ -36,10 +36,14 @@ export default function CatalogueScreen() {
   const [category, setCategory] = useState<string | undefined>(params.category);
   const debouncedSearch = useDebouncedValue(search, 350);
 
-  // La gamme peut arriver depuis l'accueil après le premier rendu.
-  useEffect(() => {
+  // La gamme peut arriver de l'accueil apres le premier rendu. On l'applique
+  // pendant le rendu plutot que dans un effet : pas de rendu en cascade, et un
+  // filtre choisi ensuite a la main n'est pas ecrase au rendu suivant.
+  const [appliedParam, setAppliedParam] = useState(params.category);
+  if (params.category !== appliedParam) {
+    setAppliedParam(params.category);
     if (params.category) setCategory(params.category);
-  }, [params.category]);
+  }
 
   const categories = useCategories();
   const products = useProducts({

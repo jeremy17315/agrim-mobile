@@ -1,6 +1,6 @@
 import type { NotificationType } from '@agrim/contracts';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { FlatList, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -33,8 +33,14 @@ export default function NotificationsScreen() {
   const orders = useOrders(isAuthenticated);
 
   const hasUnread = (notifications.data?.meta.unread ?? 0) > 0;
+
+  // La ref sert a lire l'etat au moment ou l'ecran perd le focus, sans
+  // reabonner l'effet a chaque changement. Elle est mise a jour apres le
+  // rendu : ecrire une ref pendant le rendu casse le rendu concurrent.
   const hasUnreadRef = useRef(hasUnread);
-  hasUnreadRef.current = hasUnread;
+  useEffect(() => {
+    hasUnreadRef.current = hasUnread;
+  }, [hasUnread]);
 
   useFocusEffect(
     useCallback(() => {
