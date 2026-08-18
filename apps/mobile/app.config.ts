@@ -10,7 +10,8 @@ import type { ExpoConfig } from 'expo/config';
  * livré : seules des valeurs publiques y sont admises.
  */
 
-const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://10.0.2.2:3000/api/v1';
+const API_URL =
+  process.env.EXPO_PUBLIC_API_URL ?? 'http://10.0.2.2:3000/api/v1';
 
 const config: ExpoConfig = {
   name: 'AGRIM',
@@ -65,6 +66,28 @@ const config: ExpoConfig = {
         image: './assets/splash-icon.png',
         backgroundColor: '#0B5D1E',
         imageWidth: 180,
+      },
+    ],
+    [
+      'expo-location',
+      {
+        // Message affiché à la demande de permission, au démarrage réel du
+        // suivi — jamais à l'ouverture de l'application.
+        locationWhenInUsePermission:
+          'Votre position sert à informer le client de votre progression pendant la livraison.',
+        // Pas de suivi en arrière-plan en V1 : l'application suit la course
+        // pendant que le livreur l'utilise, ce qui suffit et préserve la
+        // batterie comme la vie privée.
+        isAndroidBackgroundLocationEnabled: false,
+      },
+    ],
+    [
+      'expo-image-picker',
+      {
+        photosPermission:
+          'Les photos servent uniquement à joindre une preuve de livraison.',
+        cameraPermission:
+          'La caméra sert au livreur à photographier le colis remis comme preuve de livraison.',
       },
     ],
   ],

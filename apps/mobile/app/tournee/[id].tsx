@@ -9,9 +9,11 @@ import {
   SignaturePad,
   type SignaturePadHandle,
 } from '@/components/SignaturePad';
+import { MapView, boundsOf, type MapMarker } from '@/components/map';
 import { ErrorState, Skeleton } from '@/components/states';
 import { Button, Card, Icon, Input, Pill, Text } from '@/components/ui';
 import { formatXof } from '@/lib/format';
+import { useCourierTracking } from '@/lib/useCourierTracking';
 import { palette, radius, spacing } from '@/theme/tokens';
 import {
   DELIVERY_PROOF_DEFAULT_METHOD,
@@ -20,7 +22,7 @@ import {
 } from '@agrim/contracts';
 import * as ImagePicker from 'expo-image-picker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Linking,
@@ -69,10 +71,34 @@ export default function CourseScreen() {
   const [note, setNote] = useState('');
   const [isUploading, setUploading] = useState(false);
   const signatureRef = useRef<SignaturePadHandle>(null);
+  const tracking = useCourierTracking(id ?? '');
   const [isDeclaringFailure, setDeclaringFailure] = useState(false);
   const [failureReason, setFailureReason] = useState('');
 
   const delivery = query.data;
+
+  /**
+   * Le GPS ne tourne que pendant le trajet : il démarre à la prise en charge
+   * et s'arrête dès que la course est close. La permission n'est donc jamais
+   * demandée à l'ouverture de l'écran.
+   */
+  const isRolling =
+    delivery?.status === 'PICKED_UP' || delivery?.status === 'IN_TRANSIT';
+
+  const { start: startTracking, stop: stopTracking } = tracking;
+  const isTracking = tracking.isTracking;
+  const permissionDenied = tracking.hasPermission === false;
+
+  useEffect(() => {
+    // Dépendances réduites aux valeurs stables : passer l'objet `tracking`
+    // entier relancerait le GPS à chaque rendu.
+    if (isRolling && !isTracking && !permissionDenied) {
+      void startTracking();
+    }
+    if (!isRolling && isTracking) {
+      stopTracking();
+    }
+  }, [isRolling, isTracking, permissionDenied, startTracking, stopTracking]);
 
   const toggleMethod = useCallback((method: DeliveryProofMethod) => {
     setMethods((current) =>
@@ -226,6 +252,25 @@ export default function CourseScreen() {
     );
   }
 
+  const destinationPoint =
+    delivery.address.latitude !== null && delivery.address.longitude !== null
+      ? {
+          latitude: delivery.address.latitude,
+          longitude: delivery.address.longitude,
+        }
+      : null;
+
+  const courseMarkers: MapMarker[] = destinationPoint
+    ? [
+        {
+          id: 'destination',
+          ...destinationPoint,
+          kind: 'destination',
+          title: delivery.address.label,
+        },
+      ]
+    : [];
+
   const action = NEXT_ACTION[delivery.status];
   const canProve =
     delivery.status === 'PICKED_UP' || delivery.status === 'IN_TRANSIT';
@@ -313,6 +358,56 @@ export default function CourseScreen() {
           </Text>
         </View>
       </Card>
+
+      {/* Itinéraire : carte affichée pendant le trajet, avec l'état réel de
+          l'émission GPS — un livreur doit savoir si sa position remonte. */}
+      {isRolling ? (
+        <Card style={styles.card}>
+          <View style={styles.trackingHeader}>
+            <Text variant="h3">Itinéraire</Text>
+            <View style={styles.row}>
+              <Icon
+                name={isTracking ? 'satellite-dish' : 'satellite'}
+                size={14}
+                color={isTracking ? 'green' : 'muted'}
+              />
+              <Text variant="micro" color={isTracking ? 'green' : 'muted'}>
+                {isTracking ? 'Position émise' : 'Suivi inactif'}
+              </Text>
+            </View>
+          </View>
+
+          {destinationPoint ? (
+            <MapView
+              viewport={
+                boundsOf([destinationPoint]) ?? {
+                  center: destinationPoint,
+                }
+              }
+              markers={courseMarkers}
+              height={180}
+            />
+          ) : (
+            <Text variant="caption" color="muted">
+              Cette adresse n’a pas de coordonnées GPS. Utilisez le repère
+              indiqué ci-dessus.
+            </Text>
+          )}
+
+          {permissionDenied ? (
+            <Text variant="caption" color="danger">
+              Localisation refusée : le client ne verra pas votre progression.
+            </Text>
+          ) : null}
+
+          {tracking.queuedCount > 0 ? (
+            <Text variant="micro" color="muted">
+              {tracking.queuedCount} position
+              {tracking.queuedCount > 1 ? 's' : ''} en attente de réseau
+            </Text>
+          ) : null}
+        </Card>
+      ) : null}
 
       {/* Preuve : disponible une fois le colis récupéré, obligatoire avant
           la validation. */}
@@ -551,5 +646,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.sm,
     marginTop: spacing.xs,
+  },
+  trackingHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
 });

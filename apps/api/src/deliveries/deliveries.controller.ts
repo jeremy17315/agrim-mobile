@@ -23,8 +23,10 @@ import {
 } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { DeliveriesService } from './deliveries.service';
+import { TrackingService } from './tracking.service';
 import { AssignDeliveryDto } from './dto/assign-delivery.dto';
 import { SubmitProofDto } from './dto/submit-proof.dto';
+import { PushLocationsDto } from './dto/push-locations.dto';
 import { UpdateDeliveryStatusDto } from './dto/update-delivery-status.dto';
 
 /**
@@ -38,7 +40,10 @@ import { UpdateDeliveryStatusDto } from './dto/update-delivery-status.dto';
 @ApiBearerAuth()
 @Controller('deliveries')
 export class DeliveriesController {
-  constructor(private readonly deliveries: DeliveriesService) {}
+  constructor(
+    private readonly deliveries: DeliveriesService,
+    private readonly tracking: TrackingService,
+  ) {}
 
   @Roles('LIVREUR')
   @Get('mine')
@@ -84,6 +89,26 @@ export class DeliveriesController {
     @Body() dto: SubmitProofDto,
   ) {
     return this.deliveries.submitProof(user.id, id, dto);
+  }
+
+  @Roles('LIVREUR')
+  @Post('locations')
+  @ApiOperation({ summary: 'Émettre un lot de positions GPS' })
+  pushLocations(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: PushLocationsDto,
+  ) {
+    return this.tracking.pushLocations(user.id, dto);
+  }
+
+  @Roles('LIVREUR')
+  @Get(':id/route')
+  @ApiOperation({ summary: 'Trajet parcouru sur cette course' })
+  getRoute(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.tracking.getRoute(user.id, id);
   }
 
   @Roles('GESTIONNAIRE', 'ADMIN', 'DG')

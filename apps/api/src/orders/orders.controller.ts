@@ -20,6 +20,7 @@ import {
   type AuthenticatedUser,
 } from '../common/decorators/current-user.decorator';
 import { CreateOrderDto } from './dto/create-order.dto';
+import { TrackingService } from '../deliveries/tracking.service';
 import { OrdersService } from './orders.service';
 
 /**
@@ -32,7 +33,10 @@ import { OrdersService } from './orders.service';
 @ApiBearerAuth()
 @Controller('orders')
 export class OrdersController {
-  constructor(private readonly orders: OrdersService) {}
+  constructor(
+    private readonly orders: OrdersService,
+    private readonly tracking: TrackingService,
+  ) {}
 
   @Post()
   @ApiOperation({
@@ -61,6 +65,15 @@ export class OrdersController {
     @Param('reference') reference: string,
   ) {
     return this.orders.findOne(user.id, reference);
+  }
+
+  @Get(':reference/tracking')
+  @ApiOperation({ summary: 'Suivi GPS de la livraison' })
+  getTracking(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('reference') reference: string,
+  ) {
+    return this.tracking.getTracking(user.id, reference);
   }
 
   @Post(':reference/cancel')

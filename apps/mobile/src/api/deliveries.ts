@@ -1,5 +1,6 @@
 import {
   DELIVERY_PROOF_METHODS,
+  TRACKING_CONFIG,
   type DeliveryProofMethod,
   type DeliveryStatus,
 } from '@agrim/contracts';
@@ -77,7 +78,96 @@ const uploadedFileSchema = z.object({
 export const deliveryKeys = {
   mine: ['deliveries', 'mine'] as const,
   detail: (id: string) => ['deliveries', id] as const,
+  tracking: (reference: string) => ['tracking', reference] as const,
 };
+
+/* -------------------------------- Suivi GPS ------------------------------ */
+
+const geoPointSchema = z.object({
+  latitude: z.number(),
+  longitude: z.number(),
+  accuracy: z.number().nullable(),
+  heading: z.number().nullable(),
+  speed: z.number().nullable(),
+  recordedAt: z.iso.datetime(),
+});
+
+const trackingSchema = z.object({
+  deliveryId: z.uuid(),
+  orderReference: z.string(),
+  status: z.string(),
+  currentPosition: geoPointSchema.nullable(),
+  destination: z.object({
+    latitude: z.number().nullable(),
+    longitude: z.number().nullable(),
+    landmark: z.string().nullable(),
+  }),
+  remainingMeters: z.number().int().nullable(),
+  etaSeconds: z.number().int().nullable(),
+  estimatedArrivalAt: z.iso.datetime().nullable(),
+  lastUpdateAt: z.iso.datetime().nullable(),
+  isLive: z.boolean(),
+  courier: z
+    .object({
+      firstName: z.string(),
+      contactPhone: z.string().nullable(),
+      vehicleType: z.string().nullable(),
+    })
+    .nullable(),
+});
+export type DeliveryTracking = z.infer<typeof trackingSchema>;
+
+/**
+ * Suivi consommé par le client.
+ *
+ * L'interrogation périodique n'est active que tant que la position est
+ * fraîche : inutile de solliciter le réseau et la batterie pour une course
+ * terminée ou un livreur hors couverture.
+ */
+export function useDeliveryTracking(reference: string, enabled = true) {
+  return useQuery({
+    queryKey: deliveryKeys.tracking(reference),
+    queryFn: () =>
+      apiRequest({
+        path: `/orders/${reference}/tracking`,
+        schema: trackingSchema,
+      }),
+    enabled: enabled && reference.length > 0,
+    refetchInterval: (query) =>
+      query.state.data?.isLive === true
+        ? TRACKING_CONFIG.clientPollSeconds * 1000
+        : false,
+    // Une erreur ici n'est pas bloquante : l'écran affiche « indisponible ».
+    retry: 1,
+  });
+}
+
+/** Envoi d'un lot de positions par le livreur. */
+export function usePushLocations() {
+  return useMutation({
+    retry: false,
+    mutationFn: (input: {
+      deliveryId: string;
+      points: {
+        latitude: number;
+        longitude: number;
+        accuracy?: number;
+        heading?: number;
+        speed?: number;
+        recordedAt: string;
+      }[];
+    }) =>
+      apiRequest({
+        path: '/deliveries/locations',
+        method: 'POST',
+        body: input,
+        schema: z.object({
+          accepted: z.number().int(),
+          received: z.number().int(),
+        }),
+      }),
+  });
+}
 
 /** Tournée du livreur. */
 export function useMyDeliveries(includeDone = false) {

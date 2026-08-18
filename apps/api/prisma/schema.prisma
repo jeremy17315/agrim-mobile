@@ -368,11 +368,42 @@ model Delivery {
   pickedUpAt  DateTime?
   deliveredAt DateTime?
 
+  locations DeliveryLocation[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([courierId, status])
   @@index([status])
+}
+
+/// Trace GPS d'une course.
+///
+/// Minimisation des donnees : aucune position n'est collectee hors livraison
+/// active, et les traces sont purgees apres livraison (TRACKING_CONFIG).
+/// `recordedAt` est l'horodatage de la MESURE, pas de la reception serveur :
+/// les points emis hors ligne sont rejoues plus tard sans fausser le trajet.
+model DeliveryLocation {
+  id         String   @id @default(uuid()) @db.Uuid
+  deliveryId String   @db.Uuid
+  delivery   Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+
+  latitude  Float
+  longitude Float
+  /// Precision horizontale en metres.
+  accuracy  Float?
+  /// Cap en degres, 0 = nord.
+  heading   Float?
+  /// Vitesse instantanee en m/s.
+  speed     Float?
+
+  recordedAt DateTime
+  createdAt  DateTime @default(now())
+
+  /// Deduplication des rejeux hors ligne : un meme point ne peut entrer deux fois.
+  @@unique([deliveryId, recordedAt])
+  /// Sert la lecture « derniere position connue », requete la plus frequente.
+  @@index([deliveryId, recordedAt(sort: Desc)])
 }
 
 /* ──────────────────────────── Notifications ────────────────────────── */

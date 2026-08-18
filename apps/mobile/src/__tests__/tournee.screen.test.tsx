@@ -59,6 +59,9 @@ jest.mock('@/api/deliveries', () => ({
     isPending: false,
   }),
   uploadProofFile: (...args: unknown[]) => mockUpload(...(args as [])),
+  // Suivi GPS : le hook est appelé par l'écran, sans intérêt ici.
+  usePushLocations: () => ({ mutateAsync: jest.fn(), isPending: false }),
+  useDeliveryTracking: () => ({ data: null, isPending: false }),
 }));
 
 import CourseScreen from '../../app/tournee/[id]';

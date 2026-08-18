@@ -33,6 +33,15 @@ jest.mock('react-native-safe-area-context', () => ({
 
 const mockUseOrder = jest.fn();
 const mockCancelMutate = jest.fn();
+/**
+ * La carte de suivi GPS interroge l'API livraisons : sans ce mock, l'écran
+ * réclamerait un QueryClient. Le suivi lui-même est couvert par ses propres
+ * tests, côté API.
+ */
+jest.mock('@/api/deliveries', () => ({
+  useDeliveryTracking: () => ({ data: null, isPending: false }),
+}));
+
 jest.mock('@/api/orders', () => ({
   useOrder: (reference: string) => mockUseOrder(reference),
   useCancelOrder: () => ({ mutate: mockCancelMutate, isPending: false }),
