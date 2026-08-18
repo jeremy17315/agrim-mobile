@@ -2,8 +2,10 @@ import {
   courierSummarySchema,
   managedOrderSchema,
   managerDashboardSchema,
+  reviewableProductionSchema,
   stockItemSchema,
   type OrderStatus,
+  type ProductionStatus,
 } from '@agrim/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
@@ -20,11 +22,13 @@ import { apiRequest } from './client';
 const managedOrdersSchema = z.array(managedOrderSchema);
 const stockItemsSchema = z.array(stockItemSchema);
 const couriersSchema = z.array(courierSummarySchema);
+const reviewableProductionsSchema = z.array(reviewableProductionSchema);
 
 export type ManagedOrder = z.infer<typeof managedOrderSchema>;
 export type ManagerDashboard = z.infer<typeof managerDashboardSchema>;
 export type StockItem = z.infer<typeof stockItemSchema>;
 export type CourierSummary = z.infer<typeof courierSummarySchema>;
+export type ReviewableProduction = z.infer<typeof reviewableProductionSchema>;
 
 export const managementKeys = {
   all: ['management'] as const,
@@ -34,6 +38,8 @@ export const managementKeys = {
   stock: (onlyAlerts?: boolean) =>
     [...managementKeys.all, 'stock', onlyAlerts ?? false] as const,
   couriers: () => [...managementKeys.all, 'couriers'] as const,
+  productionReview: (status?: ProductionStatus) =>
+    [...managementKeys.all, 'production-review', status ?? 'PENDING'] as const,
 };
 
 export function useManagerDashboard(enabled = true) {
@@ -98,6 +104,27 @@ export function useCouriers(enabled = true) {
 }
 
 /**
+ * Déclarations de récolte en attente d'arbitrage de la coopérative.
+ *
+ * Sans statut, l'API ne renvoie que `DECLARED` et `CONFIRMED` : la file de
+ * travail, pas l'historique.
+ */
+export function useProductionReview(status?: ProductionStatus, enabled = true) {
+  return useQuery({
+    queryKey: managementKeys.productionReview(status),
+    queryFn: ({ signal }) =>
+      apiRequest({
+        path: '/producers/productions/review',
+        query: { status },
+        schema: reviewableProductionsSchema,
+        signal,
+      }),
+    enabled,
+    staleTime: 15_000,
+  });
+}
+
+/**
  * Après une écriture, la file ET les indicateurs deviennent faux : on invalide
  * tout le back-office plutôt que d'entretenir des compteurs locaux qui
  * divergeraient du serveur.
@@ -156,6 +183,35 @@ export function useAssignCourier() {
         method: 'POST',
         body: { courierId },
         schema: z.object({ id: z.uuid(), status: z.string() }),
+      }),
+  );
+}
+
+/**
+ * Décision de la coopérative sur une déclaration.
+ *
+ * Le motif est obligatoire au rejet ; la règle vit dans le contrat partagé et
+ * le serveur la revalide.
+ */
+export function useReviewProduction() {
+  return useManagementMutation(
+    ({
+      id,
+      ...body
+    }: {
+      id: string;
+      status: ProductionStatus;
+      reviewNote?: string;
+    }) =>
+      apiRequest({
+        path: `/producers/productions/${id}/review`,
+        method: 'PATCH',
+        body,
+        schema: reviewableProductionSchema.partial({
+          producerId: true,
+          producerName: true,
+          producerPhone: true,
+        }),
       }),
   );
 }

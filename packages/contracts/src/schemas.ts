@@ -455,6 +455,37 @@ export const createProductionSchema = z.object({
 });
 export type CreateProductionInput = z.infer<typeof createProductionSchema>;
 
+/**
+ * Déclaration vue par la coopérative.
+ *
+ * Le gestionnaire arbitre entre plusieurs producteurs : le nom de l'exploitant
+ * et son téléphone sont indispensables pour trancher ou appeler, alors qu'ils
+ * sont superflus pour le producteur qui consulte ses propres déclarations.
+ */
+export const reviewableProductionSchema = productionSchema.extend({
+  producerId: idSchema,
+  producerName: z.string(),
+  producerPhone: z.string(),
+  farmName: z.string(),
+});
+export type ReviewableProduction = z.infer<typeof reviewableProductionSchema>;
+
+export const reviewProductionSchema = z
+  .object({
+    status: z.enum(PRODUCTION_STATUSES),
+    reviewNote: z.string().trim().max(300).optional(),
+  })
+  .refine(
+    (value) =>
+      value.status !== 'REJECTED' || (value.reviewNote?.length ?? 0) > 0,
+    {
+      // Un rejet sans motif laisse le producteur sans recours.
+      message: 'Indiquez le motif du rejet.',
+      path: ['reviewNote'],
+    },
+  );
+export type ReviewProductionInput = z.infer<typeof reviewProductionSchema>;
+
 /** Synthèse affichée en tête de l'espace producteur. */
 export const producerOverviewSchema = z.object({
   id: idSchema,

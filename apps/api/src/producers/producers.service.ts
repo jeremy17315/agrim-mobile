@@ -348,6 +348,49 @@ export class ProducersService {
    * Volontairement hors du périmètre producteur : c'est ce qui donne sa valeur
    * à la déclaration. Le contrôle de rôle est porté par le contrôleur.
    */
+  /**
+   * File de revue de la coopérative, tous producteurs confondus.
+   *
+   * Par défaut on ne remonte que les déclarations en attente d'arbitrage
+   * (`DECLARED` et `CONFIRMED`) : c'est la seule liste sur laquelle le
+   * gestionnaire doit agir. Les plus anciennes d'abord — une déclaration
+   * oubliée bloque un producteur.
+   */
+  async listReviewableProductions(filters: { status?: ProductionStatus } = {}) {
+    const rows = await this.prisma.db.production.findMany({
+      where: filters.status
+        ? { status: filters.status }
+        : { status: { in: ['DECLARED', 'CONFIRMED'] } },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        ...productionSelect,
+        farm: {
+          select: {
+            name: true,
+            producer: {
+              select: {
+                id: true,
+                displayName: true,
+                user: { select: { phone: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return rows.map((row) => {
+      const { farm, ...rest } = row;
+      return {
+        ...rest,
+        farmName: farm.name,
+        producerId: farm.producer.id,
+        producerName: farm.producer.displayName,
+        producerPhone: farm.producer.user.phone,
+      };
+    });
+  }
+
   async reviewProduction(productionId: string, dto: ReviewProductionDto) {
     const existing = await this.prisma.db.production.findUnique({
       where: { id: productionId },

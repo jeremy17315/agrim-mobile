@@ -142,6 +142,18 @@ export class ProducersController {
   /* ------------------------------- Revue --------------------------------- */
 
   @Roles('GESTIONNAIRE', 'ADMIN', 'DG')
+  @Get('productions/review')
+  @ApiOperation({ summary: 'Déclarations à examiner (coopérative)' })
+  @ApiQuery({ name: 'status', required: false, enum: PRODUCTION_STATUSES })
+  listReviewableProductions(@Query('status') status?: string) {
+    const parsed = PRODUCTION_STATUSES.includes(status as ProductionStatus)
+      ? (status as ProductionStatus)
+      : undefined;
+
+    return this.producers.listReviewableProductions({ status: parsed });
+  }
+
+  @Roles('GESTIONNAIRE', 'ADMIN', 'DG')
   @Patch('productions/:id/review')
   @ApiOperation({ summary: 'Vérifier une déclaration (coopérative)' })
   reviewProduction(

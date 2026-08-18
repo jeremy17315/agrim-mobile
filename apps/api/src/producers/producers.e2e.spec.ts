@@ -506,4 +506,117 @@ describe('Espace producteur (e2e)', () => {
     expect(intrus.status).toBe(404);
     expect(intrus.body.code).toBe('PRODUCTION_NOT_FOUND');
   });
+  /* --------------------------- File de revue ----------------------------- */
+
+  it('liste les déclarations à examiner, tous producteurs confondus', async () => {
+    const res = await request(app.getHttpServer())
+      .get(`${prefix}/producers/productions/review`)
+      .set(auth(managerToken));
+
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+
+    // La déclaration semée pour l'autre producteur doit y figurer, avec de quoi
+    // identifier et joindre l'exploitant.
+    const cible = res.body.find(
+      (row: { id: string }) => row.id === otherProductionId,
+    );
+    expect(cible).toBeDefined();
+    expect(cible.producerName).toBeTruthy();
+    expect(cible.producerPhone).toBeTruthy();
+    expect(cible.farmName).toBeTruthy();
+  });
+
+  it('n’expose que les déclarations en attente d’arbitrage par défaut', async () => {
+    const res = await request(app.getHttpServer())
+      .get(`${prefix}/producers/productions/review`)
+      .set(auth(managerToken));
+
+    const statuts = new Set(
+      res.body.map((row: { status: string }) => row.status),
+    );
+    expect(statuts.has('RECEIVED')).toBe(false);
+    expect(statuts.has('REJECTED')).toBe(false);
+  });
+
+  it('trie les plus anciennes en premier', async () => {
+    const res = await request(app.getHttpServer())
+      .get(`${prefix}/producers/productions/review`)
+      .set(auth(managerToken));
+
+    const dates = res.body.map((row: { createdAt: string }) =>
+      new Date(row.createdAt).getTime(),
+    );
+    const trie = [...dates].sort((a, b) => a - b);
+    expect(dates).toEqual(trie);
+  });
+
+  it('filtre par statut', async () => {
+    const res = await request(app.getHttpServer())
+      .get(`${prefix}/producers/productions/review?status=CONFIRMED`)
+      .set(auth(managerToken));
+
+    expect(res.status).toBe(200);
+    for (const row of res.body) {
+      expect(row.status).toBe('CONFIRMED');
+    }
+  });
+
+  it('refuse la file de revue au producteur et au client', async () => {
+    const parProducteur = await request(app.getHttpServer())
+      .get(`${prefix}/producers/productions/review`)
+      .set(auth(producerToken));
+    expect(parProducteur.status).toBe(403);
+
+    const parClient = await request(app.getHttpServer())
+      .get(`${prefix}/producers/productions/review`)
+      .set(auth(clientToken));
+    expect(parClient.status).toBe(403);
+
+    const sansJeton = await request(app.getHttpServer()).get(
+      `${prefix}/producers/productions/review`,
+    );
+    expect(sansJeton.status).toBe(401);
+  });
+
+  it('retire une déclaration de la file une fois réceptionnée', async () => {
+    const farms = await request(app.getHttpServer())
+      .get(`${prefix}/producers/me/farms`)
+      .set(auth(producerToken));
+
+    const created = await request(app.getHttpServer())
+      .post(`${prefix}/producers/me/productions`)
+      .set(auth(producerToken))
+      .send({
+        farmId: farms.body[0].id,
+        season: 'Saison file',
+        cropVariety: 'Riz',
+        quantityKg: 420,
+      });
+
+    const avant = await request(app.getHttpServer())
+      .get(`${prefix}/producers/productions/review`)
+      .set(auth(managerToken));
+    expect(
+      avant.body.some((row: { id: string }) => row.id === created.body.id),
+    ).toBe(true);
+
+    await request(app.getHttpServer())
+      .patch(`${prefix}/producers/productions/${created.body.id}/review`)
+      .set(auth(managerToken))
+      .send({ status: 'CONFIRMED' });
+    await request(app.getHttpServer())
+      .patch(`${prefix}/producers/productions/${created.body.id}/review`)
+      .set(auth(managerToken))
+      .send({ status: 'RECEIVED' });
+
+    const apres = await request(app.getHttpServer())
+      .get(`${prefix}/producers/productions/review`)
+      .set(auth(managerToken));
+    expect(
+      apres.body.some((row: { id: string }) => row.id === created.body.id),
+    ).toBe(false);
+
+    await prisma.db.production.delete({ where: { id: created.body.id } });
+  });
 });

@@ -113,6 +113,15 @@ export default function GestionScreen() {
           ) : null}
         </View>
         <Pressable
+          onPress={() => router.push('/gestion/recoltes')}
+          accessibilityRole="button"
+          accessibilityLabel="Récoltes à examiner"
+          hitSlop={12}
+          style={styles.headerAction}
+        >
+          <Icon name="wheat" size={20} color="ink" />
+        </Pressable>
+        <Pressable
           onPress={() => router.push('/gestion/stocks')}
           accessibilityRole="button"
           accessibilityLabel="Stocks"
@@ -388,4 +397,5 @@ const styles = StyleSheet.create({
   },
   assigned: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   flex: { flex: 1 },
+  headerAction: { marginRight: spacing.md },
 });

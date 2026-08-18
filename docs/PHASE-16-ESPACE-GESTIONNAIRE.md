@@ -62,14 +62,34 @@ l'appelant.
 | GET | `/management/stock?onlyAlerts` |
 | PATCH | `/management/stock/:variantId` |
 | GET | `/management/couriers` |
+| GET | `/producers/productions/review?status` |
+| PATCH | `/producers/productions/:id/review` |
 
 ## Mobile
 
 `app/gestion/` : `index.tsx` (tableau de bord + file de commandes),
 `[reference].tsx` (détail, appel client, avancement ou assignation, annulation),
-`stocks.tsx` (liste, alertes, apport). Accès par l'onglet Compte → « Tableau de
-bord ». Le détail se lit dans le cache de la file — aucune requête
-supplémentaire à l'ouverture.
+`stocks.tsx` (liste, alertes, apport), `recoltes.tsx` (revue des déclarations de
+production). Accès par l'onglet Compte → « Tableau de bord ». Le détail se lit
+dans le cache de la file — aucune requête supplémentaire à l'ouverture.
+
+## Revue des récoltes
+
+La phase 15 avait livré `PATCH /producers/productions/:id/review` sans aucune
+liste : le gestionnaire ne pouvait pas connaître les identifiants à examiner, la
+boucle producteur → coopérative restait donc ouverte. Elle est fermée ici.
+
+`GET /producers/productions/review` renvoie, tous producteurs confondus, les
+déclarations `DECLARED` et `CONFIRMED` — la file de travail, pas l'historique —
+**les plus anciennes d'abord**, car une déclaration oubliée bloque un
+producteur. Chaque ligne porte le nom et le téléphone de l'exploitant :
+arbitrer suppose de pouvoir l'appeler, information absente de
+`productionSchema` (d'où `reviewableProductionSchema`).
+
+L'écran dérive l'action proposée de `canTransitionProduction` plutôt que de
+tester le statut à la main : vérifier, puis acter la réception. **Le rejet exige
+un motif**, contrôlé dans le contrat partagé, dans l'écran et à nouveau par le
+serveur.
 
 Contrats : `packages/contracts/src/management.ts`.
 Client : `apps/mobile/src/api/management.ts` (`useManagerDashboard`,
@@ -78,10 +98,12 @@ Client : `apps/mobile/src/api/management.ts` (`useManagerDashboard`,
 
 ## Vérifications
 
-- API : 171 tests verts (dont 22 pour `management`), ESLint et typecheck propres.
-- Mobile : 167 tests RNTL verts (dont 22 nouveaux), `tsc --noEmit` sans erreur.
+- API : **177** tests verts (22 `management`, 23 `producers`), ESLint et
+  typecheck propres.
+- Mobile : **176** tests RNTL verts, ESLint (nouvellement activé) et
+  `tsc --noEmit` sans erreur.
 - `expo-doctor` : 21/21.
-- Bundle Android : 1 952 modules, statut 200.
+- Bundle Android : 1 951 modules, statut 200.
 
 Cas prouvés côté API : client et livreur reçoivent 403 ; absence de jeton, 401 ;
 étape sautée, 409 `INVALID_ORDER_TRANSITION` ; commande partie, 409
