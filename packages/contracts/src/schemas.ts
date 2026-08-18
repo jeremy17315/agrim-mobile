@@ -275,9 +275,7 @@ export const dashboardSchema = z.object({
   clientsCount: z.number().int().nonnegative(),
   deliveriesInProgress: z.number().int().nonnegative(),
   lowStockCount: z.number().int().nonnegative(),
-  salesByDay: z.array(
-    z.object({ date: z.string(), amount: moneySchema }),
-  ),
+  salesByDay: z.array(z.object({ date: z.string(), amount: moneySchema })),
   topProducts: z.array(
     z.object({ name: z.string(), quantity: z.number().int().nonnegative() }),
   ),

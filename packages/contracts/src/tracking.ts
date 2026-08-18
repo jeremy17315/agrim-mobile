@@ -132,3 +132,91 @@ export function isTrackable(status: DeliveryStatus): boolean {
     status,
   );
 }
+
+/* --------------------- Preuve de livraison (au choix) -------------------- */
+
+/**
+ * Méthodes de preuve. Le livreur en choisit UNE (décision client, maquette v1) :
+ * aucune n'est cumulée ni imposée par l'UI.
+ *
+ * - CONFIRMATION_CODE : code à 4 chiffres communiqué par le client. Méthode par
+ *   défaut, la seule qui prouve la présence du destinataire.
+ * - PHOTO : cliché du colis remis, horodaté et géolocalisé. Repli quand le
+ *   client n'a pas son code (téléphone déchargé, commande reçue par un tiers).
+ * - SIGNATURE : tracé au doigt, avec le nom du réceptionnaire.
+ * - NONE : validation simple. Volontairement prévu, car le refuser pousserait
+ *   les livreurs à photographier n'importe quoi pour débloquer l'écran.
+ */
+export const DELIVERY_PROOF_METHODS = [
+  'CONFIRMATION_CODE',
+  'PHOTO',
+  'SIGNATURE',
+  'NONE',
+] as const;
+export type DeliveryProofMethod = (typeof DELIVERY_PROOF_METHODS)[number];
+
+/**
+ * Preuve soumise par le livreur.
+ *
+ * Le champ utile dépend de la méthode ; l'affinement ci-dessous rend les
+ * combinaisons incohérentes impossibles à compiler ET à envoyer.
+ * Le serveur reste seul juge : il revalide le code et ne fait jamais confiance
+ * à un `isValid` calculé côté mobile.
+ */
+export const submitDeliveryProofSchema = z
+  .object({
+    deliveryId: z.uuid(),
+    method: z.enum(DELIVERY_PROOF_METHODS),
+    /** Requis si method = CONFIRMATION_CODE. */
+    code: z
+      .string()
+      .regex(/^\d{4}$/, 'Le code doit comporter 4 chiffres')
+      .optional(),
+    /** Requis si method = PHOTO ou SIGNATURE : identifiant renvoyé par l'upload. */
+    fileId: z.uuid().optional(),
+    /** Nom de la personne ayant réceptionné, utile quand ce n'est pas le client. */
+    receivedBy: z.string().max(120).optional(),
+    /** Obligatoire si method = NONE : justifie la validation sans preuve. */
+    note: z.string().max(500).optional(),
+    /** Position au moment de la validation, capturée dans TOUS les cas. */
+    position: geoPointSchema.nullable(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.method === 'CONFIRMATION_CODE' && !value.code) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['code'],
+        message: 'Code de confirmation requis',
+      });
+    }
+    if (
+      (value.method === 'PHOTO' || value.method === 'SIGNATURE') &&
+      !value.fileId
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['fileId'],
+        message: 'Fichier de preuve requis',
+      });
+    }
+    if (value.method === 'NONE' && !value.note?.trim()) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['note'],
+        message: 'Un motif est requis pour valider sans preuve',
+      });
+    }
+  });
+export type SubmitDeliveryProof = z.infer<typeof submitDeliveryProofSchema>;
+
+/** Preuve telle que relue (gestionnaire, litige client). */
+export const deliveryProofSchema = z.object({
+  method: z.enum(DELIVERY_PROOF_METHODS),
+  fileUrl: z.url().nullable(),
+  receivedBy: z.string().nullable(),
+  note: z.string().nullable(),
+  latitude: latitudeSchema.nullable(),
+  longitude: longitudeSchema.nullable(),
+  submittedAt: z.iso.datetime(),
+});
+export type DeliveryProof = z.infer<typeof deliveryProofSchema>;
