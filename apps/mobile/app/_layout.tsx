@@ -63,6 +63,7 @@ export default function RootLayout() {
 
             <Stack.Protected guard={isAuthenticated}>
               <Stack.Screen name="commande" />
+              <Stack.Screen name="commandes" />
             </Stack.Protected>
           </Stack>
         ) : (

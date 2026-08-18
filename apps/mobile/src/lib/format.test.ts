@@ -4,6 +4,7 @@ import {
   formatPhone,
   formatRelativeTime,
   formatWeight,
+  formatDateTime,
   formatXof,
 } from './format';
 
@@ -117,5 +118,35 @@ describe('formatRelativeTime', () => {
 
   it('gère une date invalide', () => {
     expect(formatRelativeTime('pas-une-date', now)).toBe('—');
+  });
+});
+
+describe('formatDateTime', () => {
+  const now = new Date('2026-08-18T15:00:00');
+
+  it('affiche l’heure pour aujourd’hui', () => {
+    expect(formatDateTime('2026-08-18T14:05:00', now)).toBe(
+      "aujourd'hui à 14:05",
+    );
+  });
+
+  it('reconnaît hier', () => {
+    expect(formatDateTime('2026-08-17T09:30:00', now)).toBe('hier à 09:30');
+  });
+
+  it('affiche jour et mois au-delà', () => {
+    expect(formatDateTime('2026-08-02T14:05:00', now)).toBe(
+      `2${NBSP}août à 14:05`,
+    );
+  });
+
+  it('ajoute l’année seulement si elle diffère', () => {
+    expect(formatDateTime('2025-12-24T08:00:00', now)).toBe(
+      `24${NBSP}déc. 2025 à 08:00`,
+    );
+  });
+
+  it('ne casse pas sur une date invalide', () => {
+    expect(formatDateTime('pas-une-date', now)).toBe('—');
   });
 });

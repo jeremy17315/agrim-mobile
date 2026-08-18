@@ -97,3 +97,51 @@ export function formatDuration(seconds: number): string {
   const rest = minutes % 60;
   return rest === 0 ? `${hours}${NBSP}h` : `${hours}${NBSP}h${NBSP}${rest}`;
 }
+
+const MONTHS = [
+  'janv.',
+  'févr.',
+  'mars',
+  'avril',
+  'mai',
+  'juin',
+  'juil.',
+  'août',
+  'sept.',
+  'oct.',
+  'nov.',
+  'déc.',
+] as const;
+
+/**
+ * Date d'un événement daté : « aujourd'hui à 14:05 », « hier à 09:30 », puis
+ * « 18 août à 14:05 ». Au-delà de quelques jours, « il y a 34 j » n'aide plus
+ * personne à retrouver une commande — une vraie date, si.
+ */
+export function formatDateTime(iso: string, now: Date = new Date()): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '—';
+
+  const time = `${String(date.getHours()).padStart(2, '0')}:${String(
+    date.getMinutes(),
+  ).padStart(2, '0')}`;
+
+  const sameDay = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate();
+
+  if (sameDay(date, now)) return `aujourd'hui à ${time}`;
+
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (sameDay(date, yesterday)) return `hier à ${time}`;
+
+  const day = date.getDate();
+  const month = MONTHS[date.getMonth()];
+  // L'année n'est affichée que si elle diffère : elle est bruyante sinon.
+  const year =
+    date.getFullYear() === now.getFullYear() ? '' : ` ${date.getFullYear()}`;
+
+  return `${day}${NBSP}${month}${year} à ${time}`;
+}

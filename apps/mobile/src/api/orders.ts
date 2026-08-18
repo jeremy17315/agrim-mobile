@@ -64,6 +64,15 @@ const orderDetailSchema = z.object({
       status: orderSchema.shape.paymentStatus,
     })
     .nullable(),
+  /** Chronologie des changements de statut, du plus ancien au plus récent. */
+  events: z.array(
+    z.object({
+      id: z.uuid(),
+      status: orderSchema.shape.status,
+      comment: z.string().nullable(),
+      createdAt: z.iso.datetime(),
+    }),
+  ),
 });
 export type OrderDetail = z.infer<typeof orderDetailSchema>;
 

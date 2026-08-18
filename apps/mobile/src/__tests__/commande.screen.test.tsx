@@ -143,7 +143,9 @@ it('vide le panier et redirige seulement après confirmation du serveur', async 
   fireEvent.press(screen.getByText('Confirmer ma commande'));
 
   await waitFor(() =>
-    expect(mockReplace).toHaveBeenCalledWith('/commande/AGR-2026-0001'),
+    expect(mockReplace).toHaveBeenCalledWith(
+      '/commandes/AGR-2026-0001?nouvelle=1',
+    ),
   );
   expect(useCartStore.getState().items).toHaveLength(0);
 });

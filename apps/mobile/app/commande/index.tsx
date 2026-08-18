@@ -87,7 +87,9 @@ export default function CommandeScreen() {
       // Le panier n'est vidé qu'APRÈS confirmation serveur : en cas d'échec,
       // l'utilisateur retrouve ses articles.
       clearCart();
-      router.replace(`/commande/${order.reference}`);
+      // Un seul écran de récapitulatif dans l'application : le suivi. Le
+      // paramètre `nouvelle` déclenche le message de confirmation.
+      router.replace(`/commandes/${order.reference}?nouvelle=1`);
     } catch (error) {
       setSubmitError(describeError(error));
 

@@ -46,6 +46,12 @@ const orderSelect = {
     },
   },
   payment: { select: { method: true, status: true } },
+  // Chronologie : le client veut savoir où en est sa commande, pas seulement
+  // son statut courant.
+  events: {
+    select: { id: true, status: true, comment: true, createdAt: true },
+    orderBy: { createdAt: 'asc' },
+  },
 } as const;
 
 @Injectable()
