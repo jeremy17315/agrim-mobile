@@ -20,13 +20,23 @@ const TONES: Record<BannerTone, { bg: string; fg: string; border: string }> = {
 };
 
 /** Bandeau d'information contextuelle : hors ligne, promotion, alerte stock. */
-export function Banner({ message, tone = 'info', icon, style, ...rest }: BannerProps) {
+export function Banner({
+  message,
+  tone = 'info',
+  icon,
+  style,
+  ...rest
+}: BannerProps) {
   const t = TONES[tone];
 
   return (
     <View
       accessibilityRole="alert"
-      style={[styles.base, { backgroundColor: t.bg, borderColor: t.border }, style]}
+      style={[
+        styles.base,
+        { backgroundColor: t.bg, borderColor: t.border },
+        style,
+      ]}
       {...rest}
     >
       {icon}

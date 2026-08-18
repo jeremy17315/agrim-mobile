@@ -4,7 +4,8 @@ import { palette, radius, spacing } from '@/theme/tokens';
 
 import { Text } from './Text';
 
-export type PillTone = 'green' | 'gold' | 'info' | 'danger' | 'warn' | 'neutral';
+export type PillTone =
+  'green' | 'gold' | 'info' | 'danger' | 'warn' | 'neutral';
 
 export type PillProps = ViewProps & {
   label: string;
@@ -22,7 +23,13 @@ const TONES: Record<PillTone, { bg: string; fg: string }> = {
 };
 
 /** Étiquette de statut : « En transit », « Stock faible », « Livrée »… */
-export function Pill({ label, tone = 'neutral', icon, style, ...rest }: PillProps) {
+export function Pill({
+  label,
+  tone = 'neutral',
+  icon,
+  style,
+  ...rest
+}: PillProps) {
   const { bg, fg } = TONES[tone];
 
   return (

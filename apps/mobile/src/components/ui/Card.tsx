@@ -9,10 +9,20 @@ export type CardProps = ViewProps & {
 };
 
 /** Surface blanche standard : listes, blocs de formulaire, encarts. */
-export function Card({ flat = false, padded = true, style, ...rest }: CardProps) {
+export function Card({
+  flat = false,
+  padded = true,
+  style,
+  ...rest
+}: CardProps) {
   return (
     <View
-      style={[styles.base, padded && styles.padded, !flat && shadow.card, style]}
+      style={[
+        styles.base,
+        padded && styles.padded,
+        !flat && shadow.card,
+        style,
+      ]}
       {...rest}
     />
   );

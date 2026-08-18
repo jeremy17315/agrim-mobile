@@ -36,7 +36,9 @@ export function formatWeight(grams: number): string {
   if (grams < 1000) return `${Math.round(grams)}${NBSP}g`;
 
   const kg = grams / 1000;
-  const text = Number.isInteger(kg) ? String(kg) : kg.toFixed(1).replace('.', ',');
+  const text = Number.isInteger(kg)
+    ? String(kg)
+    : kg.toFixed(1).replace('.', ',');
   return `${text}${NBSP}kg`;
 }
 
@@ -54,7 +56,10 @@ export function formatPhone(phone: string): string {
  * Durée relative courte, pour la fraîcheur d'une position GPS :
  * « à l'instant », « il y a 12 s », « il y a 4 min ».
  */
-export function formatRelativeTime(iso: string, now: Date = new Date()): string {
+export function formatRelativeTime(
+  iso: string,
+  now: Date = new Date(),
+): string {
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return '—';
 

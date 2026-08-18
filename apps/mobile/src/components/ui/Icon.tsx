@@ -1,4 +1,5 @@
 import LucideIcon from '@react-native-vector-icons/lucide';
+import type { ColorValue } from 'react-native';
 
 import { palette, type PaletteColor } from '@/theme/tokens';
 
@@ -20,12 +21,24 @@ export type IconName = React.ComponentProps<typeof LucideIcon>['name'];
 export type IconProps = {
   name: IconName;
   size?: number;
-  color?: PaletteColor | (string & {});
+  /**
+   * Jeton de palette, ou couleur brute. `ColorValue` est accepté car les
+   * navigateurs (barre d'onglets) fournissent leurs propres couleurs.
+   */
+  color?: PaletteColor | ColorValue;
   accessibilityLabel?: string;
 };
 
-export function Icon({ name, size = 18, color = 'ink', accessibilityLabel }: IconProps) {
-  const resolved = color in palette ? palette[color as PaletteColor] : (color as string);
+export function Icon({
+  name,
+  size = 18,
+  color = 'ink',
+  accessibilityLabel,
+}: IconProps) {
+  const resolved =
+    typeof color === 'string' && color in palette
+      ? palette[color as PaletteColor]
+      : (color as ColorValue);
 
   return (
     <LucideIcon
@@ -36,7 +49,9 @@ export function Icon({ name, size = 18, color = 'ink', accessibilityLabel }: Ico
       // Décoratif par défaut : sans libellé, l'icône est ignorée des lecteurs
       // d'écran plutôt que lue comme un caractère parasite.
       accessibilityElementsHidden={accessibilityLabel === undefined}
-      importantForAccessibility={accessibilityLabel === undefined ? 'no' : 'yes'}
+      importantForAccessibility={
+        accessibilityLabel === undefined ? 'no' : 'yes'
+      }
     />
   );
 }

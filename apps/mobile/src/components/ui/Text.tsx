@@ -1,6 +1,15 @@
-import { Text as RNText, type TextProps as RNTextProps, StyleSheet } from 'react-native';
+import {
+  Text as RNText,
+  type TextProps as RNTextProps,
+  StyleSheet,
+} from 'react-native';
 
-import { palette, typography, type PaletteColor, type TypographyVariant } from '@/theme/tokens';
+import {
+  palette,
+  typography,
+  type PaletteColor,
+  type TypographyVariant,
+} from '@/theme/tokens';
 
 export type TextProps = RNTextProps & {
   variant?: TypographyVariant;

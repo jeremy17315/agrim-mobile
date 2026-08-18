@@ -5,6 +5,7 @@
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
     "forceConsistentCasingInFileNames": true,
+    "types": ["jest", "node"],
     "paths": {
       "@/*": ["./src/*"]
     }
