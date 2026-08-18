@@ -13,6 +13,28 @@ import type { ExpoConfig } from 'expo/config';
 const API_URL =
   process.env.EXPO_PUBLIC_API_URL ?? 'http://10.0.2.2:3000/api/v1';
 
+/**
+ * Un APK de test parle à une API de développement en HTTP simple, sur le
+ * réseau local. Or Android bloque le trafic en clair depuis Android 9 : sans
+ * cette autorisation, toutes les requêtes échouent avec une erreur réseau
+ * opaque, écran vide à la clé.
+ *
+ * L'autorisation suit l'URL réellement configurée : dès que l'API passe en
+ * HTTPS, le trafic en clair redevient interdit sans rien avoir à penser.
+ */
+const ALLOWS_CLEARTEXT = API_URL.startsWith('http://');
+
+/**
+ * Clé Google Maps Android, injectée au build (jamais commitée).
+ *
+ * Sans elle, react-native-maps affiche une carte grise sur Android : les
+ * écrans d'itinéraire semblent cassés alors que le code est correct. La clé
+ * est restreinte côté console Google au paquet + empreinte de signature, ce
+ * qui la rend inexploitable ailleurs — c'est pour cela qu'elle peut figurer
+ * dans le binaire.
+ */
+const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_ANDROID_KEY ?? '';
+
 const config: ExpoConfig = {
   name: 'AGRIM',
   slug: 'agrim-mobile',
@@ -30,25 +52,30 @@ const config: ExpoConfig = {
       // Justifications affichées par iOS : elles doivent décrire l'usage réel.
       NSLocationWhenInUseUsageDescription:
         'Votre position sert à repérer votre adresse de livraison et à suivre le livreur en temps réel.',
-      NSCameraUsageDescription:
-        'La caméra sert au livreur à photographier le colis remis comme preuve de livraison.',
+      // Aucune justification caméra : la preuve photo a été retirée avec le
+      // passage à la validation par code. Déclarer un usage inexistant est
+      // refusé en revue.
       ITSAppUsesNonExemptEncryption: false,
     },
   },
 
   android: {
     package: 'ci.agrim.mobile',
+    // Incrémenté à chaque envoi sur le Play Store ; sans effet pour un APK
+    // installé à la main.
+    versionCode: 1,
+    ...(GOOGLE_MAPS_API_KEY
+      ? { config: { googleMaps: { apiKey: GOOGLE_MAPS_API_KEY } } }
+      : {}),
     adaptiveIcon: {
       foregroundImage: './assets/android-icon-foreground.png',
       backgroundColor: '#0B5D1E',
       monochromeImage: './assets/android-icon-monochrome.png',
     },
-    permissions: [
-      'ACCESS_COARSE_LOCATION',
-      'ACCESS_FINE_LOCATION',
-      'CAMERA',
-      'INTERNET',
-    ],
+    // Strictement ce que l'application utilise. CAMERA a été retirée avec la
+    // preuve photo : demander une permission inutilisée coûte des refus
+    // d'installation sans rien apporter.
+    permissions: ['ACCESS_COARSE_LOCATION', 'ACCESS_FINE_LOCATION', 'INTERNET'],
   },
 
   web: {
@@ -82,12 +109,11 @@ const config: ExpoConfig = {
       },
     ],
     [
-      'expo-image-picker',
+      'expo-build-properties',
       {
-        photosPermission:
-          'Les photos servent uniquement à joindre une preuve de livraison.',
-        cameraPermission:
-          'La caméra sert au livreur à photographier le colis remis comme preuve de livraison.',
+        android: {
+          usesCleartextTraffic: ALLOWS_CLEARTEXT,
+        },
       },
     ],
   ],
