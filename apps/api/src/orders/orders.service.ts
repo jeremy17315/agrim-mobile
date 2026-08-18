@@ -7,6 +7,7 @@ import {
 import { computeCartTotals, PROVISIONAL_DELIVERY } from '@agrim/contracts';
 import type { OrderStatus } from '@agrim/contracts';
 
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CreateOrderDto } from './dto/create-order.dto';
 import { formatOrderReference } from './order-reference';
@@ -56,7 +57,10 @@ const orderSelect = {
 
 @Injectable()
 export class OrdersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   /**
    * Crée une commande.
@@ -186,7 +190,7 @@ export class OrdersService {
 
     const year = new Date().getFullYear();
 
-    return this.prisma.db.$transaction(async (tx) => {
+    const created = await this.prisma.db.$transaction(async (tx) => {
       // Compteur annuel atomique : deux commandes simultanées obtiennent des
       // séquences distinctes, donc jamais la même référence.
       const counter = await tx.orderCounter.upsert({
@@ -254,6 +258,16 @@ export class OrdersService {
 
       return order;
     });
+
+    // Hors transaction, pour la même raison que l'annulation.
+    await this.notifications.notify({
+      userId,
+      type: 'ORDER_CREATED',
+      reference: created.reference,
+      orderId: created.id,
+    });
+
+    return created;
   }
 
   /** Historique du client : liste allégée, sans les lignes. */
@@ -336,7 +350,7 @@ export class OrdersService {
       });
     }
 
-    return this.prisma.db.$transaction(async (tx) => {
+    const cancelled = await this.prisma.db.$transaction(async (tx) => {
       for (const item of order.items) {
         await tx.productVariant.update({
           where: { id: item.variantId },
@@ -354,5 +368,16 @@ export class OrdersService {
         select: orderSelect,
       });
     });
+
+    // Notification hors transaction : un service de push lent ne doit pas
+    // maintenir un verrou sur les lignes de stock.
+    await this.notifications.notifyOrderStatus({
+      userId,
+      status: 'CANCELLED',
+      reference: cancelled.reference,
+      orderId: cancelled.id,
+    });
+
+    return cancelled;
   }
 }

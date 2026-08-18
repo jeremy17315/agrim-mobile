@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { useUnreadCount } from '@/api/notifications';
 import { Button, Card, Icon, Text, type IconName } from '@/components/ui';
 import { formatPhone } from '@/lib/format';
 import { useAuthStore } from '@/store/auth';
@@ -22,6 +23,7 @@ export default function CompteScreen() {
   const user = useAuthStore((s) => s.user);
   const signOut = useAuthStore((s) => s.signOut);
   const isAuthenticated = useAuthStore((s) => s.accessToken !== null);
+  const unread = useUnreadCount(isAuthenticated);
 
   const confirmSignOut = () => {
     Alert.alert(
@@ -78,6 +80,13 @@ export default function CompteScreen() {
                 label="Mes commandes"
                 hint="Historique et suivi"
                 onPress={() => router.push('/commandes')}
+              />
+              <MenuRow
+                icon="bell"
+                label="Notifications"
+                hint="Commandes et livraisons"
+                badge={unread}
+                onPress={() => router.push('/notifications')}
               />
               <MenuRow
                 icon="map-pin"
@@ -138,11 +147,14 @@ function MenuRow({
   label,
   hint,
   onPress,
+  badge = 0,
 }: {
   icon: IconName;
   label: string;
   hint: string;
   onPress: () => void;
+  /** Nombre d'éléments non lus ; masqué à zéro. */
+  badge?: number;
 }) {
   return (
     <Pressable
@@ -158,6 +170,13 @@ function MenuRow({
             {hint}
           </Text>
         </View>
+        {badge > 0 ? (
+          <View style={styles.badge}>
+            <Text variant="micro" color="white">
+              {badge > 99 ? '99+' : badge}
+            </Text>
+          </View>
+        ) : null}
         <Icon name="chevron-right" size={17} color="muted" />
       </Card>
     </Pressable>
@@ -170,6 +189,15 @@ function initials(firstName: string, lastName: string): string {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: palette.bg },
+  badge: {
+    minWidth: 20,
+    height: 20,
+    paddingHorizontal: 5,
+    borderRadius: radius.pill,
+    backgroundColor: palette.gold,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   title: { paddingHorizontal: spacing.lg },
   body: { padding: spacing.lg, gap: spacing.md, paddingBottom: spacing.xxxl },
   flex: { flex: 1, gap: 2 },

@@ -22,6 +22,11 @@ const envSchema = z.object({
   // même interface sans changer ces réglages métier.
   STORAGE_LOCAL_ROOT: z.string().default('storage'),
   STORAGE_PUBLIC_URL: z.string().default('http://127.0.0.1:3000/files'),
+
+  // Notifications poussées. Désactivé par défaut : en développement et en
+  // test, aucun appel au service Expo n'est émis, les notifications restent
+  // consultables dans l'application.
+  PUSH_ENABLED: z.enum(['true', 'false']).default('false'),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;

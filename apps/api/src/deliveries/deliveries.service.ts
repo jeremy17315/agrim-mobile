@@ -11,6 +11,7 @@ import {
   type OrderStatus,
 } from '@agrim/contracts';
 
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { SubmitProofDto } from './dto/submit-proof.dto';
 import type { UpdateDeliveryStatusDto } from './dto/update-delivery-status.dto';
@@ -71,7 +72,10 @@ const ORDER_STATUS_FOR_DELIVERY: Partial<Record<DeliveryStatus, OrderStatus>> =
 
 @Injectable()
 export class DeliveriesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   /** Tournée du livreur : ses courses en cours, les plus anciennes d'abord. */
   listMine(courierId: string, includeDone: boolean) {
@@ -160,7 +164,7 @@ export class DeliveriesService {
 
     const nextOrderStatus = ORDER_STATUS_FOR_DELIVERY[dto.status];
 
-    return this.prisma.db.$transaction(async (tx) => {
+    const result = await this.prisma.db.$transaction(async (tx) => {
       const updated = await tx.delivery.update({
         where: { id },
         data: {
@@ -174,6 +178,7 @@ export class DeliveriesService {
       });
 
       // La commande suit la course, sans jamais reculer.
+      let orderStatusChanged: OrderStatus | null = null;
       if (nextOrderStatus) {
         const order = await tx.order.findUniqueOrThrow({
           where: { id: delivery.orderId },
@@ -191,11 +196,31 @@ export class DeliveriesService {
               actorId: courierId,
             },
           });
+          orderStatusChanged = nextOrderStatus;
         }
       }
 
-      return updated;
+      return { updated, orderStatusChanged: orderStatusChanged };
     });
+
+    // Le client est prévenu du mouvement de sa commande, pas de celui de la
+    // course : « en cours de livraison » lui parle, « PICKED_UP » non.
+    if (result.orderStatusChanged) {
+      const owner = await this.prisma.db.order.findUnique({
+        where: { id: delivery.orderId },
+        select: { userId: true, reference: true },
+      });
+      if (owner) {
+        await this.notifications.notifyOrderStatus({
+          userId: owner.userId,
+          status: result.orderStatusChanged,
+          reference: owner.reference,
+          orderId: delivery.orderId,
+        });
+      }
+    }
+
+    return result.updated;
   }
 
   /**
@@ -364,13 +389,13 @@ export class DeliveriesService {
     }
 
     const now = new Date();
-    return existing
-      ? this.prisma.db.delivery.update({
+    const delivery = existing
+      ? await this.prisma.db.delivery.update({
           where: { id: existing.id },
           data: { courierId, status: 'ASSIGNED', assignedAt: now },
           select: deliverySelect,
         })
-      : this.prisma.db.delivery.create({
+      : await this.prisma.db.delivery.create({
           data: {
             orderId: order.id,
             addressId: order.addressId,
@@ -380,5 +405,16 @@ export class DeliveriesService {
           },
           select: deliverySelect,
         });
+
+    // Ici le destinataire est le livreur, pas le client : c'est lui qui doit
+    // ouvrir l'application.
+    await this.notifications.notify({
+      userId: courierId,
+      type: 'DELIVERY_ASSIGNED',
+      reference: delivery.order.reference,
+      orderId: order.id,
+    });
+
+    return delivery;
   }
 }

@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
+import { usePushRegistration } from '@/lib/usePushRegistration';
 import { useAuthStore } from '@/store/auth';
 import { palette } from '@/theme/tokens';
 
@@ -41,6 +42,9 @@ export default function RootLayout() {
     void restore();
   }, [restore]);
 
+  // Jeton de notification : lié à la session, pas à un écran.
+  usePushRegistration();
+
   return (
     <QueryClientProvider client={queryClient}>
       <SafeAreaProvider>
@@ -67,6 +71,7 @@ export default function RootLayout() {
             <Stack.Protected guard={isAuthenticated}>
               <Stack.Screen name="commande" />
               <Stack.Screen name="commandes" />
+              <Stack.Screen name="notifications" />
             </Stack.Protected>
 
             <Stack.Protected guard={isAuthenticated && isCourier}>
