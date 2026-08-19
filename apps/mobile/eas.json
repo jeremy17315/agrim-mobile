@@ -15,7 +15,6 @@
         "EXPO_PUBLIC_API_URL": "http://192.168.1.10:3000/api/v1"
       }
     },
-
     "development": {
       "developmentClient": true,
       "distribution": "internal",
@@ -24,7 +23,6 @@
         "buildType": "apk"
       }
     },
-
     "preview": {
       "distribution": "internal",
       "channel": "preview",
@@ -32,7 +30,6 @@
         "buildType": "apk"
       }
     },
-
     "production": {
       "autoIncrement": true,
       "channel": "production",
