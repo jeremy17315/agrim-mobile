@@ -1,3 +1,5 @@
+import { COMPANY } from '@agrim/contracts';
+
 /**
  * Erreurs réseau et traduction en messages destinés à l'utilisateur.
  *
@@ -49,7 +51,7 @@ export class NetworkError extends Error {
 const MESSAGES: Record<string, string> = {
   INVALID_CREDENTIALS: 'Numéro ou mot de passe incorrect.',
   PHONE_ALREADY_USED: 'Ce numéro est déjà utilisé.',
-  ACCOUNT_INACTIVE: 'Ce compte est désactivé. Contactez AGRIM.',
+  ACCOUNT_INACTIVE: `Ce compte est désactivé. Contactez ${COMPANY.name}.`,
   INVALID_REFRESH_TOKEN: 'Votre session a expiré. Reconnectez-vous.',
   REFRESH_TOKEN_REUSED:
     'Session expirée pour raison de sécurité. Reconnectez-vous.',

@@ -1,4 +1,4 @@
-import { PAYMENT_METHODS, type PaymentMethod } from '@agrim/contracts';
+import { COMPANY, PAYMENT_METHODS, type PaymentMethod } from '@agrim/contracts';
 import { randomUUID } from 'expo-crypto';
 import { useRouter } from 'expo-router';
 import { useMemo, useRef, useState } from 'react';
@@ -314,7 +314,7 @@ export default function CommandeScreen() {
             </View>
 
             <Text variant="micro" color="muted">
-              Montant définitif confirmé par AGRIM à la validation.
+              Montant définitif confirmé par {COMPANY.name} à la validation.
             </Text>
           </Card>
         </View>

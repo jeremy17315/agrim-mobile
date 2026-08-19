@@ -1,3 +1,4 @@
+import { COMPANY } from '@agrim/contracts';
 import { useRouter } from 'expo-router';
 import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -174,7 +175,7 @@ export default function PanierScreen() {
             </Text>
           </View>
           <Text variant="micro" color="muted">
-            Montant confirmé par AGRIM au moment de la commande.
+            Montant confirmé par {COMPANY.name} au moment de la commande.
           </Text>
         </Card>
       </ScrollView>

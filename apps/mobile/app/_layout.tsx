@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { usePushRegistration } from '@/lib/usePushRegistration';
 import { useAuthStore } from '@/store/auth';
 import { palette } from '@/theme/tokens';
@@ -59,59 +60,61 @@ export default function RootLayout() {
   usePushRegistration();
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <SafeAreaProvider>
-        <StatusBar style="dark" />
-        {hydrated ? (
-          <Stack
-            screenOptions={{
-              headerShown: false,
-              contentStyle: { backgroundColor: palette.bg },
-            }}
-          >
-            {/*
-              Le catalogue reste consultable sans compte : obliger à s'inscrire
-              avant même de voir les produits ferait fuir des clients.
-              Seul le tunnel de commande exige une session.
-            */}
-            <Stack.Screen name="(tabs)" />
-            <Stack.Screen name="produit/[slug]" />
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <SafeAreaProvider>
+          <StatusBar style="dark" />
+          {hydrated ? (
+            <Stack
+              screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: palette.bg },
+              }}
+            >
+              {/*
+                Le catalogue reste consultable sans compte : obliger à s'inscrire
+                avant même de voir les produits ferait fuir des clients.
+                Seul le tunnel de commande exige une session.
+              */}
+              <Stack.Screen name="(tabs)" />
+              <Stack.Screen name="produit/[slug]" />
 
-            <Stack.Protected guard={!isAuthenticated}>
-              <Stack.Screen name="(auth)" />
-            </Stack.Protected>
+              <Stack.Protected guard={!isAuthenticated}>
+                <Stack.Screen name="(auth)" />
+              </Stack.Protected>
 
-            <Stack.Protected guard={isAuthenticated}>
-              <Stack.Screen name="commande" />
-              <Stack.Screen name="commandes" />
-              <Stack.Screen name="notifications" />
-            </Stack.Protected>
+              <Stack.Protected guard={isAuthenticated}>
+                <Stack.Screen name="commande" />
+                <Stack.Screen name="commandes" />
+                <Stack.Screen name="notifications" />
+              </Stack.Protected>
 
-            <Stack.Protected guard={isAuthenticated && isCourier}>
-              <Stack.Screen name="tournee" />
-            </Stack.Protected>
+              <Stack.Protected guard={isAuthenticated && isCourier}>
+                <Stack.Screen name="tournee" />
+              </Stack.Protected>
 
-            <Stack.Protected guard={isAuthenticated && isProducer}>
-              <Stack.Screen name="exploitation" />
-            </Stack.Protected>
+              <Stack.Protected guard={isAuthenticated && isProducer}>
+                <Stack.Screen name="exploitation" />
+              </Stack.Protected>
 
-            <Stack.Protected guard={isAuthenticated && isExecutive}>
-              <Stack.Screen name="direction" />
-            </Stack.Protected>
+              <Stack.Protected guard={isAuthenticated && isExecutive}>
+                <Stack.Screen name="direction" />
+              </Stack.Protected>
 
-            <Stack.Protected guard={isAuthenticated && isManager}>
-              <Stack.Screen name="gestion" />
-            </Stack.Protected>
-          </Stack>
-        ) : (
-          // Session en cours de restauration : afficher les écrans maintenant
-          // provoquerait une redirection visible dès que le token est retrouvé.
-          <View style={styles.splash}>
-            <ActivityIndicator color={palette.green} />
-          </View>
-        )}
-      </SafeAreaProvider>
-    </QueryClientProvider>
+              <Stack.Protected guard={isAuthenticated && isManager}>
+                <Stack.Screen name="gestion" />
+              </Stack.Protected>
+            </Stack>
+          ) : (
+            // Session en cours de restauration : afficher les écrans maintenant
+            // provoquerait une redirection visible dès que le token est retrouvé.
+            <View style={styles.splash}>
+              <ActivityIndicator color={palette.green} />
+            </View>
+          )}
+        </SafeAreaProvider>
+      </QueryClientProvider>
+    </ErrorBoundary>
   );
 }
 

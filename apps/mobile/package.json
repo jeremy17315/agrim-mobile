@@ -10,7 +10,8 @@
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
     "lint": "eslint app src",
-    "test": "jest"
+    "test": "jest",
+    "eas-build-post-install": "cd ../../packages/contracts && npm run build"
   },
   "dependencies": {
     "@agrim/contracts": "*",
@@ -32,6 +33,7 @@
     "expo-splash-screen": "~57.0.7",
     "expo-status-bar": "~57.0.1",
     "expo-system-ui": "~57.0.2",
+    "expo-updates": "~57.0.15",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-hook-form": "^7.85.0",

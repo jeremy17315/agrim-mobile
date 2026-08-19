@@ -9,9 +9,9 @@
     "start:prod": "node dist/main",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
     "test": "jest",
-    "test:e2e": "jest --config ./test/jest-e2e.json --runInBand",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "lint": "eslint src prisma --max-warnings 0",
     "format": "prettier --write \"src/**/*.ts\" \"prisma/**/*.ts\""
