@@ -42,7 +42,7 @@ export class ErrorBoundary extends Component<Props, State> {
           Un problème est survenu
         </Text>
         <Text variant="caption" color="muted" center>
-          L'application a rencontré une erreur inattendue. Réessayez ; si le problème persiste, redémarrez l'application.
+          L’application a rencontré une erreur inattendue. Réessayez ; si le problème persiste, redémarrez l’application.
         </Text>
         <Button
           label="Réessayer"
