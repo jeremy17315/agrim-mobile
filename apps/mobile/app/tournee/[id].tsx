@@ -245,16 +245,33 @@ export default function CourseScreen() {
           </Text>
         ) : null}
 
-        {delivery.address.contactPhone ? (
-          <Button
-            label="Appeler le client"
-            variant="outline"
-            size="sm"
-            onPress={() =>
-              void Linking.openURL(`tel:${delivery.address.contactPhone}`)
-            }
-          />
-        ) : null}
+        <View style={styles.addressActions}>
+          {delivery.address.contactPhone ? (
+            <Button
+              label="Appeler le client"
+              variant="outline"
+              size="sm"
+              fullWidth={false}
+              onPress={() =>
+                void Linking.openURL(`tel:${delivery.address.contactPhone}`)
+              }
+            />
+          ) : null}
+          {destinationPoint ? (
+            <Button
+              label="Naviguer"
+              variant="outline"
+              size="sm"
+              fullWidth={false}
+              icon={<Icon name="route" size={14} color="green" />}
+              onPress={() =>
+                void Linking.openURL(
+                  `https://www.google.com/maps/dir/?api=1&destination=${destinationPoint.latitude},${destinationPoint.longitude}`,
+                )
+              }
+            />
+          ) : null}
+        </View>
       </Card>
 
       <Card style={styles.card}>
@@ -466,6 +483,7 @@ const styles = StyleSheet.create({
   },
   card: { gap: spacing.xs },
   row: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+  addressActions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xs },
   flex: { flex: 1 },
   itemRow: {
     flexDirection: 'row',
