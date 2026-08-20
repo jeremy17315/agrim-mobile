@@ -16,6 +16,7 @@ import {
   RICE_RANGES,
 } from '@agrim/contracts';
 import { prisma } from '../src/prisma/prisma.client';
+import { generateReferralCode } from '../src/referrals/referrals.service';
 
 /** Mots de passe de DÉVELOPPEMENT uniquement. */
 const DEV_PASSWORD = 'Agrim2026!';
@@ -74,7 +75,16 @@ async function main() {
     lastName: string,
     phone: string,
     role: 'CLIENT' | 'LIVREUR' | 'PRODUCTEUR' | 'GESTIONNAIRE' | 'ADMIN' | 'DG',
-  ) => ({ firstName, lastName, phone, role, passwordHash });
+  ) => ({
+    firstName,
+    lastName,
+    phone,
+    role,
+    passwordHash,
+    // Distincts par construction (6 appels, collision astronomiquement
+    // improbable) : le seed part toujours d'une table User vide.
+    referralCode: generateReferralCode(),
+  });
 
   await prisma.user.createMany({
     data: [

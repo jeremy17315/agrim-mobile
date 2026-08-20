@@ -72,6 +72,7 @@ describe('Espace producteur (e2e)', () => {
         phone: '0700008888',
         passwordHash,
         role: 'PRODUCTEUR',
+        referralCode: 'ZZ9944',
       },
       update: { passwordHash, role: 'PRODUCTEUR' },
       select: { id: true },

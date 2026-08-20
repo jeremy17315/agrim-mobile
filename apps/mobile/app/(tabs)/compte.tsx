@@ -107,6 +107,14 @@ export default function CompteScreen() {
                 hint="Historique et suivi"
                 onPress={() => router.push('/commandes')}
               />
+              {user.role === 'CLIENT' ? (
+                <MenuRow
+                  icon="gift"
+                  label="Parrainage"
+                  hint="Invitez vos proches, gagnez du crédit"
+                  onPress={() => router.push('/parrainage')}
+                />
+              ) : null}
               <MenuRow
                 icon="bell"
                 label="Notifications"

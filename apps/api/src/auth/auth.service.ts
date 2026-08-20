@@ -11,6 +11,7 @@ import * as argon2 from 'argon2';
 
 import type { Role } from '@agrim/contracts';
 import { PrismaService } from '../prisma/prisma.service';
+import { generateReferralCode } from '../referrals/referrals.service';
 import type { LoginDto } from './dto/login.dto';
 import type { RegisterDto } from './dto/register.dto';
 
@@ -44,6 +45,19 @@ export class AuthService {
     }
 
     const passwordHash = await argon2.hash(dto.password);
+
+    // Parrain éventuel : un code inconnu ou invalide n'échoue jamais
+    // l'inscription, il est simplement ignoré — bloquer un compte pour une
+    // faute de frappe sur le code d'un tiers serait disproportionné.
+    let referredById: string | null = null;
+    if (dto.referralCode) {
+      const referrer = await this.prisma.db.user.findUnique({
+        where: { referralCode: dto.referralCode.trim().toUpperCase() },
+        select: { id: true },
+      });
+      referredById = referrer?.id ?? null;
+    }
+
     const user = await this.prisma.db.user.create({
       data: {
         firstName: dto.firstName,
@@ -52,6 +66,8 @@ export class AuthService {
         email: dto.email?.trim() ? dto.email.trim() : null,
         passwordHash,
         role: 'CLIENT',
+        referralCode: await this.uniqueReferralCode(),
+        referredById,
         // Le panier accompagne le compte dès sa création.
         cart: { create: {} },
       },
@@ -227,6 +243,23 @@ export class AuthService {
 
   private hashToken(token: string): string {
     return createHash('sha256').update(token).digest('hex');
+  }
+
+  /**
+   * Code de parrainage unique. Les collisions sont extrêmement rares (charset
+   * de 32 caractères sur 6 positions), mais le retry coûte trois fois rien et
+   * élimine le risque plutôt que de le tolérer.
+   */
+  private async uniqueReferralCode(): Promise<string> {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const code = generateReferralCode();
+      const exists = await this.prisma.db.user.findUnique({
+        where: { referralCode: code },
+        select: { id: true },
+      });
+      if (!exists) return code;
+    }
+    throw new Error('Impossible de générer un code de parrainage unique.');
   }
 
   private toPublicUser(user: {

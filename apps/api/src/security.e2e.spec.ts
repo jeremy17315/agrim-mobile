@@ -165,6 +165,7 @@ describe('Sécurité', () => {
         phone: '0709996655',
         passwordHash: await (await import('argon2')).hash('Agrim2026!'),
         role: 'CLIENT',
+        referralCode: 'ZZ9911',
       },
       select: { id: true },
     });

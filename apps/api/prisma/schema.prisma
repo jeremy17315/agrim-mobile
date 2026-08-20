@@ -116,6 +116,18 @@ model User {
   role         Role    @default(CLIENT)
   isActive     Boolean @default(true)
 
+  // Parrainage (section 33). `referralCode` est attribué à l'inscription de
+  // TOUS les comptes (pas seulement CLIENT), pour rester simple. Le crédit
+  // est un solde générique, alimenté aujourd'hui uniquement par le
+  // parrainage. `referralRewardedAt` vit sur le FILLEUL : il garantit qu'un
+  // même filleul ne déclenche jamais deux fois la récompense de son parrain.
+  referralCode       String    @unique @db.VarChar(12)
+  referredById       String?   @db.Uuid
+  referredBy         User?     @relation("Referrals", fields: [referredById], references: [id])
+  referrals          User[]    @relation("Referrals")
+  referralRewardedAt DateTime?
+  creditBalanceXof   Int       @default(0)
+
   addresses      Address[]
   cart           Cart?
   orders         Order[]
@@ -130,6 +142,7 @@ model User {
   updatedAt DateTime @updatedAt
 
   @@index([role])
+  @@index([referredById])
 }
 
 /// Refresh tokens hachés + rotation. Jamais stockés en clair.

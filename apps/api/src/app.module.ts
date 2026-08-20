@@ -16,6 +16,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { ManagementModule } from './management/management.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { ProducersModule } from './producers/producers.module';
+import { ReferralsModule } from './referrals/referrals.module';
 import { StorageModule } from './storage/storage.module';
 import { OrdersModule } from './orders/orders.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -43,6 +44,7 @@ import { ProductsModule } from './products/products.module';
     AnalyticsModule,
     ManagementModule,
     ProducersModule,
+    ReferralsModule,
     HealthModule,
   ],
   providers: [

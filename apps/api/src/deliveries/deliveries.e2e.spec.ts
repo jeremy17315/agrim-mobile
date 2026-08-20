@@ -85,6 +85,7 @@ describe('Livraisons (e2e)', () => {
             // assignable et les tests d'isolation perdraient leur objet.
             passwordHash: await (await import('argon2')).hash('Agrim2026!'),
             role: 'LIVREUR',
+            referralCode: 'ZZ9922',
           },
           select: { id: true },
         })

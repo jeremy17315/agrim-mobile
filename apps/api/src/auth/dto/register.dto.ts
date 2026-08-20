@@ -39,4 +39,10 @@ export class RegisterDto {
   @Matches(/[A-Za-z]/, { message: 'Doit contenir une lettre' })
   @Matches(/[0-9]/, { message: 'Doit contenir un chiffre' })
   password!: string;
+
+  @ApiPropertyOptional({ example: 'AB12CD' })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[A-Za-z0-9]{6}$/, { message: 'Code de parrainage invalide' })
+  referralCode?: string;
 }

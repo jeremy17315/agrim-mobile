@@ -87,6 +87,7 @@ export default function RootLayout() {
                 <Stack.Screen name="commande" />
                 <Stack.Screen name="commandes" />
                 <Stack.Screen name="notifications" />
+                <Stack.Screen name="parrainage" />
               </Stack.Protected>
 
               <Stack.Protected guard={isAuthenticated && isCourier}>

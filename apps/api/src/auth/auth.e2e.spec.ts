@@ -107,6 +107,7 @@ describe('Authentification (e2e)', () => {
         phone: '0709998877',
         passwordHash: 'pas-un-hash-argon2',
         role: 'CLIENT',
+        referralCode: 'ZZ9933',
       },
       select: { id: true },
     });

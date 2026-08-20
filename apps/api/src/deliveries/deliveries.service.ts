@@ -9,10 +9,12 @@ import {
 import {
   canTransitionDelivery,
   isCourierSettable,
+  PROVISIONAL_REFERRAL,
   type DeliveryStatus,
   type OrderStatus,
 } from '@agrim/contracts';
 
+import type { Prisma } from '../../generated/prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { DeliveryOtpService } from './delivery-otp.service';
@@ -83,6 +85,47 @@ export class DeliveriesService {
     private readonly notifications: NotificationsService,
     private readonly otp: DeliveryOtpService,
   ) {}
+
+  /**
+   * Récompense de parrainage.
+   *
+   * Se déclenche à la PREMIÈRE commande réellement livrée d'un filleul,
+   * jamais à sa simple inscription. `referralRewardedAt` (posé sur le
+   * filleul) garantit qu'un même filleul ne crédite son parrain qu'une seule
+   * fois, même si cette méthode était appelée deux fois par erreur.
+   *
+   * Appelée à l'intérieur de la même transaction que le passage à DELIVERED :
+   * une commande livrée sans récompense associée (ou l'inverse) ne doit
+   * jamais pouvoir exister.
+   */
+  private async awardReferralIfFirstDelivery(
+    tx: Prisma.TransactionClient,
+    orderUserId: string,
+  ): Promise<void> {
+    const referee = await tx.user.findUnique({
+      where: { id: orderUserId },
+      select: { referredById: true, referralRewardedAt: true },
+    });
+    if (!referee?.referredById || referee.referralRewardedAt) return;
+
+    // Ne récompense que la toute première commande livrée du filleul : une
+    // commande déjà livrée plus tôt signifie que la récompense est passée.
+    const deliveredCount = await tx.order.count({
+      where: { userId: orderUserId, status: 'DELIVERED' },
+    });
+    if (deliveredCount !== 1) return;
+
+    await tx.user.update({
+      where: { id: orderUserId },
+      data: { referralRewardedAt: new Date() },
+    });
+    await tx.user.update({
+      where: { id: referee.referredById },
+      data: {
+        creditBalanceXof: { increment: PROVISIONAL_REFERRAL.referrerRewardXof },
+      },
+    });
+  }
 
   /** Tournée du livreur : ses courses en cours, les plus anciennes d'abord. */
   listMine(courierId: string, includeDone: boolean) {
@@ -369,9 +412,10 @@ export class DeliveriesService {
         select: { status: true },
       });
       if (order.status !== 'DELIVERED' && order.status !== 'CANCELLED') {
-        await tx.order.update({
+        const updatedOrder = await tx.order.update({
           where: { id: delivery.orderId },
           data: { status: 'DELIVERED' },
+          select: { userId: true },
         });
         await tx.orderEvent.create({
           data: {
@@ -380,6 +424,7 @@ export class DeliveriesService {
             actorId: courierId,
           },
         });
+        await this.awardReferralIfFirstDelivery(tx, updatedOrder.userId);
       }
 
       return result;
@@ -522,6 +567,7 @@ export class DeliveriesService {
         await tx.orderEvent.create({
           data: { orderId: order.id, status: 'DELIVERED', actorId: managerId },
         });
+        await this.awardReferralIfFirstDelivery(tx, order.userId);
       }
 
       return result;

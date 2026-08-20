@@ -13,7 +13,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { z } from 'zod';
 
-import { passwordSchema, phoneSchema } from '@agrim/contracts';
+import { passwordSchema, phoneSchema, REFERRAL_CODE_LENGTH } from '@agrim/contracts';
 
 import { describeError } from '@/api/errors';
 import { Banner, Button, Icon, Input, Text } from '@/components/ui';
@@ -38,6 +38,18 @@ const schema = z
     email: z.union([z.literal(''), z.email('Email invalide')]).optional(),
     password: passwordSchema,
     confirmPassword: z.string(),
+    referralCode: z
+      .union([
+        z.literal(''),
+        z
+          .string()
+          .trim()
+          .regex(
+            new RegExp(`^[A-Za-z0-9]{${REFERRAL_CODE_LENGTH}}$`),
+            `Code à ${REFERRAL_CODE_LENGTH} caractères`,
+          ),
+      ])
+      .optional(),
   })
   .refine((values) => values.password === values.confirmPassword, {
     path: ['confirmPassword'],
@@ -66,6 +78,7 @@ export default function InscriptionScreen() {
       email: '',
       password: '',
       confirmPassword: '',
+      referralCode: '',
     },
   });
 
@@ -79,6 +92,9 @@ export default function InscriptionScreen() {
         // Chaîne vide = pas d'email : on n'envoie pas un champ vide au serveur.
         ...(values.email ? { email: values.email.trim() } : {}),
         password: values.password,
+        ...(values.referralCode
+          ? { referralCode: values.referralCode.trim().toUpperCase() }
+          : {}),
       });
       router.replace('/(tabs)');
     } catch (error) {
@@ -226,6 +242,23 @@ export default function InscriptionScreen() {
                 onChangeText={onChange}
                 onBlur={onBlur}
                 error={errors.confirmPassword?.message}
+              />
+            )}
+          />
+
+          <Controller
+            control={control}
+            name="referralCode"
+            render={({ field: { onChange, onBlur, value } }) => (
+              <Input
+                label="Code de parrainage"
+                placeholder="AB12CD"
+                hint="Facultatif — donné par la personne qui vous a invité"
+                autoCapitalize="characters"
+                value={value ?? ''}
+                onChangeText={onChange}
+                onBlur={onBlur}
+                error={errors.referralCode?.message}
               />
             )}
           />
