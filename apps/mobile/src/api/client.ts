@@ -33,6 +33,13 @@ function resolveBaseUrl(): string {
 
 export const API_BASE_URL = resolveBaseUrl();
 
+// Base requise par `new URL()` quand API_BASE_URL est un chemin relatif (web) :
+// sans elle, la construction lève une exception avalée en NetworkError, et
+// aucune requête ne part jamais.
+const URL_BASE = API_BASE_URL.startsWith('/')
+  ? globalThis.location?.origin
+  : undefined;
+
 /** Fournit le token courant. Injecté par le store d'auth pour éviter un cycle. */
 type TokenProvider = () => string | null;
 
@@ -99,6 +106,7 @@ function buildUrl(
 ): string {
   const url = new URL(
     `${API_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`,
+    URL_BASE,
   );
   if (query) {
     for (const [key, value] of Object.entries(query)) {
