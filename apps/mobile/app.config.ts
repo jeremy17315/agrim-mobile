@@ -35,6 +35,17 @@ const ALLOWS_CLEARTEXT = API_URL.startsWith('http://');
  */
 const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_ANDROID_KEY ?? '';
 
+/**
+ * Identifiant du projet EAS, utilisé pour les builds, les notifications
+ * poussées et l'URL de manifeste des mises à jour OTA (EAS Update).
+ *
+ * Écrit en clair volontairement : ce n'est pas un secret, il figure de toute
+ * façon dans le bundle livré. La variable d'environnement reste prioritaire,
+ * pour rattacher le projet à un autre compte sans modifier le dépôt.
+ */
+const EAS_PROJECT_ID =
+  process.env.EAS_PROJECT_ID ?? '35eb97ae-3d76-48ec-8424-3bd75584ca72';
+
 const config: ExpoConfig = {
   name: 'AGRIM',
   slug: 'agrim-mobile',
@@ -127,23 +138,33 @@ const config: ExpoConfig = {
     // nécessaire ici. À réévaluer si l'on migre le styling.
   },
 
+  /**
+   * Mises à jour OTA (EAS Update) : un changement JS seul peut être poussé
+   * aux appareils déjà installés, sans nouveau build ni nouveau lien.
+   *
+   * Policy « fingerprint » : la version d'exécution est calculée à partir du
+   * code natif réel (modules, permissions, config…). Un changement natif
+   * change donc automatiquement le fingerprint, ce qui empêche d'envoyer une
+   * mise à jour incompatible à un ancien APK — au prix d'un nouveau build
+   * (et nouveau lien) dans ce cas précis. Voir docs/APK-DE-TEST.md.
+   */
+  runtimeVersion: {
+    policy: 'fingerprint',
+  },
+  updates: {
+    url: `https://u.expo.dev/${EAS_PROJECT_ID}`,
+  },
+
   extra: {
     apiUrl: API_URL,
     eas: {
       /**
        * Identifiant du projet EAS.
        *
-       * Écrit en clair volontairement : ce n'est pas un secret. Il figure de
-       * toute façon dans le bundle livré, et sert d'identifiant public pour
-       * les builds et les notifications poussées.
-       *
        * `eas init` ne peut pas écrire dans une configuration dynamique (.ts) :
-       * la valeur est donc renseignée ici. La variable d'environnement reste
-       * prioritaire, pour rattacher le projet à un autre compte sans modifier
-       * le dépôt.
+       * la valeur est donc renseignée ici (voir `EAS_PROJECT_ID` plus haut).
        */
-      projectId:
-        process.env.EAS_PROJECT_ID ?? '35eb97ae-3d76-48ec-8424-3bd75584ca72',
+      projectId: EAS_PROJECT_ID,
     },
   },
 };

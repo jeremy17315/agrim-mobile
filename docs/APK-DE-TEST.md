@@ -259,12 +259,61 @@ Si la base est vide : `npm run db:seed`.
 
 ## Reconstruire après une modification
 
-Le code JavaScript est figé dans l'APK. Toute modification de l'application
-exige un nouveau build :
+Deux cas, selon la nature du changement.
+
+### A. Changement JS/TS seul (écrans, logique, styles, appels API) — mise à jour OTA
+
+Le projet est configuré avec **EAS Update** (`runtimeVersion` + `updates.url`
+dans `app.config.ts`). Un changement purement JavaScript peut être poussé aux
+appareils qui ont déjà installé l'APK, **sans nouveau build ni nouveau
+lien** :
+
+```bash
+cd apps/mobile
+eas update --channel apk --message "description du changement"
+```
+
+L'application vérifie une mise à jour à chaque démarrage à froid
+(comportement par défaut d'`expo-updates`) et l'applique au redémarrage
+suivant — aucune action de l'utilisateur, aucune réinstallation.
+
+Limites à connaître :
+
+- Ça ne touche que les appareils dont l'APK a été construit **après** la mise
+  en place d'EAS Update, avec un profil qui déclare `"channel": "apk"` (déjà
+  le cas dans `eas.json`). Un APK construit avant cette mise en place ne sait
+  pas vérifier de mise à jour : il faut le reconstruire une fois pour que le
+  mécanisme s'active.
+- La policy `runtimeVersion: { policy: "fingerprint" }` calcule la version
+  d'exécution à partir du code natif réel. Si l'update publiée ne correspond
+  pas au fingerprint natif de l'APK installé, elle est simplement ignorée
+  (pas de crash) — voir le cas B ci-dessous.
+- Chaque profil (`apk`, `preview`, `development`, `production`) a son propre
+  channel : une update publiée sur `apk` n'atteint pas les APK installés via
+  un autre profil.
+
+Pour vérifier qu'une update a bien été reçue par un appareil : rouvrir
+l'application deux fois (la première vérifie et télécharge, la seconde
+affiche la nouvelle version), ou consulter `eas update:list --channel apk`.
+
+### B. Changement natif — nouveau build obligatoire
+
+Nouveau module natif, permission, icône, changement d'`app.config.ts` touchant
+`android`/`ios`/`plugins`, montée de version d'Expo ou de React Native : rien
+de tout ça ne peut passer par une update OTA. Il faut un nouveau build, donc
+un nouveau lien :
 
 ```bash
 eas build --platform android --profile apk
 ```
+
+Avec la policy `fingerprint`, pas de mauvaise surprise si vous oubliez cette
+règle : une update OTA publiée après un changement natif ne sera simplement
+pas proposée aux anciens APK plutôt que de les faire planter. Mais pour que
+quiconque bénéficie réellement du changement natif, le nouveau build (et son
+lien) reste la seule voie.
+
+### Pendant le développement actif : mode développement
 
 **Sauf** si vous changez uniquement l'URL de l'API pendant une session de
 test : dans ce cas, préférez le mode développement, qui recharge sans
@@ -282,8 +331,9 @@ eas build --platform android --profile development
 ```
 
 C'est la bonne façon de travailler au quotidien : un seul build, puis
-rechargement instantané à chaque modification. Le profil `apk` sert à figer une
-version à faire tester par quelqu'un d'autre.
+rechargement instantané à chaque modification. Le profil `apk` — combiné à
+EAS Update pour les changements JS — sert à figer une version à faire tester
+par quelqu'un d'autre sans lui redemander de réinstaller à chaque fois.
 
 ---
 
@@ -298,6 +348,7 @@ version à faire tester par quelqu'un d'autre.
 | Aucune notification poussée                              | `EAS_PROJECT_ID` non défini au build      | Étape 2 ; le push exige un vrai appareil, jamais un émulateur                            |
 | GPS immobile                                             | Permission refusée, ou test en intérieur  | Réglages Android → AGRIM → Localisation                                                  |
 | `eas build` : « project not configured »                 | `eas init` non exécuté                    | Étape 2                                                                                  |
+| `eas update` publiée mais l'app ne change pas             | APK construit avant la mise en place d'EAS Update, ou fingerprint natif différent | Reconstruire une fois l'APK ; rouvrir l'app deux fois après publication |
 
 ---
 
