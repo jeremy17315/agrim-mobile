@@ -284,10 +284,11 @@ Limites à connaître :
   le cas dans `eas.json`). Un APK construit avant cette mise en place ne sait
   pas vérifier de mise à jour : il faut le reconstruire une fois pour que le
   mécanisme s'active.
-- La policy `runtimeVersion: { policy: "fingerprint" }` calcule la version
-  d'exécution à partir du code natif réel. Si l'update publiée ne correspond
-  pas au fingerprint natif de l'APK installé, elle est simplement ignorée
-  (pas de crash) — voir le cas B ci-dessous.
+- La policy `runtimeVersion: { policy: "appVersion" }` fait correspondre la
+  version d'exécution au champ `version` d'`app.config.ts` (actuellement
+  `1.0.0`). Si l'update publiée ne correspond pas à la version de l'APK
+  installé, elle est simplement ignorée (pas de crash) — voir le cas B
+  ci-dessous, **règle à respecter manuellement** avec cette policy.
 - Chaque profil (`apk`, `preview`, `development`, `production`) a son propre
   channel : une update publiée sur `apk` n'atteint pas les APK installés via
   un autre profil.
@@ -307,11 +308,18 @@ un nouveau lien :
 eas build --platform android --profile apk
 ```
 
-Avec la policy `fingerprint`, pas de mauvaise surprise si vous oubliez cette
-règle : une update OTA publiée après un changement natif ne sera simplement
-pas proposée aux anciens APK plutôt que de les faire planter. Mais pour que
-quiconque bénéficie réellement du changement natif, le nouveau build (et son
-lien) reste la seule voie.
+**Important avec la policy `appVersion`** : incrémentez le champ `version`
+dans `app.config.ts` en même temps que le changement natif. Sans ça, EAS
+Update considère l'ancien et le nouveau build comme compatibles alors qu'ils
+ne le sont pas, et une update JS publiée ensuite pourrait être envoyée à un
+APK qui n'a pas le code natif attendu.
+
+> La policy `fingerprint` (détection automatique, sans avoir à penser à
+> bumper `version`) a été essayée mais provoque un échec reproductible du
+> build dans ce monorepo (« Configure expo-updates » échoue : le fingerprint
+> calculé localement diverge de celui calculé côté serveur EAS à cause du
+> hoisting `../../node_modules` des workspaces npm). D'où le choix de
+> `appVersion`, moins automatique mais fiable.
 
 ### Pendant le développement actif : mode développement
 

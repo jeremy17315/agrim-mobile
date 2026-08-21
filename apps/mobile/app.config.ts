@@ -142,14 +142,20 @@ const config: ExpoConfig = {
    * Mises à jour OTA (EAS Update) : un changement JS seul peut être poussé
    * aux appareils déjà installés, sans nouveau build ni nouveau lien.
    *
-   * Policy « fingerprint » : la version d'exécution est calculée à partir du
-   * code natif réel (modules, permissions, config…). Un changement natif
-   * change donc automatiquement le fingerprint, ce qui empêche d'envoyer une
-   * mise à jour incompatible à un ancien APK — au prix d'un nouveau build
-   * (et nouveau lien) dans ce cas précis. Voir docs/APK-DE-TEST.md.
+   * Policy « appVersion » : la version d'exécution suit le champ `version`
+   * ci-dessus. La policy « fingerprint » (hash du code natif) a été
+   * essayée en premier mais échoue de façon reproductible en monorepo npm
+   * workspaces : EAS calcule un fingerprint local (chemins relatifs
+   * `../../node_modules/...`) différent de celui calculé côté serveur, et
+   * l'écart fait échouer la phase CONFIGURE_EXPO_UPDATES du build.
+   *
+   * Conséquence à retenir : après un changement natif (nouveau module,
+   * permission, plugin…), il faut incrémenter `version` ci-dessus. Sans
+   * ça, une update OTA publiée après le changement natif pourrait être
+   * proposée à tort à d'anciens APK. Voir docs/APK-DE-TEST.md.
    */
   runtimeVersion: {
-    policy: 'fingerprint',
+    policy: 'appVersion',
   },
   updates: {
     url: `https://u.expo.dev/${EAS_PROJECT_ID}`,
