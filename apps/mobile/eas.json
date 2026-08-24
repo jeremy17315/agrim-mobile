@@ -5,13 +5,15 @@
   },
   "build": {
     "apk": {
-        "extends": "production",
-        "distribution": "internal",
-        "channel": "apk",
-        "android": { "buildType": "apk" },
-        "env": {
-            "EXPO_PUBLIC_API_URL": "https://agrim-api-production.up.railway.app/api/v1"
-        }
+      "extends": "production",
+      "distribution": "internal",
+      "channel": "apk",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://agrim-api-production.up.railway.app/api/v1"
+      }
     },
     "development": {
       "developmentClient": true,
@@ -26,6 +28,9 @@
       "channel": "preview",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://agrim-api-production.up.railway.app/api/v1"
       }
     },
     "production": {
@@ -33,6 +38,9 @@
       "channel": "production",
       "android": {
         "buildType": "app-bundle"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://agrim-api-production.up.railway.app/api/v1"
       }
     }
   },

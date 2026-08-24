@@ -20,6 +20,7 @@ import { ProducersModule } from './producers/producers.module';
 import { ReferralsModule } from './referrals/referrals.module';
 import { StorageModule } from './storage/storage.module';
 import { OrdersModule } from './orders/orders.module';
+import { PaymentsModule } from './payments/payments.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProductsModule } from './products/products.module';
 
@@ -42,6 +43,7 @@ import { ProductsModule } from './products/products.module';
     CatalogSyncModule,
     AddressesModule,
     OrdersModule,
+    PaymentsModule,
     DeliveriesModule,
     StorageModule,
     NotificationsModule,

@@ -53,6 +53,18 @@ const envSchema = z.object({
   /** Simulation seulement : éprouver le parcours de refus, jamais testé sinon. */
   PAYMENT_SIMULATION_FAILURE_RATE: z.string().default('0'),
   PAYMENT_SIMULATION_ASYNC: z.enum(['true', 'false']).default('false'),
+  /**
+   * Autorise explicitement le pilote de simulation EN PRODUCTION.
+   *
+   * Défaut « false », et c'est délibéré : la simulation valide les paiements
+   * sans appeler d'opérateur. En production, cela reviendrait à offrir le riz.
+   * Sans cette autorisation, le paiement en ligne répond 503 tant qu'un vrai
+   * fournisseur n'est pas configuré — le paiement à la livraison, lui,
+   * continue de fonctionner.
+   */
+  PAYMENT_SIMULATION_ALLOW_PRODUCTION: z
+    .enum(['true', 'false'])
+    .default('false'),
 
   CINETPAY_API_KEY: z.string().default(''),
   CINETPAY_SITE_ID: z.string().default(''),
