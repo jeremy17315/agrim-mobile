@@ -34,6 +34,7 @@ const baseProduct: Product = {
       weightGrams: 900,
       label: '900 g',
       price: 1200,
+      originalPrice: null,
       stock: 200,
       isAvailable: true,
     },
@@ -43,6 +44,7 @@ const baseProduct: Product = {
       weightGrams: 5000,
       label: '5 kg',
       price: 6000,
+      originalPrice: null,
       stock: 200,
       isAvailable: true,
     },
@@ -52,6 +54,7 @@ const baseProduct: Product = {
       weightGrams: 22500,
       label: '22,5 kg',
       price: 25000,
+      originalPrice: null,
       stock: 40,
       isAvailable: true,
     },
@@ -119,5 +122,24 @@ describe('ProductCard', () => {
         `RIZ BOAGNI Royal Grains, à partir de 1${NB}200${NB}F`,
       ),
     ).toBeTruthy();
+  });
+
+  it('affiche le prix barré du format le moins cher quand une promotion existe', () => {
+    const product: Product = {
+      ...baseProduct,
+      variants: [
+        { ...baseProduct.variants[0]!, price: 800, originalPrice: 900 },
+      ],
+    };
+    render(<ProductCard product={product} />);
+
+    expect(screen.getByText(`900${NB}F`)).toBeTruthy();
+    expect(screen.getByText(`800${NB}F`)).toBeTruthy();
+  });
+
+  it('n’affiche pas de prix barré sans promotion', () => {
+    render(<ProductCard product={baseProduct} />);
+    // Le prix n'apparaît qu'une fois : pas de doublon en style barré.
+    expect(screen.getAllByText(`1${NB}200${NB}F`)).toHaveLength(1);
   });
 });

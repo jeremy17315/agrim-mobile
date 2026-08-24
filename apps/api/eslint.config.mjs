@@ -17,7 +17,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['**/*.spec.ts', 'prisma/seed.ts'],
+    files: ['**/*.spec.ts', 'prisma/seed.ts', 'prisma/update-catalog.ts'],
     rules: { 'no-console': 'off' },
   },
 );

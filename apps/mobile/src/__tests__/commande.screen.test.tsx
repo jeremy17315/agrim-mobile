@@ -86,6 +86,7 @@ const variant: ProductVariant = {
   weightGrams: 5000,
   label: '5 kg',
   price: 6000,
+  originalPrice: null,
   stock: 50,
   isAvailable: true,
 };

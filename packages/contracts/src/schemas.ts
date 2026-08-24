@@ -132,6 +132,8 @@ export const productVariantSchema = z.object({
   weightGrams: z.number().int().positive(),
   label: z.string().min(1).max(40),
   price: moneySchema,
+  /** Prix barré (« avant promotion »). `null` = aucune promotion en cours. */
+  originalPrice: moneySchema.nullable(),
   stock: z.number().int().nonnegative(),
   isAvailable: z.boolean(),
 });

@@ -12,6 +12,7 @@
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
+    "db:update-catalog": "tsx prisma/update-catalog.ts",
     "test": "jest",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "lint": "eslint src prisma --max-warnings 0",

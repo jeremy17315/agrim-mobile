@@ -130,6 +130,9 @@ export default function ProductScreen() {
                 {variants.map((variant) => {
                   const disabled = !variant.isAvailable || variant.stock === 0;
                   const active = selected?.id === variant.id;
+                  const hasPromo =
+                    variant.originalPrice !== null &&
+                    variant.originalPrice !== variant.price;
                   return (
                     <Pressable
                       key={variant.id}
@@ -152,6 +155,15 @@ export default function ProductScreen() {
                       <Text variant="h3" color={active ? 'green' : 'ink'}>
                         {formatWeight(variant.weightGrams)}
                       </Text>
+                      {hasPromo ? (
+                        <Text
+                          variant="micro"
+                          color="muted"
+                          style={styles.strike}
+                        >
+                          {formatXof(variant.originalPrice!)}
+                        </Text>
+                      ) : null}
                       <Text
                         variant="caption"
                         color={active ? 'green' : 'muted'}
@@ -264,6 +276,13 @@ export default function ProductScreen() {
               <Text variant="micro" color="muted">
                 PRIX
               </Text>
+              {selected &&
+              selected.originalPrice !== null &&
+              selected.originalPrice !== selected.price ? (
+                <Text variant="caption" color="muted" style={styles.strike}>
+                  {formatXof(selected.originalPrice)}
+                </Text>
+              ) : null}
               <Text variant="h1" color="green">
                 {selected ? formatXof(selected.price) : '—'}
               </Text>
@@ -365,4 +384,5 @@ const styles = StyleSheet.create({
     ...shadow.floating,
   },
   footerAction: { flex: 1 },
+  strike: { textDecorationLine: 'line-through' },
 });

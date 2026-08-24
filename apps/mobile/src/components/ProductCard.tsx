@@ -21,10 +21,15 @@ export function ProductCard({ product, onPress }: ProductCardProps) {
   const available = product.variants.filter(
     (v) => v.isAvailable && v.stock > 0,
   );
-  const cheapest = available.reduce<number | null>(
-    (min, v) => (min === null || v.price < min ? v.price : min),
+  const cheapestVariant = available.reduce<Product['variants'][number] | null>(
+    (min, v) => (min === null || v.price < min.price ? v : min),
     null,
   );
+  const cheapest = cheapestVariant?.price ?? null;
+  const showPromo =
+    cheapestVariant !== null &&
+    cheapestVariant.originalPrice !== null &&
+    cheapestVariant.originalPrice !== cheapestVariant.price;
   const outOfStock = available.length === 0;
 
   return (
@@ -68,6 +73,11 @@ export function ProductCard({ product, onPress }: ProductCardProps) {
               <Text variant="micro" color="muted">
                 DÈS
               </Text>
+              {showPromo ? (
+                <Text variant="caption" color="muted" style={styles.strike}>
+                  {formatXof(cheapestVariant!.originalPrice!)}
+                </Text>
+              ) : null}
               <Text variant="h2" color="green">
                 {cheapest === null ? '—' : formatXof(cheapest)}
               </Text>
@@ -125,5 +135,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
+  },
+  strike: {
+    textDecorationLine: 'line-through',
   },
 });

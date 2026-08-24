@@ -80,6 +80,7 @@ const product = (overrides: Partial<Product> = {}): Product => ({
       label: '5 kg',
       weightGrams: 5000,
       price: 6000,
+      originalPrice: null,
       stock: 120,
       isAvailable: true,
     },

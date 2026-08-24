@@ -5,6 +5,9 @@ import { useCartStore } from '@/store/cart';
 
 import ProductScreen from '../../app/produit/[slug]';
 
+/** Espace insécable étroit produit par formatXof. */
+const NB = ' ';
+
 /**
  * Flux critique : depuis la fiche produit, choisir un format et une quantité,
  * puis ajouter au panier. C'est le geste qui déclenche tout le reste du
@@ -39,6 +42,7 @@ const product: Product = {
       weightGrams: 900,
       label: '900 g',
       price: 1200,
+      originalPrice: null,
       stock: 50,
       isAvailable: true,
     },
@@ -48,6 +52,7 @@ const product: Product = {
       weightGrams: 5000,
       label: '5 kg',
       price: 6000,
+      originalPrice: null,
       stock: 20,
       isAvailable: true,
     },
@@ -57,6 +62,7 @@ const product: Product = {
       weightGrams: 22500,
       label: '22,5 kg',
       price: 25_000,
+      originalPrice: null,
       stock: 0,
       isAvailable: false,
     },
@@ -142,4 +148,27 @@ it('n’ajoute rien depuis un format en rupture', () => {
   expect(screen.getByText('Indisponible')).toBeTruthy();
   expect(screen.queryByText('Ajouter au panier')).toBeNull();
   expect(useCartStore.getState().items).toHaveLength(0);
+});
+
+it('affiche le prix barré du format sélectionné', () => {
+  mockUseProduct.mockReturnValue({
+    data: {
+      ...product,
+      variants: [
+        { ...product.variants[0]!, originalPrice: 1400 },
+        product.variants[1]!,
+        product.variants[2]!,
+      ],
+    },
+    isPending: false,
+    isError: false,
+    error: null,
+    refetch: jest.fn(),
+  });
+  render(<ProductScreen />);
+
+  // Apparaît à la fois dans le sélecteur de format et le pied de page.
+  expect(
+    screen.getAllByText(`1${NB}400${NB}F`).length,
+  ).toBeGreaterThan(0);
 });

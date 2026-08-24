@@ -31,6 +31,7 @@ const productSelect = {
       label: true,
       weightGrams: true,
       price: true,
+      originalPrice: true,
       stock: true,
       isAvailable: true,
     },

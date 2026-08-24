@@ -33,6 +33,7 @@ const v5kg: ProductVariant = {
   weightGrams: 5000,
   label: '5 kg',
   price: 6000,
+  originalPrice: null,
   stock: 200,
   isAvailable: true,
 };
@@ -43,6 +44,7 @@ const v900g: ProductVariant = {
   weightGrams: 900,
   label: '900 g',
   price: 1200,
+  originalPrice: null,
   stock: 200,
   isAvailable: true,
 };
