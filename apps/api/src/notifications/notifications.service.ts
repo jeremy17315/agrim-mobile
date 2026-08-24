@@ -8,6 +8,25 @@ import {
 
 import { PrismaService } from '../prisma/prisma.service';
 import { PUSH_PROVIDER, type PushProvider } from './push.provider';
+import { SMS_PROVIDER, type SmsProvider } from './sms.provider';
+
+/**
+ * Événements qui justifient de payer un SMS quand le push n'a pas abouti.
+ *
+ * Liste fermée et courte : elle ne retient que ce qui appelle une action ou
+ * une attente du client. Le même arbitrage a été fait côté site, où le SMS
+ * ne double le WhatsApp que sur trois étapes.
+ *
+ * DELIVERY_OTP en est absent à dessein : le code de livraison ne transite
+ * jamais par un canal tiers.
+ */
+const SMS_WORTHY = new Set<NotificationType>([
+  'ORDER_CONFIRMED',
+  'ORDER_OUT_FOR_DELIVERY',
+  'ORDER_DELIVERED',
+  'ORDER_CANCELLED',
+  'PAYMENT_FAILED',
+]);
 
 /**
  * Notifications.
@@ -24,6 +43,7 @@ export class NotificationsService {
   constructor(
     private readonly prisma: PrismaService,
     @Inject(PUSH_PROVIDER) private readonly push: PushProvider,
+    @Inject(SMS_PROVIDER) private readonly sms: SmsProvider,
   ) {}
 
   /**
@@ -67,6 +87,8 @@ export class NotificationsService {
         ? 'Ouvrez l’application pour voir votre code de livraison.'
         : body,
       input.reference,
+      input.type,
+      notification.id,
     );
 
     return notification;
@@ -99,30 +121,94 @@ export class NotificationsService {
     title: string,
     body: string,
     reference?: string,
+    type?: NotificationType,
+    notificationId?: string,
   ) {
+    let pushed = 0;
     try {
       const tokens = await this.prisma.db.pushToken.findMany({
         where: { userId },
         select: { token: true },
       });
-      if (tokens.length === 0) return;
 
-      const result = await this.push.send({
-        tokens: tokens.map((t) => t.token),
-        title,
-        body,
-        data: reference ? { reference } : undefined,
-      });
-
-      // Jetons morts (application désinstallée) : les garder ferait grossir
-      // la table et ralentirait chaque envoi.
-      if (result.invalidTokens.length > 0) {
-        await this.prisma.db.pushToken.deleteMany({
-          where: { token: { in: result.invalidTokens } },
+      if (tokens.length > 0) {
+        const result = await this.push.send({
+          tokens: tokens.map((t) => t.token),
+          title,
+          body,
+          data: reference ? { reference } : undefined,
         });
+        pushed = result.sent;
+
+        // Jetons morts (application désinstallée) : les garder ferait grossir
+        // la table et ralentirait chaque envoi.
+        if (result.invalidTokens.length > 0) {
+          await this.prisma.db.pushToken.deleteMany({
+            where: { token: { in: result.invalidTokens } },
+          });
+        }
       }
     } catch {
       this.logger.warn('Notification non distribuée.');
+    }
+
+    // Repli SMS. Avant, un client sans jeton — application désinstallée,
+    // notifications refusées, téléphone changé — n'était prévenu de RIEN :
+    // `deliver` s'arrêtait là, en silence. C'est précisément le client qu'il
+    // faut joindre autrement.
+    if (pushed === 0 && type && this.meriteUnSms(type)) {
+      await this.envoyerSms(userId, body, type, reference, notificationId);
+    }
+  }
+
+  /**
+   * Cet événement justifie-t-il de payer un SMS ?
+   *
+   * Liste FERMÉE, et volontairement courte : elle ne retient que ce qui
+   * appelle une action ou une attente du client. Prévenir par SMS qu'une
+   * commande passe « en préparation » coûterait sans rien apporter.
+   *
+   * DELIVERY_OTP en est exclu : le code de livraison ne transite jamais par
+   * un canal tiers — même règle que pour le push (voir `notify`).
+   */
+  private meriteUnSms(type: NotificationType): boolean {
+    return SMS_WORTHY.has(type);
+  }
+
+  /** Demande au site d'envoyer le SMS. N'échoue jamais bruyamment. */
+  private async envoyerSms(
+    userId: string,
+    body: string,
+    type: NotificationType,
+    reference?: string,
+    notificationId?: string,
+  ): Promise<void> {
+    try {
+      const user = await this.prisma.db.user.findUnique({
+        where: { id: userId },
+        select: { phone: true },
+      });
+      if (!user?.phone) return;
+
+      // La clé d'idempotence porte l'identifiant de la notification : deux
+      // tentatives pour la même notification ne paient qu'un SMS.
+      const uniqueKey = notificationId
+        ? `app:notification:${notificationId}`
+        : `app:${type}:${reference ?? userId}`;
+
+      const result = await this.sms.send({
+        to: user.phone,
+        body: reference ? `${body} (${reference})` : body,
+        event: type,
+        uniqueKey,
+      });
+
+      if (result.sent) {
+        this.logger.log(`Repli SMS envoyé (${type}) — aucun jeton push actif.`);
+      }
+    } catch {
+      // Un SMS manqué ne doit pas plus faire échouer la commande qu'un push.
+      this.logger.warn('Repli SMS non distribué.');
     }
   }
 

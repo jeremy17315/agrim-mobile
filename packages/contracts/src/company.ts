@@ -27,7 +27,12 @@ export const SELLING_POINTS = [
   '100 % naturel, sans conservateurs ni additifs',
 ] as const;
 
-/** Gammes RIZ BOAGNI (section 14). */
+/**
+ * Gammes RIZ BOAGNI (section 14), alignées sur le catalogue réel agrimsarl.ci.
+ * Slugs et prix sont les vraies valeurs du site ; les descriptions de
+ * djassa/dietetique-complet/dietetique-violet restent provisoires (texte
+ * marketing non communiqué) — à affiner avec le vrai texte du site.
+ */
 export const RICE_RANGES = [
   {
     slug: 'royal-grains',
@@ -48,10 +53,25 @@ export const RICE_RANGES = [
     sortOrder: 3,
   },
   {
-    slug: 'dietetique',
-    name: 'Diététique',
-    description: 'Violet et noir',
+    slug: 'djassa',
+    name: 'Djassa',
+    // PROVISOIRE — texte marketing non communiqué.
+    description: 'Riz économique du quotidien',
     sortOrder: 4,
+  },
+  {
+    slug: 'dietetique-complet',
+    name: 'Diététique Complet',
+    // PROVISOIRE — texte marketing non communiqué.
+    description: 'Riz complet, diététique',
+    sortOrder: 5,
+  },
+  {
+    slug: 'dietetique-violet',
+    name: 'Diététique Violet',
+    // PROVISOIRE — texte marketing non communiqué.
+    description: 'Riz violet, diététique',
+    sortOrder: 6,
   },
 ] as const;
 
@@ -60,17 +80,57 @@ export const PACK_FORMATS = [
   { label: '900 g', weightGrams: 900 },
   { label: '5 kg', weightGrams: 5000 },
   { label: '22,5 kg', weightGrams: 22500 },
+  { label: '25 kg', weightGrams: 25000 },
 ] as const;
 
+/** Grille commune aux deux gammes Diététique (mêmes tarifs, produits différents). */
+const DIETETIQUE_PRICING = {
+  900: { price: 1000, originalPrice: 1200 },
+  5000: { price: 5000, originalPrice: 7000 },
+  22500: { price: 22500, originalPrice: 24000 },
+  25000: { price: 25000, originalPrice: 27500 },
+} as const;
+
 /**
- * PROVISOIRE — prix officiels non communiqués (section 17).
- * Prix indicatifs marché ivoirien, en XOF, à remplacer par les tarifs AGRIM.
+ * Grille tarifaire RIZ BOAGNI, en XOF (section 17).
+ * `originalPrice` est le prix barré affiché en promotion.
+ *
+ * ⚠️ CETTE GRILLE N'EST PLUS LA SOURCE DE VÉRITÉ (audit de cohérence,
+ * août 2026). Le catalogue appartient désormais au SITE, qui le gère dans
+ * son back office « Catalogue Produit » ; cette API le recopie via
+ * `CatalogSyncService`. Les valeurs ci-dessous ne servent plus qu'à
+ * amorcer une base VIDE (`prisma/seed.ts`).
+ *
+ * Corriger un prix ICI ne change rien : la synchronisation suivante le
+ * réécrira depuis le site. Un prix se corrige dans le back office du site.
  */
-export const PROVISIONAL_PRICING = {
-  'royal-grains': { 900: 1200, 5000: 6000, 22500: 25000 },
-  'ebene-dor': { 900: 1000, 5000: 5000, 22500: 21000 },
-  sika: { 900: 800, 5000: 4000, 22500: 17000 },
-  dietetique: { 900: 1800, 5000: 8500, 22500: 36000 },
+export const RICE_PRICING = {
+  'royal-grains': {
+    900: { price: 800, originalPrice: 900 },
+    5000: { price: 4000, originalPrice: 4500 },
+    22500: { price: 18500, originalPrice: 20000 },
+    25000: { price: 20000, originalPrice: 24000 },
+  },
+  'ebene-dor': {
+    900: { price: 700, originalPrice: 850 },
+    5000: { price: 3500, originalPrice: 4000 },
+    22500: { price: 15000, originalPrice: 17500 },
+    25000: { price: 17500, originalPrice: 20000 },
+  },
+  sika: {
+    900: { price: 600, originalPrice: 750 },
+    5000: { price: 3500, originalPrice: 3750 },
+    22500: { price: 13500, originalPrice: 15000 },
+    25000: { price: 15000, originalPrice: 17000 },
+  },
+  djassa: {
+    900: { price: 500, originalPrice: 700 },
+    5000: { price: 2800, originalPrice: 3000 },
+    22500: { price: 12500, originalPrice: 13500 },
+    25000: { price: 14000, originalPrice: 15000 },
+  },
+  'dietetique-complet': DIETETIQUE_PRICING,
+  'dietetique-violet': DIETETIQUE_PRICING,
 } as const;
 
 /** PROVISOIRE — règles de livraison non communiquées. */

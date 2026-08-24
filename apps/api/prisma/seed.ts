@@ -1,9 +1,10 @@
 /**
  * Seed AGRIM-Mobile.
  *
- * Contient les données AGRIM réelles connues (gammes, formats, contacts) et
- * des valeurs PROVISOIRES clairement identifiées (prix, stocks) issues de
- * @agrim/contracts. Modifier les valeurs métier là-bas, pas ici.
+ * Contient les données AGRIM réelles connues (gammes, formats, contacts, prix
+ * — alignés sur agrimsarl.ci) et des valeurs PROVISOIRES clairement
+ * identifiées (stocks, frais de livraison) issues de @agrim/contracts.
+ * Modifier les valeurs métier là-bas, pas ici.
  */
 import 'dotenv/config';
 import * as argon2 from 'argon2';
@@ -12,7 +13,7 @@ import {
   COMPANY,
   PACK_FORMATS,
   PROVISIONAL_DELIVERY,
-  PROVISIONAL_PRICING,
+  RICE_PRICING,
   RICE_RANGES,
 } from '@agrim/contracts';
 import { prisma } from '../src/prisma/prisma.client';
@@ -21,7 +22,7 @@ import { generateReferralCode } from '../src/referrals/referrals.service';
 /** Mots de passe de DÉVELOPPEMENT uniquement. */
 const DEV_PASSWORD = 'Agrim2026!';
 
-type RangeSlug = keyof typeof PROVISIONAL_PRICING;
+type RangeSlug = keyof typeof RICE_PRICING;
 
 async function main() {
   console.log('🌾  Seed AGRIM-Mobile…');
@@ -124,7 +125,11 @@ async function main() {
     },
   });
 
-  /* ── Catalogue : 4 gammes × 3 formats ───────────────────────────────── */
+  /* ── Catalogue : 6 gammes × 4 formats ─────────────────────────────────
+     AMORÇAGE SEULEMENT. Depuis l'audit de cohérence (août 2026), le
+     catalogue appartient au SITE et arrive par CatalogSyncService : ces
+     valeurs ne servent qu'à faire démarrer une base vide, et la première
+     synchronisation les remplace par celles du site. */
   for (const range of RICE_RANGES) {
     const category = await prisma.category.create({
       data: {
@@ -135,7 +140,7 @@ async function main() {
       },
     });
 
-    const pricing = PROVISIONAL_PRICING[range.slug as RangeSlug];
+    const pricing = RICE_PRICING[range.slug as RangeSlug];
 
     await prisma.product.create({
       data: {
@@ -147,17 +152,23 @@ async function main() {
         categoryId: category.id,
         isFeatured: range.sortOrder <= 2,
         variants: {
-          create: PACK_FORMATS.map((f) => ({
-            sku: `BOAGNI-${range.slug.toUpperCase()}-${f.weightGrams}`,
-            label: f.label,
-            weightGrams: f.weightGrams,
-            price: pricing[f.weightGrams as keyof typeof pricing],
-            // PROVISOIRE : stocks réels non communiqués.
-            stock: f.weightGrams === 22500 ? 40 : 200,
-            // Les gros formats tournent moins vite : un seuil plus bas évite
-            // une alerte permanente qui finirait par être ignorée.
-            lowStockThreshold: f.weightGrams === 22500 ? 10 : 30,
-          })),
+          create: PACK_FORMATS.map((f) => {
+            const grid = pricing[f.weightGrams as keyof typeof pricing];
+            // 22,5 kg et 25 kg sont les deux « gros formats » : rotation plus
+            // lente, seuil d'alerte plus bas pour éviter une alerte permanente
+            // qui finirait par être ignorée.
+            const isBigFormat = f.weightGrams >= 22500;
+            return {
+              sku: `BOAGNI-${range.slug.toUpperCase()}-${f.weightGrams}`,
+              label: f.label,
+              weightGrams: f.weightGrams,
+              price: grid.price,
+              originalPrice: grid.originalPrice,
+              // PROVISOIRE : stocks réels non communiqués.
+              stock: isBigFormat ? 40 : 200,
+              lowStockThreshold: isBigFormat ? 10 : 30,
+            };
+          }),
         },
       },
     });

@@ -38,6 +38,68 @@ const envSchema = z.object({
   // test, aucun appel au service Expo n'est émis, les notifications restent
   // consultables dans l'application.
   PUSH_ENABLED: z.enum(['true', 'false']).default('false'),
+
+  /**
+   * Paiement mobile money. Le défaut « simulation » n'appelle aucun réseau :
+   * une installation neuve joue le parcours de commande de bout en bout sans
+   * identifiant d'agrégateur.
+   */
+  PAYMENT_PROVIDER: z
+    .enum(['simulation', 'cinetpay', 'paydunya'])
+    .default('simulation'),
+  PAYMENT_TIMEOUT_SECONDS: z.string().default('20'),
+  /** Fenêtre laissée au client pour valider sur son téléphone. */
+  PAYMENT_EXPIRY_MINUTES: z.string().default('30'),
+  /** Simulation seulement : éprouver le parcours de refus, jamais testé sinon. */
+  PAYMENT_SIMULATION_FAILURE_RATE: z.string().default('0'),
+  PAYMENT_SIMULATION_ASYNC: z.enum(['true', 'false']).default('false'),
+
+  CINETPAY_API_KEY: z.string().default(''),
+  CINETPAY_SITE_ID: z.string().default(''),
+  CINETPAY_SECRET: z.string().default(''),
+
+  PAYDUNYA_MASTER_KEY: z.string().default(''),
+  PAYDUNYA_PRIVATE_KEY: z.string().default(''),
+  PAYDUNYA_TOKEN: z.string().default(''),
+
+  /**
+   * URL publique de cette API. Les agrégateurs y renvoient leur webhook.
+   * Sans elle, un paiement réel est refusé : voir la validation plus bas.
+   */
+  PUBLIC_API_URL: z.string().default(''),
+  /** URL publique du site web, pour la page de retour après paiement. */
+  PUBLIC_WEB_URL: z.string().default(''),
+
+  /**
+   * Intégration avec le SITE (audit de cohérence, août 2026).
+   *
+   * Le site rend DEUX services à cette API, sous la même adresse et le même
+   * jeton :
+   *
+   *   catalogue — le site en est la source de vérité (gammes, formats, prix,
+   *     promotions). Cette API en garde une copie locale, parce que ses
+   *     paniers et ses commandes référencent les variantes par clé étrangère,
+   *     mais elle ne l'invente plus. Les constantes de `@agrim/contracts` ne
+   *     servent qu'au démarrage d'une base vide, jamais à corriger un prix.
+   *
+   *   messagerie — le site envoie les SMS et les WhatsApp pour tout le monde :
+   *     un seul crédit, un seul journal, un seul jeu de clés d'agrégateur.
+   *     Le push, lui, reste propre à cette application.
+   *
+   * `SITE_INTEGRATION_URL` est l'URL de BASE du site, sans chemin. Vide =
+   * intégration désactivée : le catalogue local n'est plus synchronisé et
+   * aucun SMS ne part, mais l'API démarre et sert normalement.
+   */
+  SITE_INTEGRATION_URL: z.string().default(''),
+  SITE_INTEGRATION_TOKEN: z.string().default(''),
+  CATALOG_SYNC_INTERVAL_MINUTES: z.coerce.number().int().positive().default(15),
+
+  /**
+   * Surcharge facultative de l'URL du catalogue. Sert quand le catalogue est
+   * servi ailleurs que sous `${SITE_INTEGRATION_URL}/api/integration/catalogue`
+   * — par exemple derrière un proxy. Vide dans le cas nominal.
+   */
+  CATALOG_SOURCE_URL: z.string().default(''),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;
@@ -94,6 +156,17 @@ export function validateEnv(raw: Record<string, unknown>): AppEnv {
         `Secrets trop courts en production (32 caractères minimum) : ${tooShort.join(', ')}.`,
       );
     }
+  }
+
+  // Leçon du site web : sans URL publique, les URL de notification envoyées à
+  // l'agrégateur pointaient vers la machine locale. Le webhook ne revenait
+  // jamais et chaque paiement restait « en attente » pour toujours. Un
+  // fournisseur réel sans PUBLIC_API_URL est donc refusé au démarrage.
+  if (env.PAYMENT_PROVIDER !== 'simulation' && !env.PUBLIC_API_URL) {
+    throw new Error(
+      `PUBLIC_API_URL est requis avec le fournisseur de paiement « ${env.PAYMENT_PROVIDER} » ` +
+        "(URL de notification des agrégateurs).",
+    );
   }
 
   return env;

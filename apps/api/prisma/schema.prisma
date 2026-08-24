@@ -205,6 +205,11 @@ model Category {
   sortOrder   Int       @default(0)
   products    Product[]
 
+  /// Code de la gamme côté SITE (EBE, DIE, DJA, DV, ROY, SIK).
+  /// C'est la clé de synchronisation : renommer une gamme dans le back
+  /// office du site ne doit pas créer une catégorie en double ici.
+  sourceCode String? @unique @db.VarChar(16)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -224,6 +229,9 @@ model Product {
   category   Category         @relation(fields: [categoryId], references: [id])
   variants   ProductVariant[]
 
+  /// Code de la gamme côté SITE — même rôle que Category.sourceCode.
+  sourceCode String? @unique @db.VarChar(16)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -240,11 +248,22 @@ model ProductVariant {
   label       String  @db.VarChar(40)
   weightGrams Int
   price       Int
+  /// Prix barré affiché en promotion (grille agrimsarl.ci). `null` = pas de
+  /// promotion en cours.
+  originalPrice Int?
   stock       Int     @default(0)
   /// Seuil d'alerte de réapprovisionnement, propre à chaque variante : un
   /// format 22,5 kg ne se réapprovisionne pas au même rythme qu'un 900 g.
   lowStockThreshold Int @default(20)
   isAvailable Boolean @default(true)
+
+  /// Référence de la variante côté SITE (RB-EBE-05, RB-DC-225…).
+  /// Clé de synchronisation du catalogue : c'est elle qui identifie une
+  /// variante d'une exécution à l'autre, jamais le sku ni le libellé, qui
+  /// peuvent être corrigés dans le back office du site.
+  sourceRef String? @unique @db.VarChar(40)
+  /// Dernière synchronisation réussie de cette variante depuis le site.
+  syncedAt  DateTime?
 
   cartItems  CartItem[]
   orderItems OrderItem[]
