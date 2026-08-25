@@ -144,6 +144,71 @@ export class CatalogSyncService {
     return Boolean(this.sourceUrl);
   }
 
+  /**
+   * Prix effectifs du moment, relus sur le site au checkout.
+   *
+   * Sans cet appel, on encaisse le prix de la copie (0–15 min de retard).
+   * Si le site ne répond pas, on renvoie `null` : l'appelant vend alors le
+   * prix local non promo (`originalPrice` s'il existe).
+   */
+  async quote(references: string[]): Promise<
+    | { status: 'disabled' }
+    | { status: 'unavailable' }
+    | {
+        status: 'ok';
+        prices: Map<
+          string,
+          { prix: number; prixBarre: number | null; disponible: boolean }
+        >;
+      }
+  > {
+    const base = (this.config.get<string>('SITE_INTEGRATION_URL') ?? '').replace(
+      /\/+$/,
+      '',
+    );
+    const token = this.config.get<string>('SITE_INTEGRATION_TOKEN') ?? '';
+    if (!base || !token || references.length === 0) {
+      return { status: 'disabled' };
+    }
+
+    try {
+      const response = await fetch(`${base}/api/integration/prix`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'X-Sync-Token': token,
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({ references: references.slice(0, 50) }),
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (!response.ok) return { status: 'unavailable' };
+      const payload = (await response.json()) as {
+        prix?: Record<
+          string,
+          { prix: number; prix_barre: number | null; disponible: boolean } | null
+        >;
+      };
+      const prices = new Map<
+        string,
+        { prix: number; prixBarre: number | null; disponible: boolean }
+      >();
+      for (const [ref, ligne] of Object.entries(payload.prix ?? {})) {
+        if (ligne) {
+          prices.set(ref, {
+            prix: ligne.prix,
+            prixBarre: ligne.prix_barre,
+            disponible: ligne.disponible,
+          });
+        }
+      }
+      return { status: 'ok', prices };
+    } catch {
+      this.logger.warn('Cotation site injoignable : prix locaux conservés.');
+      return { status: 'unavailable' };
+    }
+  }
+
   /** Récupère le catalogue du site. Ne modifie rien. */
   async fetchSource(): Promise<SourceCatalog> {
     const url = this.sourceUrl;

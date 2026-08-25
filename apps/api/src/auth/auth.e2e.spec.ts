@@ -7,6 +7,7 @@ import 'dotenv/config';
 import { INestApplication } from '@nestjs/common';
 import { APP_FILTER } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
+import * as argon2 from 'argon2';
 import request from 'supertest';
 
 import { AppModule } from '../app.module';
@@ -160,9 +161,111 @@ describe('Authentification (e2e)', () => {
     expect(reused.body.code).toBe('REFRESH_TOKEN_REUSED');
   });
 
+  it('anonymise un compte à la suppression (exigence magasins)', async () => {
+    const phone = '0708887766';
+    const created = await request(app.getHttpServer())
+      .post(`${prefix}/auth/register`)
+      .send({
+        firstName: 'Aya',
+        lastName: 'Test',
+        phone,
+        password: 'Agrim2026!',
+      });
+    expect(created.status).toBe(201);
+    const access = created.body.accessToken as string;
+    const userId = created.body.user.id as string;
+
+    const del = await request(app.getHttpServer())
+      .post(`${prefix}/auth/me/delete`)
+      .set('Authorization', `Bearer ${access}`);
+    expect(del.status).toBe(204);
+
+    const loginAgain = await login(phone);
+    expect(loginAgain.status).toBe(401);
+
+    const row = await prisma.db.user.findUnique({ where: { id: userId } });
+    expect(row?.isActive).toBe(false);
+    expect(row?.phone).toMatch(/^supprime_/);
+    await prisma.db.user.delete({ where: { id: userId } });
+  });
+
   it('ne renvoie jamais le hash du mot de passe', async () => {
     const res = await login('0700000001');
     expect(JSON.stringify(res.body)).not.toContain('passwordHash');
     expect(res.body.user.passwordHash).toBeUndefined();
+  });
+
+  it('accepte une demande de réinitialisation sans révéler si le numéro existe', async () => {
+    const known = await request(app.getHttpServer())
+      .post(`${prefix}/auth/forgot-password`)
+      .send({ phone: '0700000001' });
+    expect(known.status).toBe(200);
+    expect(known.body).toEqual({ ok: true });
+
+    const unknown = await request(app.getHttpServer())
+      .post(`${prefix}/auth/forgot-password`)
+      .send({ phone: '0791112233' });
+    expect(unknown.status).toBe(200);
+    expect(unknown.body).toEqual({ ok: true });
+  });
+
+  it('refuse un code de réinitialisation invalide', async () => {
+    const res = await request(app.getHttpServer())
+      .post(`${prefix}/auth/reset-password`)
+      .send({
+        phone: '0700000001',
+        code: '000000',
+        password: 'Nouveau2026!',
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('RESET_CODE_INVALID');
+  });
+
+  it('réinitialise le mot de passe avec un code valide puis reconnecte', async () => {
+    const phone = '0707776655';
+    await prisma.db.user.deleteMany({ where: { phone } });
+    await prisma.db.companySetting.deleteMany({
+      where: { key: `pwdreset:${phone}` },
+    });
+
+    const created = await request(app.getHttpServer())
+      .post(`${prefix}/auth/register`)
+      .send({
+        firstName: 'Koffi',
+        lastName: 'Reset',
+        phone,
+        password: 'Agrim2026!',
+      });
+    expect(created.status).toBe(201);
+    const userId = created.body.user.id as string;
+
+    const code = '482917';
+    const payload = JSON.stringify({
+      hash: await argon2.hash(code),
+      expiresAt: Date.now() + 15 * 60 * 1000,
+      sentAt: Date.now(),
+      attempts: 0,
+    });
+    await prisma.db.companySetting.upsert({
+      where: { key: `pwdreset:${phone}` },
+      create: { key: `pwdreset:${phone}`, value: payload },
+      update: { value: payload },
+    });
+
+    const reset = await request(app.getHttpServer())
+      .post(`${prefix}/auth/reset-password`)
+      .send({ phone, code, password: 'Nouveau2026!' });
+    expect(reset.status).toBe(204);
+
+    const oldLogin = await login(phone, 'Agrim2026!');
+    expect(oldLogin.status).toBe(401);
+
+    const newLogin = await login(phone, 'Nouveau2026!');
+    expect(newLogin.status).toBe(200);
+
+    await prisma.db.companySetting.deleteMany({
+      where: { key: `pwdreset:${phone}` },
+    });
+    await prisma.db.user.delete({ where: { id: userId } });
   });
 });

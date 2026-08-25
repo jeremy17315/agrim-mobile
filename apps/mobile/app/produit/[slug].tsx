@@ -1,10 +1,11 @@
 import { SELLING_POINTS, type ProductVariant } from '@agrim/contracts';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useProduct } from '@/api/catalog';
+import { ProductReviews } from '@/components/ProductReviews';
 import { ErrorState, Skeleton } from '@/components/states';
 import { Banner, Button, Card, Icon, Pill, Text } from '@/components/ui';
 import { formatWeight, formatXof } from '@/lib/format';
@@ -102,14 +103,26 @@ export default function ProductScreen() {
         <>
           <ScrollView contentContainerStyle={styles.content}>
             <View style={styles.hero}>
-              <Text variant="micro" color="green">
-                {product.data.brand}
-              </Text>
-              <Text variant="display" color="greenDeep" center>
-                {product.data.category.name}
-              </Text>
+              {product.data.imageUrl ? (
+                <Image
+                  source={{ uri: product.data.imageUrl }}
+                  style={styles.heroPhoto}
+                  resizeMode="cover"
+                />
+              ) : (
+                <>
+                  <Text variant="micro" color="green">
+                    {product.data.brand}
+                  </Text>
+                  <Text variant="display" color="greenDeep" center>
+                    {product.data.category.name}
+                  </Text>
+                </>
+              )}
               {product.data.isFeatured ? (
-                <Pill label="Populaire" tone="gold" />
+                <View style={styles.heroBadge}>
+                  <Pill label="Populaire" tone="gold" />
+                </View>
               ) : null}
             </View>
 
@@ -264,6 +277,8 @@ export default function ProductScreen() {
                 </View>
               ))}
             </Card>
+
+            <ProductReviews slug={product.data.slug} />
           </ScrollView>
 
           <View
@@ -333,7 +348,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: spacing.xs,
+    overflow: 'hidden',
   },
+  heroPhoto: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
+  heroBadge: { position: 'absolute', top: spacing.sm, left: spacing.sm },
   section: { gap: spacing.sm },
   formats: { flexDirection: 'row', gap: spacing.sm },
   format: {

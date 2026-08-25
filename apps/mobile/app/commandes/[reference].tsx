@@ -7,11 +7,19 @@ import {
 } from '@agrim/contracts';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import {
+  Alert,
+  Linking,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { describeError } from '@/api/errors';
 import { useCancelOrder, useOrder } from '@/api/orders';
+import { initiatePayment } from '@/api/payments';
 import { OrderStatusPill } from '@/components/OrderStatusPill';
 import { DeliveryCodeCard } from '@/components/DeliveryCodeCard';
 import { LiveTrackingCard } from '@/components/LiveTrackingCard';
@@ -40,6 +48,26 @@ export default function SuiviCommandeScreen() {
   const order = useOrder(reference ?? '');
   const cancelOrder = useCancelOrder();
   const [cancelError, setCancelError] = useState<string | null>(null);
+  const [paiementErreur, setPaiementErreur] = useState<string | null>(null);
+  const [paiementEnCours, setPaiementEnCours] = useState(false);
+
+  const reprendrePaiement = async () => {
+    if (!reference) return;
+    setPaiementErreur(null);
+    setPaiementEnCours(true);
+    try {
+      const paiement = await initiatePayment(reference);
+      if (paiement.checkoutUrl) {
+        await Linking.openURL(paiement.checkoutUrl);
+      } else if (paiement.message) {
+        setPaiementErreur(paiement.message);
+      }
+    } catch (error) {
+      setPaiementErreur(describeError(error));
+    } finally {
+      setPaiementEnCours(false);
+    }
+  };
 
   const confirmCancel = () => {
     Alert.alert(
@@ -212,6 +240,33 @@ export default function SuiviCommandeScreen() {
             </View>
           </Card>
 
+          {order.data.payment ? (
+            <Card style={styles.card}>
+              <Text variant="micro" color="muted">
+                PAIEMENT
+              </Text>
+              <Text variant="bodyStrong">
+                {libelleMoyenPaiement(order.data.payment.method)}
+              </Text>
+              {paiementErreur ? (
+                <Banner
+                  tone="danger"
+                  message={paiementErreur}
+                  icon={<Icon name="triangle-alert" size={14} color="danger" />}
+                />
+              ) : null}
+              {peutReprendrePaiement(order.data.payment) ? (
+                <Button
+                  label={
+                    paiementEnCours ? 'Ouverture…' : 'Reprendre le paiement'
+                  }
+                  disabled={paiementEnCours}
+                  onPress={() => void reprendrePaiement()}
+                />
+              ) : null}
+            </Card>
+          ) : null}
+
           {justCreated ? (
             <Button
               label="Retour à l’accueil"
@@ -234,6 +289,28 @@ export default function SuiviCommandeScreen() {
       )}
     </View>
   );
+}
+
+const REPRENDRE_STATUTS = [
+  'PENDING',
+  'AWAITING_CONFIRMATION',
+  'EXPIRED',
+] as const;
+
+function peutReprendrePaiement(payment: {
+  method: string;
+  status: string;
+}): boolean {
+  return (
+    payment.method === 'MOBILE_MONEY' &&
+    (REPRENDRE_STATUTS as readonly string[]).includes(payment.status)
+  );
+}
+
+function libelleMoyenPaiement(method: string): string {
+  if (method === 'MOBILE_MONEY') return 'Mobile Money';
+  if (method === 'CASH_ON_DELIVERY') return 'Paiement à la livraison';
+  return 'Carte bancaire';
 }
 
 /**

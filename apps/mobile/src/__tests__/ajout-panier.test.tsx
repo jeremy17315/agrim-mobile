@@ -74,6 +74,19 @@ jest.mock('@/api/catalog', () => ({
   useProduct: (slug: string) => mockUseProduct(slug),
 }));
 
+jest.mock('@/api/reviews', () => ({
+  useProductReviews: () => ({
+    data: { average: null, count: 0, data: [] },
+    isPending: false,
+    isError: false,
+    refetch: jest.fn(),
+  }),
+  useSubmitReview: () => ({
+    mutateAsync: jest.fn(),
+    isPending: false,
+  }),
+}));
+
 beforeEach(() => {
   useCartStore.setState({ items: [], hydrated: true });
   mockUseProduct.mockReturnValue({

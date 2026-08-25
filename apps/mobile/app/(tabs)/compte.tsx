@@ -1,6 +1,7 @@
 import { COMPANY } from '@agrim/contracts';
+import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
-import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, Linking, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useUnreadCount } from '@/api/notifications';
@@ -22,8 +23,34 @@ export default function CompteScreen() {
 
   const user = useAuthStore((s) => s.user);
   const signOut = useAuthStore((s) => s.signOut);
+  const deleteAccount = useAuthStore((s) => s.deleteAccount);
   const isAuthenticated = useAuthStore((s) => s.accessToken !== null);
+  const apiUrl =
+    (Constants.expoConfig?.extra?.apiUrl as string | undefined) ??
+    'https://agrim-api-production.up.railway.app/api/v1';
   const unread = useUnreadCount(isAuthenticated);
+
+  const confirmDelete = () => {
+    Alert.alert(
+      'Supprimer mon compte',
+      'Vos données personnelles seront anonymisées. Les commandes passées restent pour la comptabilité, sans votre nom. Cette action est irréversible.',
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: 'Supprimer',
+          style: 'destructive',
+          onPress: () => {
+            void deleteAccount().catch(() =>
+              Alert.alert(
+                'Suppression impossible',
+                'Réessayez ou contactez-nous au +225 07 00 05 04 52.',
+              ),
+            );
+          },
+        },
+      ],
+    );
+  };
 
   const confirmSignOut = () => {
     Alert.alert(
@@ -135,6 +162,15 @@ export default function CompteScreen() {
               variant="outline"
               onPress={confirmSignOut}
             />
+            <Pressable
+              onPress={confirmDelete}
+              accessibilityRole="button"
+              hitSlop={8}
+            >
+              <Text variant="caption" color="muted" center>
+                Supprimer mon compte
+              </Text>
+            </Pressable>
           </>
         ) : (
           <Card style={styles.signedOut}>
@@ -158,6 +194,27 @@ export default function CompteScreen() {
             </Pressable>
           </Card>
         )}
+
+        <View style={styles.legal}>
+          <Pressable
+            onPress={() =>
+              void Linking.openURL(`${apiUrl}/legal/confidentialite`)
+            }
+            accessibilityRole="link"
+          >
+            <Text variant="caption" color="green">
+              Politique de confidentialité
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={() => void Linking.openURL(`${apiUrl}/legal/cgu`)}
+            accessibilityRole="link"
+          >
+            <Text variant="caption" color="green">
+              Conditions d’utilisation
+            </Text>
+          </Pressable>
+        </View>
 
         <Card style={styles.contact}>
           <Icon name="phone" size={18} color="gold" />
@@ -250,5 +307,10 @@ const styles = StyleSheet.create({
   menuRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
 
   signedOut: { alignItems: 'center', gap: spacing.sm },
+  legal: {
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+  },
   contact: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
 });

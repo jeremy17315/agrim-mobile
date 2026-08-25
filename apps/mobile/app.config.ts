@@ -102,6 +102,13 @@ const config: ExpoConfig = {
     'expo-secure-store',
     'expo-font',
     [
+      'expo-notifications',
+      {
+        color: '#0B5D1E',
+        defaultChannel: 'default',
+      },
+    ],
+    [
       'expo-splash-screen',
       {
         image: './assets/splash-icon.png',

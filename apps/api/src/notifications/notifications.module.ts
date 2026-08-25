@@ -43,6 +43,6 @@ import { NoopSmsProvider, SiteSmsProvider, SMS_PROVIDER } from './sms.provider';
           : new NoopSmsProvider(),
     },
   ],
-  exports: [NotificationsService],
+  exports: [NotificationsService, SMS_PROVIDER],
 })
 export class NotificationsModule {}

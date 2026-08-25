@@ -1,5 +1,6 @@
 import type { Product } from '@agrim/contracts';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { useState } from 'react';
+import { Image, Pressable, StyleSheet, View } from 'react-native';
 
 import { Icon, Pill, Text } from '@/components/ui';
 import { formatXof } from '@/lib/format';
@@ -31,6 +32,8 @@ export function ProductCard({ product, onPress }: ProductCardProps) {
     cheapestVariant.originalPrice !== null &&
     cheapestVariant.originalPrice !== cheapestVariant.price;
   const outOfStock = available.length === 0;
+  const [photoCassée, setPhotoCassée] = useState(false);
+  const photo = product.imageUrl && !photoCassée ? product.imageUrl : null;
 
   return (
     <Pressable
@@ -42,12 +45,24 @@ export function ProductCard({ product, onPress }: ProductCardProps) {
       style={({ pressed }) => [styles.card, pressed && styles.pressed]}
     >
       <View style={styles.thumb}>
-        <Text variant="micro" color="green" center>
-          {product.brand}
-        </Text>
-        <Text variant="h3" color="greenDeep" center numberOfLines={2}>
-          {product.category.name}
-        </Text>
+        {photo ? (
+          <Image
+            source={{ uri: photo }}
+            style={styles.photo}
+            resizeMode="cover"
+            onError={() => setPhotoCassée(true)}
+            accessibilityIgnoresInvertColors
+          />
+        ) : (
+          <>
+            <Text variant="micro" color="green" center>
+              {product.brand}
+            </Text>
+            <Text variant="h3" color="greenDeep" center numberOfLines={2}>
+              {product.category.name}
+            </Text>
+          </>
+        )}
         {product.isFeatured ? (
           <View style={styles.badge}>
             <Pill label="Populaire" tone="gold" />
@@ -115,6 +130,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 2,
     paddingHorizontal: spacing.sm,
+    overflow: 'hidden',
+  },
+  photo: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
   },
   badge: {
     position: 'absolute',
