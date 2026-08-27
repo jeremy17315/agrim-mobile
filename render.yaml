@@ -29,10 +29,15 @@ services:
     plan: free
     region: frankfurt
 
+    # `--include=dev` : les outils de compilation (@nestjs/cli, typescript,
+    # prisma, tsx) sont des devDependencies. Avec NODE_ENV=production, npm les
+    # omet — et le build echoue sur « nest: not found », sans indiquer que la
+    # cause est une dependance absente.
+    #
     # Le monorepo se construit en trois temps : les contrats partagés, le
     # client Prisma, puis l'API elle-même.
     buildCommand: >
-      npm ci &&
+      npm ci --include=dev &&
       npm run build -w @agrim/contracts &&
       npm run db:generate -w @agrim/api &&
       npm run build -w @agrim/api

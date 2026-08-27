@@ -885,7 +885,9 @@ describe('Livraisons (e2e)', () => {
     await setStatus(id, 'IN_TRANSIT');
     await setStatus(id, 'ARRIVED');
     const res = await verifyOtp(id, await readOtpCode(id));
-    expect(res.status).toBe(200);
+    // 201 et non 200 : NestJS repond 201 sur un POST. Toutes les autres
+    // verifications reussies de ce fichier attendent 201.
+    expect(res.status).toBe(201);
   });
 
   it('marque la commande livrée à la fin de la course', async () => {

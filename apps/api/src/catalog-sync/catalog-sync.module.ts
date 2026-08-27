@@ -45,6 +45,16 @@ export class CatalogSyncModule implements OnApplicationBootstrap, OnModuleDestro
   ) {}
 
   onApplicationBootstrap(): void {
+    // Meme garde que ReconciliationModule : un travail de fond qui ecrit en
+    // base n'a rien a faire pendant une suite de tests. Inerte aujourd'hui
+    // faute de SITE_INTEGRATION_URL, ce module ecraserait les prix et
+    // desactiverait des variantes au milieu des assertions des que le jeton
+    // de synchronisation sera configure.
+    if (process.env.NODE_ENV === 'test') {
+      this.logger.log('Synchronisation du catalogue desactivee en test.');
+      return;
+    }
+
     if (!this.sync.isConfigured) {
       this.logger.warn(
         'SITE_INTEGRATION_URL absent : le catalogue local ne sera pas synchronisé ' +

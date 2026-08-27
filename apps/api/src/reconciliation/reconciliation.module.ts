@@ -57,6 +57,22 @@ export class ReconciliationModule
   ) {}
 
   onApplicationBootstrap(): void {
+    // JAMAIS pendant les tests.
+    //
+    // Chaque suite e2e instancie `AppModule`, donc ce module, donc ce
+    // minuteur. Le balayage se declenchait alors AU MILIEU des tests et
+    // reglait de vrais paiements : il annulait des commandes et rendait du
+    // stock sous les pieds des assertions. Il ouvrait en prime des connexions
+    // concurrentes sur une base distante deja limitee.
+    //
+    // Un travail de fond qui ecrit doit rester silencieux tant que ce n'est
+    // pas lui qu'on teste. `PaymentsService.reconcilePending()` a sa propre
+    // couverture unitaire, ou il est appele explicitement.
+    if (process.env.NODE_ENV === 'test') {
+      this.logger.log('Reconciliation desactivee en environnement de test.');
+      return;
+    }
+
     const minutes = this.resolveInterval();
 
     this.demarrage = setTimeout(() => void this.executer(), 20_000);
