@@ -1,0 +1,102 @@
+# Blueprint Render — API AGRIM (@agrim/api)
+#
+# Déploiement : tableau de bord Render → New → Blueprint, en pointant ce
+# dépôt. Render lit ce fichier et crée le service.
+#
+# Ce fichier ne crée PAS de base : l'offre Postgres gratuite de Render
+# expire au bout de 30 jours et les données sont ensuite effacées. La base
+# se crée à part (Neon), puis on colle son URI dans DATABASE_URL.
+#
+# ⚠️ TROIS POINTS À CONNAÎTRE AVANT DE BASCULER (voir MIGRER-VERS-RENDER.md)
+#
+#   1. L'instance Free s'endort après 15 min sans requête. Pour une API qui
+#      sert une application mobile, le réveil d'environ une minute se voit :
+#      l'utilisateur croit l'application cassée. Un ping régulier atténue,
+#      il ne supprime pas.
+#
+#   2. Le disque est ÉPHÉMÈRE. STORAGE_LOCAL_ROOT y écrit les preuves de
+#      livraison — des signatures manuscrites. Elles disparaîtraient à
+#      chaque redéploiement. Il faut un stockage objet (S3 ou compatible)
+#      AVANT de servir en production.
+#
+#   3. La synchronisation du catalogue tourne DANS l'application : pendant
+#      que l'instance dort, elle ne tourne pas.
+
+services:
+  - type: web
+    name: agrim-api
+    runtime: node
+    plan: free
+    region: frankfurt
+
+    # Le monorepo se construit en trois temps : les contrats partagés, le
+    # client Prisma, puis l'API elle-même.
+    buildCommand: >
+      npm ci &&
+      npm run build -w @agrim/contracts &&
+      npm run db:generate -w @agrim/api &&
+      npm run build -w @agrim/api
+
+    # API_PORT=$PORT : l'application lit API_PORT (config.getOrThrow), alors
+    # que Render impose son propre PORT, différent à chaque déploiement.
+    # Sans cette passerelle, le service démarre sur le mauvais port et Render
+    # le déclare en échec sans expliquer pourquoi.
+    startCommand: >
+      npm run db:migrate:deploy -w @agrim/api &&
+      API_PORT=$PORT npm run start:prod -w @agrim/api
+
+    healthCheckPath: /api/v1/health
+
+    envVars:
+      - key: NODE_VERSION
+        value: "20.19.0"
+      - key: NODE_ENV
+        value: production
+      - key: API_GLOBAL_PREFIX
+        value: api/v1
+
+      # Base PostgreSQL externe (Neon). Pas l'URL interne Railway : elle
+      # n'est joignable que depuis Railway.
+      - key: DATABASE_URL
+        sync: false
+
+      # Deux secrets DIFFÉRENTS : avec une valeur commune, un access token
+      # vaudrait refresh token et la révocation ne protégerait plus rien.
+      # L'API refuse de démarrer sous 32 caractères ou si la valeur
+      # ressemble à un exemple — vérifiez ce que Render a engendré.
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: JWT_ACCESS_TTL
+        value: 15m
+      - key: JWT_REFRESH_TTL
+        value: 30d
+
+      # Chiffrement au repos (code de livraison). La perdre rend les codes
+      # en cours illisibles : à sauvegarder hors de Render.
+      - key: ENCRYPTION_KEY
+        generateValue: true
+
+      # L'application mobile n'envoie pas d'Origin : laisser vide tant
+      # qu'aucun back-office web n'existe.
+      - key: CORS_ORIGINS
+        value: ""
+
+      # Stockage : voir l'avertissement 2 en tête de fichier.
+      - key: STORAGE_LOCAL_ROOT
+        value: storage
+      - key: STORAGE_PUBLIC_URL
+        sync: false
+
+      - key: PUSH_ENABLED
+        value: "false"
+
+      # Intégration avec le SITE. SITE_INTEGRATION_TOKEN doit valoir
+      # EXACTEMENT RB_SYNC_TOKEN côté site.
+      - key: SITE_INTEGRATION_URL
+        value: https://agrim-zuxe.onrender.com
+      - key: SITE_INTEGRATION_TOKEN
+        sync: false
+      - key: CATALOG_SYNC_INTERVAL_MINUTES
+        value: "15"
