@@ -19,7 +19,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { describeError } from '@/api/errors';
 import { useCancelOrder, useOrder } from '@/api/orders';
-import { initiatePayment } from '@/api/payments';
+import { initiatePayment, useSuiviPaiement } from '@/api/payments';
 import { OrderStatusPill } from '@/components/OrderStatusPill';
 import { DeliveryCodeCard } from '@/components/DeliveryCodeCard';
 import { LiveTrackingCard } from '@/components/LiveTrackingCard';
@@ -50,6 +50,16 @@ export default function SuiviCommandeScreen() {
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [paiementErreur, setPaiementErreur] = useState<string | null>(null);
   const [paiementEnCours, setPaiementEnCours] = useState(false);
+
+  /**
+   * Suivi du paiement mobile money, qui se confirme HORS de l'application —
+   * page d'opérateur ou code USSD. Sans lui, le client revenait sur un écran
+   * figé sur « en attente » alors que le serveur avait déjà tranché.
+   */
+  const statutPaiement = useSuiviPaiement(
+    reference ?? '',
+    order.data?.payment?.status,
+  );
 
   const reprendrePaiement = async () => {
     if (!reference) return;
@@ -248,6 +258,11 @@ export default function SuiviCommandeScreen() {
               <Text variant="bodyStrong">
                 {libelleMoyenPaiement(order.data.payment.method)}
               </Text>
+              {statutPaiement ? (
+                <Text variant="micro" color={tonStatutPaiement(statutPaiement)}>
+                  {libelleStatutPaiement(statutPaiement)}
+                </Text>
+              ) : null}
               {paiementErreur ? (
                 <Banner
                   tone="danger"
@@ -305,6 +320,29 @@ function peutReprendrePaiement(payment: {
     payment.method === 'MOBILE_MONEY' &&
     (REPRENDRE_STATUTS as readonly string[]).includes(payment.status)
   );
+}
+
+/**
+ * Libellés destinés au client.
+ *
+ * « Expiré » et « refusé » sont distingués à dessein : le premier veut dire
+ * « vous pouvez recommencer », le second « votre opérateur a dit non ». Les
+ * confondre enverrait le client réessayer une opération qui échouera encore.
+ */
+/** Seul un refus définitif s'affiche en rouge ; l'attente n'est pas un incident. */
+function tonStatutPaiement(status: string): 'muted' | 'danger' {
+  return status === 'FAILED' ? 'danger' : 'muted';
+}
+
+function libelleStatutPaiement(status: string): string {
+  if (status === 'SUCCEEDED') return 'Paiement confirmé';
+  if (status === 'AWAITING_CONFIRMATION')
+    return 'En attente de votre validation sur le téléphone…';
+  if (status === 'PENDING') return 'Paiement en attente';
+  if (status === 'EXPIRED') return 'Délai dépassé — vous pouvez réessayer';
+  if (status === 'FAILED') return 'Paiement refusé';
+  if (status === 'REFUNDED') return 'Paiement remboursé';
+  return status;
 }
 
 function libelleMoyenPaiement(method: string): string {

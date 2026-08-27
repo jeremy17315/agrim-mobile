@@ -69,6 +69,20 @@ cd apps/mobile
 npx expo start
 ```
 
+Sans téléphone, dans le navigateur (depuis la racine) :
+
+```bash
+npm run mobile:web
+```
+
+Si Metro affiche `expo-modules-core` / `src/index.ts` introuvable (fréquent
+sous Windows) :
+
+```bash
+node scripts/reparer-metro.mjs --reinstaller
+npm run mobile:web
+```
+
 Sur un appareil physique, l'API doit être joignable par le réseau : `localhost`
 désigne le téléphone lui-même. Depuis la racine, `npm run apk:adresse` affiche
 l'adresse à utiliser.

@@ -12,5 +12,15 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/**/*"]
+  // Tests COMPRIS, délibérément.
+  //
+  // C'est cette configuration que l'éditeur retient — il cherche un
+  // `tsconfig.json`, pas un nom dérivé. Un fichier de test exclu d'ici se
+  // retrouve dans aucun projet TypeScript : rouge dans l'éditeur, et jamais
+  // vérifié par `npm run typecheck`.
+  //
+  // L'exclusion nécessaire — ne pas émettre les tests dans `dist`, que le
+  // mobile et l'API consomment — vit dans `tsconfig.build.json`.
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
 }

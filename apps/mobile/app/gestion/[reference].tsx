@@ -26,7 +26,7 @@ import {
 import { ManualClosureSheet } from '@/components/ManualClosureSheet';
 import { OrderStatusPill } from '@/components/OrderStatusPill';
 import { EmptyState, ErrorState, Skeleton } from '@/components/states';
-import { Button, Card, Icon, Text } from '@/components/ui';
+import { Banner, Button, Card, Icon, Text } from '@/components/ui';
 import { formatPhone, formatRelativeTime, formatXof } from '@/lib/format';
 import { palette, radius, spacing } from '@/theme/tokens';
 
@@ -242,10 +242,31 @@ export default function GestionCommandeScreen() {
             </View>
           ) : null}
 
+          {/*
+            La commande est revenue en entrepôt après une tentative ratée. Le
+            stock lui reste réservé : c'est ici que se prend la décision de
+            relancer une course ou de rendre la marchandise au rayon.
+          */}
+          {order.awaitingRetry ? (
+            <Banner
+              tone="warning"
+              icon={<Icon name="package-x" size={14} color="gold" />}
+              message={
+                order.deliveryFailureReason
+                  ? `Livraison non aboutie : ${order.deliveryFailureReason}. Replanifiez une course ou annulez la commande.`
+                  : 'Livraison non aboutie. Replanifiez une course ou annulez la commande.'
+              }
+            />
+          ) : null}
+
           <View style={styles.actions}>
             {needsCourier && !order.hasCourier ? (
               <Button
-                label="Assigner un livreur"
+                label={
+                  order.awaitingRetry
+                    ? 'Réassigner un livreur'
+                    : 'Assigner un livreur'
+                }
                 onPress={chooseCourier}
                 loading={busy}
               />

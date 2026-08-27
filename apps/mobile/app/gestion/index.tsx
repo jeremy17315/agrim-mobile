@@ -25,7 +25,7 @@ import {
 } from '@/api/management';
 import { EmptyState, ErrorState, Skeleton } from '@/components/states';
 import { OrderStatusPill } from '@/components/OrderStatusPill';
-import { Button, Card, Icon, Text } from '@/components/ui';
+import { Banner, Button, Card, Icon, Text } from '@/components/ui';
 import { formatRelativeTime, formatXof } from '@/lib/format';
 import { useAuthStore } from '@/store/auth';
 import { palette, radius, spacing } from '@/theme/tokens';
@@ -305,6 +305,25 @@ function OrderRow({
           {order.itemCount > 1 ? 'articles' : 'article'}
           {order.city ? ` · ${order.city}` : ''}
         </Text>
+
+        {/*
+          Sans ce bandeau, une commande revenue d'une tentative ratée serait
+          indiscernable d'une commande jamais partie : toutes deux sont à
+          « prête ». Le gestionnaire relancerait un livreur sans savoir qu'il
+          s'agit d'un second passage, ni pourquoi le premier a échoué.
+        */}
+        {order.awaitingRetry ? (
+          <Banner
+            tone="warning"
+            style={styles.retryBanner}
+            icon={<Icon name="package-x" size={14} color="gold" />}
+            message={
+              order.deliveryFailureReason
+                ? `Livraison non aboutie : ${order.deliveryFailureReason}`
+                : 'Livraison non aboutie. À replanifier ou à annuler.'
+            }
+          />
+        ) : null}
       </Pressable>
 
       <View style={styles.cardFooter}>
@@ -326,7 +345,7 @@ function OrderRow({
             </View>
           ) : (
             <Button
-              label="Assigner"
+              label={order.awaitingRetry ? 'Réassigner' : 'Assigner'}
               size="sm"
               onPress={onAssign}
               disabled={busy}
@@ -396,6 +415,7 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   assigned: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  retryBanner: { marginTop: spacing.sm },
   flex: { flex: 1 },
   headerAction: { marginRight: spacing.md },
 });

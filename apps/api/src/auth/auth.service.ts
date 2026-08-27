@@ -210,7 +210,13 @@ export class AuthService {
       });
     }
 
-    const suffix = userId.replace(/-/g, '').slice(0, 12);
+    // Le telephone anonymise doit tenir dans `VarChar(20)` : « supprime_ »
+    // occupe 9 caracteres, il en reste 11 pour distinguer les comptes. Avec
+    // 12, la valeur faisait 21 caracteres et PostgreSQL refusait l'ecriture —
+    // la suppression de compte repondait 500, alors qu'Apple et Google
+    // l'exigent depuis l'application. 11 caracteres hexadecimaux laissent
+    // 16^11 combinaisons : la collision sur une colonne unique est negligeable.
+    const suffix = userId.replace(/-/g, '').slice(0, 11);
     await this.prisma.db.$transaction([
       this.prisma.db.refreshToken.updateMany({
         where: { userId, revokedAt: null },

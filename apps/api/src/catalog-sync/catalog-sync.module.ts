@@ -12,9 +12,13 @@ import { CatalogSyncService } from './catalog-sync.service';
 /**
  * Synchronisation périodique du catalogue depuis le site.
  *
- * Un simple `setInterval` plutôt qu'un ordonnanceur : c'est la seule tâche
- * de fond de cette API, et elle n'a pas besoin d'expression cron. Le même
- * choix a été fait côté site pour la relance des paniers abandonnés.
+ * Un simple `setInterval` plutôt qu'un ordonnanceur : aucune de ces tâches n'a
+ * besoin d'expression cron. Le même choix a été fait côté site pour la relance
+ * des paniers abandonnés, et dans `ReconciliationModule`.
+ *
+ * Ces deux modules sont désormais les DEUX tâches de fond de l'API. À la
+ * troisième, migrer l'ensemble vers `@nestjs/schedule` d'un seul geste plutôt
+ * que d'accumuler les minuteurs à la main.
  *
  * Trois précautions :
  *   - un premier passage 30 s après le démarrage, le temps que la base soit
@@ -41,6 +45,16 @@ export class CatalogSyncModule implements OnApplicationBootstrap, OnModuleDestro
   ) {}
 
   onApplicationBootstrap(): void {
+    // Meme garde que ReconciliationModule : un travail de fond qui ecrit en
+    // base n'a rien a faire pendant une suite de tests. Inerte aujourd'hui
+    // faute de SITE_INTEGRATION_URL, ce module ecraserait les prix et
+    // desactiverait des variantes au milieu des assertions des que le jeton
+    // de synchronisation sera configure.
+    if (process.env.NODE_ENV === 'test') {
+      this.logger.log('Synchronisation du catalogue desactivee en test.');
+      return;
+    }
+
     if (!this.sync.isConfigured) {
       this.logger.warn(
         'SITE_INTEGRATION_URL absent : le catalogue local ne sera pas synchronisé ' +

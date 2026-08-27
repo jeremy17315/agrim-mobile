@@ -26,6 +26,10 @@
     "noUnusedParameters": true,
     "resolveJsonModule": true
   },
+  // Tests COMPRIS : c'est la configuration que retient l'éditeur, et un
+  // fichier qui n'appartient à aucun projet TypeScript y apparaît en erreur.
+  // L'exclusion qui compte — ne pas émettre les tests dans `dist` — vit
+  // désormais dans `tsconfig.build.json`.
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "generated", "**/*.spec.ts"]
+  "exclude": ["node_modules", "dist", "generated"]
 }

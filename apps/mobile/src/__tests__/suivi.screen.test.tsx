@@ -54,10 +54,18 @@ jest.mock('@/api/orders', () => ({
   useCancelOrder: () => ({ mutate: mockCancelMutate, isPending: false }),
 }));
 
+/**
+ * `useSuiviPaiement` encapsule l'interrogation périodique du paiement et la
+ * relecture de la commande quand il se règle. Le mock renvoie simplement le
+ * statut déjà porté par la commande : le suivi lui-même est couvert côté API,
+ * et sans ce mock l'écran réclamerait un QueryClient.
+ */
 jest.mock('@/api/payments', () => ({
   initiatePayment: jest.fn(),
   useInitiatePayment: () => ({ mutateAsync: jest.fn(), isPending: false }),
   usePaymentStatus: () => ({ data: null, isPending: false }),
+  useSuiviPaiement: (_reference: string, statutConnu?: string | null) =>
+    statutConnu ?? null,
 }));
 
 function buildOrder(

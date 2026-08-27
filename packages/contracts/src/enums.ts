@@ -28,13 +28,19 @@ export type OrderStatus = (typeof ORDER_STATUSES)[number];
 /**
  * Transitions autorisées. Toute transition hors de cette table est refusée
  * par le backend (source d'intégrité, jamais l'UI).
+ *
+ * `OUT_FOR_DELIVERY → READY` est le SEUL retour en arrière du parcours. Il
+ * traduit un fait physique : le livreur a trouvé porte close, la marchandise
+ * revient en entrepôt et repart plus tard. Sans cette arête, une course
+ * échouée laissait la commande bloquée à `OUT_FOR_DELIVERY` — statut qu'aucun
+ * rôle ne peut quitter — avec son stock réservé pour toujours.
  */
 export const ORDER_TRANSITIONS: Record<OrderStatus, readonly OrderStatus[]> = {
   PENDING: ['CONFIRMED', 'CANCELLED'],
   CONFIRMED: ['PREPARING', 'CANCELLED'],
   PREPARING: ['READY', 'CANCELLED'],
   READY: ['OUT_FOR_DELIVERY', 'CANCELLED'],
-  OUT_FOR_DELIVERY: ['DELIVERED', 'CANCELLED'],
+  OUT_FOR_DELIVERY: ['DELIVERED', 'READY', 'CANCELLED'],
   DELIVERED: [],
   CANCELLED: [],
 } as const;
@@ -107,7 +113,17 @@ export const DELIVERY_TRANSITIONS: Record<
   // Franchi par le backend seul, après vérification de l'OTP.
   OTP_VERIFIED: ['DELIVERED'],
   DELIVERED: [],
-  FAILED: [],
+  // Une course échouée peut être REMISE EN JEU par la gestion : la marchandise
+  // est revenue en entrepôt, elle repart avec un livreur — le même ou un autre.
+  // La cible est `ASSIGNED` et non `UNASSIGNED` parce que `assign()` nomme
+  // toujours un livreur dans le même geste ; il n'existe pas d'endpoint qui
+  // renvoie une course au pot commun.
+  //
+  // Cette arête n'appartient qu'au bureau : `FAILED` n'est pas dans
+  // COURIER_SETTABLE_DELIVERY_STATUSES comme point de départ autorisé pour le
+  // terrain, donc un livreur ne se réattribue jamais une course qu'il vient
+  // d'abandonner.
+  FAILED: ['ASSIGNED'],
 } as const;
 
 /**
@@ -143,7 +159,14 @@ export function canTransitionDelivery(
   return DELIVERY_TRANSITIONS[from].includes(to);
 }
 
-/** Statuts depuis lesquels la course est terminée. */
+/**
+ * Statuts depuis lesquels la course est terminée POUR LE LIVREUR.
+ *
+ * Nuance à ne pas perdre : `FAILED` est terminal pour le terrain — le livreur
+ * n'a plus rien à faire, la course sort de sa tournée — mais pas pour la
+ * gestion, qui peut la remettre en jeu (`FAILED → UNASSIGNED`). Cette fonction
+ * répond « le livreur a-t-il fini ? », pas « le dossier est-il clos ? ».
+ */
 export function isDeliveryTerminal(status: DeliveryStatus): boolean {
   return status === 'DELIVERED' || status === 'FAILED';
 }
@@ -158,6 +181,7 @@ export const NOTIFICATION_TYPES = [
   'ORDER_CANCELLED',
   'DELIVERY_ASSIGNED',
   'DELIVERY_OTP',
+  'DELIVERY_FAILED',
   'PAYMENT_SUCCEEDED',
   'PAYMENT_FAILED',
   'LOW_STOCK',

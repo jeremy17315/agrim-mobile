@@ -24,6 +24,7 @@ import { OrdersModule } from './orders/orders.module';
 import { PaymentsModule } from './payments/payments.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProductsModule } from './products/products.module';
+import { ReconciliationModule } from './reconciliation/reconciliation.module';
 import { ReviewsModule } from './reviews/reviews.module';
 
 @Module({
@@ -54,6 +55,10 @@ import { ReviewsModule } from './reviews/reviews.module';
     ManagementModule,
     ProducersModule,
     ReferralsModule,
+    // Garantit qu'aucune commande ne reste en suspens : paiements abandonnés
+    // réglés, stock rendu, données de rétention purgées. Sans lui, seule la
+    // réouverture de l'écran par le client déclenchait ces traitements.
+    ReconciliationModule,
     HealthModule,
     LegalModule,
   ],

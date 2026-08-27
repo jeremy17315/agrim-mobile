@@ -92,6 +92,8 @@ const order = (overrides: Partial<ManagedOrder> = {}): ManagedOrder => ({
   customerPhone: '0700000001',
   city: 'Yamoussoukro',
   hasCourier: false,
+  awaitingRetry: false,
+  deliveryFailureReason: null,
   ...overrides,
 });
 

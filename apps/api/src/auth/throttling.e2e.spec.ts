@@ -39,6 +39,12 @@ describe('Rate limiting de la connexion (e2e)', () => {
       where: { phone: { startsWith: testPhonePrefix } },
     });
     await app.close();
+
+    // Retablit l'etat que les autres suites attendent. Cette suite est la
+    // seule a SUPPRIMER la variable dans son beforeAll, pour exercer le rate
+    // limiting ; la laisser absente fait porter aux suites suivantes la
+    // charge de la reposer, et l'oubli d'une seule les rend toutes fragiles.
+    process.env.THROTTLE_DISABLED = '1';
   });
 
   it('bloque le bourrinage de mots de passe (limite 5/min)', async () => {

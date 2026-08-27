@@ -35,8 +35,34 @@ import {
   type GatewayStatus,
 } from './payment.provider';
 
-/** Statuts de paiement déjà réglés : aucune transition ne peut les rouvrir. */
-const SETTLED = ['SUCCEEDED', 'FAILED', 'REFUNDED'] as const;
+/**
+ * Statuts de paiement déjà réglés : aucune transition ne peut les rouvrir.
+ *
+ * `EXPIRED` en fait partie depuis que l'expiration rend le stock : sans lui,
+ * un webhook tardif rejouerait le règlement d'une commande déjà annulée et
+ * re-décrémenterait le rayon.
+ */
+const SETTLED = ['SUCCEEDED', 'FAILED', 'EXPIRED', 'REFUNDED'] as const;
+
+/**
+ * Issue d'un règlement.
+ *
+ * Volontairement distinct de `GatewayStatus` : aucun agrégateur ne renvoie
+ * jamais « expiré ». L'expiration est NOTRE règle — la fenêtre que nous
+ * laissons au client pour valider sur son téléphone — et elle se traite comme
+ * un échec du point de vue du stock et de la commande.
+ */
+type SettlementOutcome = 'PAID' | 'FAILED' | 'EXPIRED';
+
+/**
+ * Paiements traités par passage du job de réconciliation.
+ *
+ * Borne délibérée : chaque vérification auprès du fournisseur est un appel
+ * réseau. Sans plafond, un incident laissant des milliers de transactions
+ * ouvertes produirait un balayage de plusieurs minutes tenant des connexions
+ * de base. Le reliquat est repris au tour suivant.
+ */
+const RECONCILIATION_BATCH = 200;
 
 /**
  * Ce que `status()` renvoie au client.
@@ -238,15 +264,84 @@ export class PaymentsService {
     }
 
     // Une transaction expirée sans nouvelle reste bloquée sinon pour toujours.
+    //
+    // Le règlement passe par `settle()` et NON par une écriture directe du
+    // statut. La distinction n'est pas cosmétique : `settle()` est le seul
+    // endroit qui rende le stock et annule la commande. Tant que cette branche
+    // écrivait `EXPIRED` elle-même, chaque paiement abandonné retirait
+    // définitivement de la marchandise du rayon — précisément ce que le
+    // commentaire de `settle()` disait vouloir éviter.
     if (pending && payment.expiresAt && payment.expiresAt < new Date()) {
-      await this.prisma.db.payment.update({
-        where: { id: payment.id },
-        data: { status: 'EXPIRED' },
-      });
-      return { ...payment, status: 'EXPIRED' as const };
+      await this.settle(
+        payment.id,
+        'EXPIRED',
+        'Délai de validation dépassé.',
+      );
+      return this.status(userId, reference);
     }
 
     return payment;
+  }
+
+  /**
+   * Balayage des paiements restés en attente. Appelé par le job de
+   * réconciliation.
+   *
+   * Raison d'être : `status()` ne se déclenche que si le CLIENT rouvre son
+   * écran. Un utilisateur qui abandonne en cours de paiement — ou qui
+   * désinstalle — laissait donc sa commande en attente indéfiniment, stock
+   * réservé compris. Ce balayage est ce qui garantit qu'une commande finit
+   * toujours par atteindre un état terminal, que le client revienne ou non.
+   *
+   * Deux traitements, dans cet ordre :
+   *   1. délai dépassé → règlement en `EXPIRED` (rend le stock) ;
+   *   2. délai non dépassé mais transaction ouverte → on demande au
+   *      fournisseur, ce qui rattrape les webhooks perdus.
+   *
+   * Le lot est borné : un incident qui laisserait des milliers de paiements
+   * ouverts ne doit pas se traduire par un balayage interminable qui tient la
+   * base. Le reste part au tour suivant.
+   */
+  async reconcilePending(
+    now = new Date(),
+  ): Promise<{ expired: number; resolved: number }> {
+    const pending = await this.prisma.db.payment.findMany({
+      where: { status: 'AWAITING_CONFIRMATION' },
+      select: { id: true, expiresAt: true, providerReference: true },
+      orderBy: { createdAt: 'asc' },
+      take: RECONCILIATION_BATCH,
+    });
+
+    let expired = 0;
+    let resolved = 0;
+
+    for (const payment of pending) {
+      // Un paiement en erreur ne doit pas interrompre le balayage des
+      // suivants : chacun est isolé.
+      try {
+        if (payment.expiresAt && payment.expiresAt < now) {
+          await this.settle(payment.id, 'EXPIRED', 'Délai de validation dépassé.');
+          expired += 1;
+          continue;
+        }
+
+        if (payment.providerReference && !this.gateway.callbackIsProof) {
+          const check = await this.gateway.verify(payment.providerReference);
+          if (check.status !== 'PENDING') {
+            await this.settle(payment.id, check.status, check.message);
+            resolved += 1;
+          }
+        }
+      } catch (error) {
+        this.logger.warn(
+          `Réconciliation du paiement ${payment.id} impossible : ${
+            error instanceof Error ? error.message : 'erreur inconnue'
+          }`,
+        );
+      }
+    }
+
+    return { expired, resolved };
   }
 
   /**
@@ -301,6 +396,22 @@ export class PaymentsService {
     }
 
     if ((SETTLED as readonly string[]).includes(payment.status)) {
+      // Cas à ne JAMAIS avaler en silence : l'opérateur annonce un paiement
+      // réussi sur une transaction que nous avons déjà expirée. L'argent est
+      // parti du compte du client, la commande a été annulée et le stock
+      // rendu. Il n'existe pas encore de chemin de remboursement automatique
+      // (hors périmètre), donc la seule issue honnête est de le rendre visible
+      // en exploitation pour un remboursement manuel.
+      if (payment.status === 'EXPIRED' && reading.status === 'PAID') {
+        this.logger.error(
+          `REMBOURSEMENT À TRAITER : paiement réussi reçu après expiration ` +
+            `(transaction « ${reading.providerReference} », commande ` +
+            `« ${reading.orderReference} »). La commande est annulée et le ` +
+            `stock rendu : le client a payé sans contrepartie.`,
+        );
+        return { received: true };
+      }
+
       // Rejeu d'un webhook déjà traité : acquitter sans rien refaire.
       return { received: true };
     }
@@ -332,7 +443,7 @@ export class PaymentsService {
    */
   private async settle(
     paymentId: string,
-    outcome: Exclude<GatewayStatus, 'PENDING'>,
+    outcome: SettlementOutcome,
     message: string,
   ) {
     const settled = await this.prisma.db.$transaction(async (tx) => {
@@ -381,14 +492,18 @@ export class PaymentsService {
       await tx.payment.update({
         where: { id: payment.id },
         data: {
-          status: 'FAILED',
-          failureReason: message.slice(0, 255) || 'Paiement refusé.',
+          status: outcome === 'EXPIRED' ? 'EXPIRED' : 'FAILED',
+          failureReason:
+            message.slice(0, 255) ||
+            (outcome === 'EXPIRED'
+              ? 'Délai de validation dépassé.'
+              : 'Paiement refusé.'),
         },
       });
 
       // Le stock avait été décrémenté à la création de la commande : un
-      // paiement refusé doit le rendre, sinon le rayon se vide de commandes
-      // qui n'ont jamais été payées.
+      // paiement refusé ou abandonné doit le rendre, sinon le rayon se vide de
+      // commandes qui n'ont jamais été payées.
       if (order.status !== 'CANCELLED') {
         for (const item of order.items) {
           await tx.productVariant.update({

@@ -41,6 +41,18 @@ describe('Authentification (e2e)', () => {
     if (corruptedUserId) {
       await prisma.db.user.delete({ where: { id: corruptedUserId } });
     }
+
+    // Les comptes crees par cette suite sont effaces meme si un test a
+    // echoue en cours de route. Sans ce filet, un echec laissait le numero
+    // occupe et la RELANCE suivante repondait 409 a l'inscription : le
+    // diagnostic derivait a chaque passage, masquant le defaut d'origine.
+    // C'est exactement ce qui s'est produit sur la suppression de compte.
+    await prisma.db.user.deleteMany({
+      where: {
+        OR: [{ phone: '0708887766' }, { phone: { startsWith: 'supprime_' } }],
+      },
+    });
+
     await app.close();
     delete process.env.THROTTLE_DISABLED;
   });

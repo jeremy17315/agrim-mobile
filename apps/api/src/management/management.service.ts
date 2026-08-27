@@ -9,6 +9,7 @@ import {
   isCancellableByManager,
   MANAGER_QUEUE_STATUSES,
   managerActionFor,
+  type DeliveryStatus,
   type OrderStatus,
 } from '@agrim/contracts';
 
@@ -37,26 +38,48 @@ const managedOrderSelect = {
   user: { select: { firstName: true, lastName: true, phone: true } },
   address: { select: { city: true } },
   items: { select: { quantity: true } },
-  delivery: { select: { courierId: true } },
+  // `status` et `failureReason` servent à distinguer une commande qui n'est
+  // jamais partie d'une commande REVENUE après une tentative infructueuse.
+  // Les deux sont à `READY` et se ressemblent à l'écran ; seule la seconde
+  // demande au gestionnaire de décider — relancer ou annuler.
+  delivery: {
+    select: { courierId: true, status: true, failureReason: true },
+  },
 } as const;
 
 type ManagedOrderRow = {
   user: { firstName: string; lastName: string; phone: string };
   address: { city: string | null } | null;
   items: { quantity: number }[];
-  delivery: { courierId: string | null } | null;
+  delivery: {
+    courierId: string | null;
+    status: DeliveryStatus;
+    failureReason: string | null;
+  } | null;
 } & Record<string, unknown>;
 
 /** Aplatit les relations pour coller au contrat partagé. */
 function toManagedOrder(row: ManagedOrderRow) {
   const { user, address, items, delivery, ...rest } = row;
+  const deliveryFailed = delivery?.status === 'FAILED';
   return {
     ...rest,
     customerName: `${user.firstName} ${user.lastName}`,
     customerPhone: user.phone,
     city: address?.city ?? null,
     itemCount: items.reduce((sum, item) => sum + item.quantity, 0),
-    hasCourier: Boolean(delivery?.courierId),
+    // Une course échouée conserve son `courierId` — c'est la trace de qui a
+    // tenté. Mais la commande attend bel et bien une NOUVELLE affectation :
+    // laisser `hasCourier` à vrai masquerait le bouton « assigner » et la
+    // commande resterait immobile, ce qui reproduirait en surface le blocage
+    // que ce lot corrige en profondeur.
+    hasCourier: Boolean(delivery?.courierId) && !deliveryFailed,
+    /** Vrai quand la commande revient d'une tentative infructueuse. */
+    awaitingRetry: deliveryFailed,
+    /** Motif de l'échec, à afficher au gestionnaire qui doit trancher. */
+    deliveryFailureReason: deliveryFailed
+      ? (delivery?.failureReason ?? null)
+      : null,
   };
 }
 

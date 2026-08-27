@@ -1,0 +1,12 @@
+{
+  // Compilation vers `dist`, tests exclus.
+  //
+  // Séparée du `tsconfig.json` voisin pour une raison d'outillage : l'éditeur
+  // et `tsc --noEmit` doivent voir TOUS les fichiers, y compris les tests,
+  // tandis que `dist` ne doit contenir que ce que le mobile et l'API
+  // consomment. Une seule configuration ne peut pas satisfaire les deux — et
+  // faire porter l'exclusion au `tsconfig.json` laisse les tests hors projet,
+  // donc soulignés dans l'éditeur et jamais vérifiés.
+  "extends": "./tsconfig.json",
+  "exclude": ["node_modules", "dist", "src/**/*.test.ts"]
+}

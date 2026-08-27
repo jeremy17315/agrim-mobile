@@ -1,0 +1,14 @@
+{
+  // Compilation vers `dist`, suites de tests exclues.
+  //
+  // Emplacement conventionnel : `nest build` prend ce fichier
+  // automatiquement quand il existe.
+  //
+  // Cette exclusion vivait auparavant dans `tsconfig.json`, ce qui avait un
+  // effet de bord : un fichier exclu du tsconfig d'un dossier n'appartient à
+  // aucun projet TypeScript, donc l'éditeur le signale en erreur. Les 16
+  // suites de tests étaient dans ce cas. Elles restent hors de `dist` — c'est
+  // le but de ce fichier — mais redeviennent visibles de l'outillage.
+  "extends": "./tsconfig.json",
+  "exclude": ["node_modules", "dist", "generated", "**/*.spec.ts"]
+}

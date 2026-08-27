@@ -12,7 +12,7 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://agrim-api-production.up.railway.app/api/v1"
+        "EXPO_PUBLIC_API_URL": "https://agrim-api.onrender.com/api/v1"
       }
     },
     "development": {
@@ -30,7 +30,7 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://agrim-api-production.up.railway.app/api/v1"
+        "EXPO_PUBLIC_API_URL": "https://agrim-api.onrender.com/api/v1"
       }
     },
     "production": {
@@ -40,7 +40,7 @@
         "buildType": "app-bundle"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://agrim-api-production.up.railway.app/api/v1"
+        "EXPO_PUBLIC_API_URL": "https://agrim-api.onrender.com/api/v1"
       }
     }
   },

@@ -4,7 +4,8 @@
  * Enjeux vérifiés ici, impossibles à couvrir en unitaire :
  *  - un livreur ne voit ni ne touche les courses d'un autre ;
  *  - aucune livraison ne se valide sans le code du client ;
- *  - la commande suit la course sans jamais reculer.
+ *  - la commande suit la course, et ne recule qu'en cas d'échec — retour à
+ *    `READY`, seule sortie d'un statut que personne d'autre ne sait quitter.
  */
 import 'dotenv/config';
 
@@ -815,6 +816,78 @@ describe('Livraisons (e2e)', () => {
         (e: { status: string }) => e.status === 'OUT_FOR_DELIVERY',
       ),
     ).toBe(true);
+  });
+
+  /**
+   * Le cul-de-sac corrigé, vérifié de bout en bout contre une vraie base.
+   *
+   * Avant : le livreur passait la course à `FAILED`, la commande restait à
+   * `OUT_FOR_DELIVERY`, et plus personne ne pouvait la clôturer — ni le client
+   * (`isCancellableByClient` refuse), ni la gestion (`isCancellableByManager`
+   * refuse), ni la clôture d'exception (`closeManually` refuse une course déjà
+   * `FAILED`). Le stock partait avec elle.
+   */
+  it('ramène la commande en préparation après un échec de livraison', async () => {
+    const { id, reference } = await deliveryArrived();
+
+    const stockAvant = await prisma.db.productVariant.findUniqueOrThrow({
+      where: { id: variantId },
+      select: { stock: true },
+    });
+
+    await setStatus(id, 'FAILED', { failureReason: 'Porte close' });
+
+    const order = await request(app.getHttpServer())
+      .get(`${prefix}/orders/${reference}`)
+      .set('Authorization', `Bearer ${clientToken}`);
+
+    expect(order.body.status).toBe('READY');
+
+    // Le stock ne bouge PAS : la commande est encore vivante, les sacs lui
+    // restent affectés. Ils ne reviennent au rayon qu'à l'annulation.
+    const stockApres = await prisma.db.productVariant.findUniqueOrThrow({
+      where: { id: variantId },
+      select: { stock: true },
+    });
+    expect(stockApres.stock).toBe(stockAvant.stock);
+
+    // Le motif survit dans le journal : la ligne `Delivery` sera réécrite à la
+    // tentative suivante, c'est le seul endroit où l'historique tient.
+    expect(
+      order.body.events.some((e: { comment: string | null }) =>
+        e.comment?.includes('Porte close'),
+      ),
+    ).toBe(true);
+  });
+
+  it('permet de réassigner une course échouée', async () => {
+    const { id, reference } = await deliveryArrived();
+    await setStatus(id, 'FAILED', { failureReason: 'Client injoignable' });
+
+    const relance = await assign(reference);
+    expect(relance.status).toBe(201);
+    expect(relance.body.status).toBe('ASSIGNED');
+
+    // Les horodatages de la tentative ratée décriraient un trajet qui n'a pas
+    // eu lieu, et le motif afficherait « injoignable » sur une course qui
+    // vient de repartir.
+    const apres = await prisma.db.delivery.findUniqueOrThrow({
+      where: { id },
+      select: { acceptedAt: true, inTransitAt: true, arrivedAt: true, failureReason: true },
+    });
+    expect(apres.acceptedAt).toBeNull();
+    expect(apres.inTransitAt).toBeNull();
+    expect(apres.arrivedAt).toBeNull();
+    expect(apres.failureReason).toBeNull();
+
+    // Et la seconde tentative va jusqu'au bout.
+    await setStatus(id, 'ACCEPTED');
+    await setStatus(id, 'IN_TRANSIT');
+    await setStatus(id, 'ARRIVED');
+    const res = await verifyOtp(id, await readOtpCode(id));
+    // 201 et non 200 : NestJS repond 201 sur un POST. Toutes les autres
+    // verifications reussies de ce fichier attendent 201.
+    expect(res.status).toBe(201);
   });
 
   it('marque la commande livrée à la fin de la course', async () => {
