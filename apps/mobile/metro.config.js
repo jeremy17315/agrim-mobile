@@ -5,6 +5,7 @@
 // expo-doctor le signale comme dangereux, et la remontée hiérarchique est
 // justement ce qui permet de résoudre les paquets hissés par npm workspaces.
 const { getDefaultConfig } = require('expo/metro-config');
+const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const https = require('https');
@@ -19,6 +20,47 @@ config.resolver.nodeModulesPaths = [
   path.resolve(projectRoot, 'node_modules'),
   path.resolve(workspaceRoot, 'node_modules'),
 ];
+
+// Expo SDK 57 publie expo-modules-core avec "main": "src/index.ts" (pas de
+// build/index.js). Metro, surtout sur Windows et en rendu web "static",
+// trouve le package.json mais ne voit pas le .ts — d'où l'erreur
+// « main module field that could not be resolved … src/index.ts »
+// depuis expo-font/build/server.js.
+const sourceExts = config.resolver.sourceExts ?? [];
+config.resolver.sourceExts = Array.from(new Set([...sourceExts, 'ts', 'tsx', 'mjs', 'cjs']));
+
+function fichierExpoModulesCore() {
+  const candidats = [
+    path.join(workspaceRoot, 'node_modules', 'expo-modules-core', 'src', 'index.ts'),
+    path.join(projectRoot, 'node_modules', 'expo-modules-core', 'src', 'index.ts'),
+  ];
+  for (const fichier of candidats) {
+    if (fs.existsSync(fichier)) {
+      return fichier;
+    }
+  }
+  try {
+    return require.resolve('expo-modules-core/src/index.ts', {
+      paths: [projectRoot, workspaceRoot],
+    });
+  } catch {
+    return null;
+  }
+}
+
+const resoudreDefaut = config.resolver.resolveRequest;
+config.resolver.resolveRequest = (context, moduleName, platform) => {
+  if (moduleName === 'expo-modules-core') {
+    const fichier = fichierExpoModulesCore();
+    if (fichier) {
+      return { type: 'sourceFile', filePath: fichier };
+    }
+  }
+  if (resoudreDefaut) {
+    return resoudreDefaut(context, moduleName, platform);
+  }
+  return context.resolveRequest(context, moduleName, platform);
+};
 
 /**
  * Proxy de développement pour l'aperçu web.
