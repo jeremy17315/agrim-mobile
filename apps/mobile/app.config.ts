@@ -94,13 +94,24 @@ const config: ExpoConfig = {
 
   web: {
     bundler: 'metro',
-    output: 'static',
+    // « single » (SPA) : aperçu navigateur sans rendu HTML statique.
+    // « static » charge expo-font/build/server.js, qui casse Metro sur
+    // Windows (expo-modules-core/src/index.ts introuvable). L'app reste
+    // native-first ; le web ne sert qu'à prévisualiser sans téléphone.
+    output: 'single',
   },
 
   plugins: [
     'expo-router',
     'expo-secure-store',
     'expo-font',
+    [
+      'expo-notifications',
+      {
+        color: '#0B5D1E',
+        defaultChannel: 'default',
+      },
+    ],
     [
       'expo-splash-screen',
       {
