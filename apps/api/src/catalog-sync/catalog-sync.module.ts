@@ -12,9 +12,13 @@ import { CatalogSyncService } from './catalog-sync.service';
 /**
  * Synchronisation périodique du catalogue depuis le site.
  *
- * Un simple `setInterval` plutôt qu'un ordonnanceur : c'est la seule tâche
- * de fond de cette API, et elle n'a pas besoin d'expression cron. Le même
- * choix a été fait côté site pour la relance des paniers abandonnés.
+ * Un simple `setInterval` plutôt qu'un ordonnanceur : aucune de ces tâches n'a
+ * besoin d'expression cron. Le même choix a été fait côté site pour la relance
+ * des paniers abandonnés, et dans `ReconciliationModule`.
+ *
+ * Ces deux modules sont désormais les DEUX tâches de fond de l'API. À la
+ * troisième, migrer l'ensemble vers `@nestjs/schedule` d'un seul geste plutôt
+ * que d'accumuler les minuteurs à la main.
  *
  * Trois précautions :
  *   - un premier passage 30 s après le démarrage, le temps que la base soit

@@ -1,0 +1,159 @@
+# Intégration continue AGRIM-Mobile.
+#
+# Le dépôt disposait de 40 fichiers de test, d'un lint à zéro warning toléré et
+# d'un TypeScript strict — mais rien ne les exécutait automatiquement. Sur un
+# projet à un seul développeur, c'est la première chose qui casse dès qu'une
+# deuxième personne arrive.
+#
+# Deux travaux séparés, et cette séparation est délibérée :
+#
+#   verification — lint, typecheck et tests SANS base. Rapide (quelques
+#     minutes), il tranche la majorité des régressions et n'a besoin d'aucun
+#     service. C'est lui qui doit rester vert en permanence.
+#
+#   e2e-api — les suites d'intégration, qui écrivent réellement en base. Elles
+#     tournent ici contre un PostgreSQL éphémère du runner : personne n'a plus
+#     à disposer d'une base locale pour que ces tests aient lieu, ce qui était
+#     précisément le blocage.
+
+name: CI
+
+on:
+  # TOUTES les branches, pas seulement `main`. Sur un dépôt à un développeur,
+  # attendre une pull request pour obtenir un signal reviendrait à ne jamais en
+  # avoir : le travail se valide là où il se fait, sur la branche.
+  push:
+    branches: ['**']
+  # Conservé pour les contributions venues d'un fork, que le déclencheur `push`
+  # ci-dessus ne couvre pas. Conséquence à connaître : une pull request ouverte
+  # depuis une branche du dépôt lui-même déclenche DEUX exécutions. Si cela
+  # devient gênant, retirer ce déclencheur — il ne sert qu'aux forks.
+  pull_request:
+  # Déclenchement manuel : utile pour revalider après un changement de secret
+  # ou de configuration sans avoir à pousser un commit vide.
+  workflow_dispatch:
+
+# Une seule exécution par branche : un push qui en suit un autre annule le
+# précédent plutôt que de faire la queue.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Aligné sur render.yaml : tester sur une version différente de celle qui
+  # sert en production annulerait l'intérêt de tester.
+  NODE_VERSION: '20.19.0'
+
+jobs:
+  verification:
+    name: Lint · typecheck · tests unitaires
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Installer les dépendances
+        run: npm ci
+
+      # Le mobile et l'API importent tous deux `@agrim/contracts` depuis son
+      # `dist` : sans cette compilation, leurs typechecks échouent sur des
+      # modules introuvables.
+      - name: Compiler les contrats partagés
+        run: npm run build -w @agrim/contracts
+
+      # Le typecheck de l'API référence les types générés par Prisma, qui ne
+      # sont pas versionnés. Aucune base n'est nécessaire pour les produire.
+      - name: Générer le client Prisma
+        run: npm run db:generate -w @agrim/api
+
+      - name: Lint
+        run: npm run lint --workspaces --if-present
+
+      - name: Typecheck
+        run: npm run typecheck --workspaces --if-present
+
+      - name: Tests des contrats partagés
+        run: npm test -w @agrim/contracts
+
+      - name: Tests mobile
+        run: npm test -w @agrim/mobile
+
+  e2e-api:
+    name: Tests d'intégration API
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        # Même version majeure qu'en production.
+        image: postgres:17
+        env:
+          POSTGRES_USER: agrim
+          POSTGRES_PASSWORD: agrim_ci
+          POSTGRES_DB: agrim_ci
+        ports:
+          - 5432:5432
+        # Sans ce contrôle de santé, les migrations démarrent avant que
+        # PostgreSQL n'accepte les connexions et le job échoue par intermittence.
+        options: >-
+          --health-cmd "pg_isready -U agrim"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://agrim:agrim_ci@127.0.0.1:5432/agrim_ci?schema=public
+      NODE_ENV: test
+
+      # Secrets JETABLES, valables uniquement dans ce conteneur éphémère.
+      # `env.validation.ts` impose trois règles que ces valeurs respectent :
+      # les deux secrets JWT doivent DIFFÉRER, la clé de chiffrement doit être
+      # distincte des deux, et elle doit faire au moins 32 caractères.
+      #
+      # Les contrôles supplémentaires (interdiction des valeurs ressemblant à
+      # un exemple) ne s'appliquent qu'en production : NODE_ENV vaut « test ».
+      JWT_ACCESS_SECRET: ci_access_secret_pour_integration_0001
+      JWT_REFRESH_SECRET: ci_refresh_secret_pour_integration_0002
+      ENCRYPTION_KEY: ci_encryption_key_pour_integration_003
+
+      # Le service Expo n'est jamais appelé depuis la CI.
+      PUSH_ENABLED: 'false'
+      # Intégration avec le site désactivée : aucun appel sortant ne doit
+      # partir d'un job de test, et le catalogue est fourni par le seed.
+      SITE_INTEGRATION_URL: ''
+      SITE_INTEGRATION_TOKEN: ''
+      # Le pilote de simulation n'appelle aucun agrégateur.
+      PAYMENT_PROVIDER: simulation
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Installer les dépendances
+        run: npm ci
+
+      - name: Compiler les contrats partagés
+        run: npm run build -w @agrim/contracts
+
+      - name: Générer le client Prisma
+        run: npm run db:generate -w @agrim/api
+
+      # `migrate deploy` et non `migrate dev` : on applique les migrations
+      # versionnées telles quelles, sans jamais en générer une nouvelle. Une
+      # dérive entre le schéma et les migrations doit faire ÉCHOUER la CI, pas
+      # être corrigée en silence.
+      - name: Appliquer les migrations
+        run: npm run db:migrate:deploy -w @agrim/api
+
+      - name: Charger les données de référence
+        run: npm run db:seed -w @agrim/api
+
+      - name: Tests d'intégration
+        run: npm test -w @agrim/api

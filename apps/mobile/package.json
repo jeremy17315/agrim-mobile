@@ -9,7 +9,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web --clear",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint app src",
+    "lint": "eslint app src --max-warnings 0",
     "test": "jest",
     "eas-build-post-install": "cd ../../packages/contracts && npm run build"
   },

@@ -70,7 +70,7 @@ export class SimulationPaymentProvider extends PaymentProvider {
       });
     }
 
-    const amount = intent.amountXof.toLocaleString('fr-FR').replace(/ /g, ' ');
+    const amount = intent.amountXof.toLocaleString('fr-FR').replace(/\u202F/g, ' ');
     return Promise.resolve({
       status: 'PAID',
       providerReference,

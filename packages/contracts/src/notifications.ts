@@ -65,6 +65,19 @@ export const NOTIFICATION_TEMPLATES: Record<
     title: 'Votre code de livraison',
     body: 'Votre commande {reference} arrive. Ouvrez le suivi pour voir le code à communiquer au livreur à la remise.',
   },
+  /**
+   * Tentative de livraison infructueuse.
+   *
+   * Ce gabarit existe parce que la commande retourne à `READY` après un échec,
+   * et que `ORDER_STATUS_NOTIFICATION` y associe « Votre commande est prête. Un
+   * livreur va la prendre en charge » — message exact pour une première sortie,
+   * absurde juste après une porte close. Le client doit comprendre qu'il n'a
+   * rien à faire et que nous reprenons contact.
+   */
+  DELIVERY_FAILED: {
+    title: 'Livraison non aboutie',
+    body: 'Nous n’avons pas pu vous remettre la commande {reference}. Nous vous recontactons pour convenir d’un nouveau passage.',
+  },
   PAYMENT_SUCCEEDED: {
     title: 'Paiement reçu',
     body: 'Le paiement de la commande {reference} est confirmé.',

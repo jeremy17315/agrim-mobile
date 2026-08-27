@@ -112,6 +112,20 @@ const envSchema = z.object({
    * — par exemple derrière un proxy. Vide dans le cas nominal.
    */
   CATALOG_SOURCE_URL: z.string().default(''),
+
+  /**
+   * Cadence du balayage de réconciliation : paiements abandonnés réglés (donc
+   * stock rendu) et purges de rétention.
+   *
+   * Un passage a toujours lieu au démarrage, indépendamment de cette valeur —
+   * indispensable sur un hébergement dont l'instance s'endort, où le minuteur
+   * ne tourne pas.
+   */
+  RECONCILIATION_INTERVAL_MINUTES: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(10),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;

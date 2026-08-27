@@ -100,3 +100,10 @@ services:
         sync: false
       - key: CATALOG_SYNC_INTERVAL_MINUTES
         value: "15"
+
+      # Balayage des paiements abandonnés (rend le stock réservé) et purges
+      # de rétention. Un passage a lieu au démarrage : c'est lui qui rattrape
+      # ce qui a expiré pendant que l'instance dormait — voir l'avertissement
+      # nº 1 en tête de fichier.
+      - key: RECONCILIATION_INTERVAL_MINUTES
+        value: "10"

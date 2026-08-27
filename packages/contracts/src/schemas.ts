@@ -378,8 +378,23 @@ export const managedOrderSchema = z.object({
   customerName: z.string(),
   customerPhone: z.string(),
   city: z.string().nullable(),
-  /** Présence d'une course déjà affectée : évite une double assignation. */
+  /**
+   * Présence d'une course déjà affectée : évite une double assignation.
+   *
+   * Faux après un échec de livraison, bien que la course garde le `courierId`
+   * de celui qui a tenté : la commande attend une NOUVELLE affectation.
+   */
   hasCourier: z.boolean(),
+  /**
+   * La commande revient d'une tentative infructueuse et attend une décision.
+   *
+   * Sans ce drapeau, une commande revenue en `READY` serait indiscernable à
+   * l'écran d'une commande jamais partie — et le gestionnaire relancerait une
+   * course sans savoir qu'il s'agit d'un second passage.
+   */
+  awaitingRetry: z.boolean(),
+  /** Motif du dernier échec, quand il y en a un. */
+  deliveryFailureReason: z.string().nullable(),
 });
 export type ManagedOrder = z.infer<typeof managedOrderSchema>;
 

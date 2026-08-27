@@ -213,6 +213,12 @@ const PRESENTATION: Record<
     icon: 'key-round',
     tint: { bg: palette.goldSoft, icon: 'gold' },
   },
+  // Contrariété, pas incident : la commande n'est pas perdue, elle repart.
+  // D'où l'or plutôt que le rouge, réservé à ce qui est définitif.
+  DELIVERY_FAILED: {
+    icon: 'package-x',
+    tint: { bg: palette.goldSoft, icon: 'gold' },
+  },
   PAYMENT_SUCCEEDED: {
     icon: 'credit-card',
     tint: { bg: palette.greenSoft, icon: 'green' },

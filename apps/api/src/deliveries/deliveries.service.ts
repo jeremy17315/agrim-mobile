@@ -68,12 +68,23 @@ const deliverySelect = {
 /**
  * Quand la livraison avance, la commande avance avec elle. Cette table évite
  * qu'un client voie « en préparation » alors que le livreur roule déjà.
+ *
+ * `FAILED → READY` est le seul mouvement à rebours, et il décrit un fait
+ * matériel : porte close, la marchandise revient en entrepôt et attend un
+ * second départ. Tant que cette ligne manquait, une course échouée laissait la
+ * commande à `OUT_FOR_DELIVERY` — que ni le client, ni la gestion, ni la
+ * clôture d'exception ne savent quitter — et son stock réservé à jamais.
+ *
+ * Le stock n'est PAS rendu ici : la commande est toujours vivante et les sacs
+ * lui restent affectés. Il ne revient en rayon qu'à l'annulation, par
+ * `cancelOrder()` côté gestion.
  */
 const ORDER_STATUS_FOR_DELIVERY: Partial<Record<DeliveryStatus, OrderStatus>> =
   {
     IN_TRANSIT: 'OUT_FOR_DELIVERY',
     ARRIVED: 'OUT_FOR_DELIVERY',
     DELIVERED: 'DELIVERED',
+    FAILED: 'READY',
   };
 
 @Injectable()
@@ -225,7 +236,8 @@ export class DeliveriesService {
         select: deliverySelect,
       });
 
-      // La commande suit la course, sans jamais reculer.
+      // La commande suit la course. Elle ne recule qu'en cas d'échec, où le
+      // retour à `READY` traduit la marchandise revenue en entrepôt.
       let orderStatusChanged: OrderStatus | null = null;
       if (nextOrderStatus) {
         const order = await tx.order.findUniqueOrThrow({
@@ -242,6 +254,20 @@ export class DeliveriesService {
               orderId: delivery.orderId,
               status: nextOrderStatus,
               actorId: courierId,
+              // La ligne `Delivery` est réutilisée à la tentative suivante
+              // (contrainte `orderId @unique`) : son `failureReason` sera
+              // écrasé. Le journal de commande est donc le SEUL endroit où
+              // l'historique des tentatives survit — indispensable en cas de
+              // litige, et pour objectiver un livreur qui échoue souvent.
+              ...(dto.status === 'FAILED'
+                ? {
+                    comment:
+                      `Tentative de livraison échouée : ${dto.failureReason?.trim()}`.slice(
+                        0,
+                        500,
+                      ),
+                  }
+                : {}),
             },
           });
           orderStatusChanged = nextOrderStatus;
@@ -270,12 +296,26 @@ export class DeliveriesService {
         select: { userId: true, reference: true },
       });
       if (owner) {
-        await this.notifications.notifyOrderStatus({
-          userId: owner.userId,
-          status: result.orderStatusChanged,
-          reference: owner.reference,
-          orderId: delivery.orderId,
-        });
+        if (dto.status === 'FAILED') {
+          // Surtout PAS `notifyOrderStatus` ici : la commande vient de
+          // retomber à `READY`, dont le gabarit annonce « Votre commande est
+          // prête. Un livreur va la prendre en charge » — exact au premier
+          // départ, absurde à l'instant où le client vient de manquer sa
+          // livraison. Il lui faut un message qui reconnaisse l'échec.
+          await this.notifications.notify({
+            userId: owner.userId,
+            type: 'DELIVERY_FAILED',
+            reference: owner.reference,
+            orderId: delivery.orderId,
+          });
+        } else {
+          await this.notifications.notifyOrderStatus({
+            userId: owner.userId,
+            status: result.orderStatusChanged,
+            reference: owner.reference,
+            orderId: delivery.orderId,
+          });
+        }
       }
     }
 
@@ -651,11 +691,12 @@ export class DeliveriesService {
 
     // Réassigner une course déjà acceptée ferait disparaître une livraison
     // sous les pieds du livreur qui roule.
-    if (
-      existing &&
-      existing.status !== 'UNASSIGNED' &&
-      existing.status !== 'ASSIGNED'
-    ) {
+    //
+    // `FAILED` est en revanche réassignable : c'est la seconde tentative après
+    // une porte close. C'est la seule façon de faire repartir une commande
+    // revenue en entrepôt — sans elle, l'échec était un cul-de-sac.
+    const REASSIGNABLE: DeliveryStatus[] = ['UNASSIGNED', 'ASSIGNED', 'FAILED'];
+    if (existing && !REASSIGNABLE.includes(existing.status)) {
       throw new ConflictException({
         code: 'DELIVERY_ALREADY_STARTED',
         message: 'Cette livraison est déjà en cours.',
@@ -666,7 +707,24 @@ export class DeliveriesService {
     const delivery = existing
       ? await this.prisma.db.delivery.update({
           where: { id: existing.id },
-          data: { courierId, status: 'ASSIGNED', assignedAt: now },
+          data: {
+            courierId,
+            status: 'ASSIGNED',
+            assignedAt: now,
+            // Nouvelle tentative : les horodatages de la précédente
+            // décriraient un trajet qui n'a pas eu lieu, et un `failureReason`
+            // resté en place afficherait « porte close » sur une course qui
+            // vient de repartir. L'historique, lui, est conservé dans le
+            // journal de la commande (OrderEvent).
+            ...(existing.status === 'FAILED'
+              ? {
+                  acceptedAt: null,
+                  inTransitAt: null,
+                  arrivedAt: null,
+                  failureReason: null,
+                }
+              : {}),
+          },
           select: deliverySelect,
         })
       : await this.prisma.db.delivery.create({
