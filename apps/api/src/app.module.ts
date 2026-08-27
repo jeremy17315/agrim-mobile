@@ -13,6 +13,7 @@ import { RolesGuard } from './common/guards/roles.guard';
 import { validateEnv } from './config/env.validation';
 import { DeliveriesModule } from './deliveries/deliveries.module';
 import { HealthModule } from './health/health.module';
+import { LegalModule } from './legal/legal.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { ManagementModule } from './management/management.module';
 import { NotificationsModule } from './notifications/notifications.module';
@@ -23,6 +24,7 @@ import { OrdersModule } from './orders/orders.module';
 import { PaymentsModule } from './payments/payments.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProductsModule } from './products/products.module';
+import { ReviewsModule } from './reviews/reviews.module';
 
 @Module({
   imports: [
@@ -37,6 +39,7 @@ import { ProductsModule } from './products/products.module';
     PrismaModule,
     AuthModule,
     ProductsModule,
+    ReviewsModule,
     CategoriesModule,
     // Le catalogue vient du site : cette API en tient une copie, elle ne
     // l'invente plus (voir catalog-sync.service).
@@ -52,6 +55,7 @@ import { ProductsModule } from './products/products.module';
     ProducersModule,
     ReferralsModule,
     HealthModule,
+    LegalModule,
   ],
   providers: [
     // Ordre important : authentification, puis rôles, puis débit.

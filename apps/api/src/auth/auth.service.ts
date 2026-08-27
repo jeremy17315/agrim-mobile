@@ -1,8 +1,11 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomInt, randomUUID } from 'node:crypto';
 
 import {
+  BadRequestException,
   ConflictException,
+  Inject,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -11,6 +14,7 @@ import * as argon2 from 'argon2';
 
 import type { Role } from '@agrim/contracts';
 import { PrismaService } from '../prisma/prisma.service';
+import { SMS_PROVIDER, type SmsProvider } from '../notifications/sms.provider';
 import { generateReferralCode } from '../referrals/referrals.service';
 import type { LoginDto } from './dto/login.dto';
 import type { RegisterDto } from './dto/register.dto';
@@ -25,12 +29,25 @@ function normalizePhone(phone: string): string {
   return phone.replace(/\s+/g, '').replace(/^\+225/, '');
 }
 
+const RESET_TTL_MS = 15 * 60 * 1000;
+const RESET_KEY = (phone: string) => `pwdreset:${phone}`;
+
+type ResetPayload = {
+  hash: string;
+  expiresAt: number;
+  sentAt: number;
+  attempts?: number;
+};
+
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
+    @Inject(SMS_PROVIDER) private readonly sms: SmsProvider,
   ) {}
 
   async register(dto: RegisterDto) {
@@ -177,6 +194,44 @@ export class AuthService {
     });
   }
 
+  /**
+   * Suppression de compte — exigée par l'App Store et le Play Store.
+   *
+   * On n'efface pas les commandes (comptabilité, litiges). On anonymise
+   * l'identité, on désactive le compte, on révoque les sessions et les
+   * jetons push. Le numéro libéré peut être réutilisé pour un nouveau compte.
+   */
+  async deleteAccount(userId: string): Promise<void> {
+    const user = await this.prisma.db.user.findUnique({ where: { id: userId } });
+    if (!user || !user.isActive) {
+      throw new UnauthorizedException({
+        code: 'ACCOUNT_INACTIVE',
+        message: 'Compte indisponible.',
+      });
+    }
+
+    const suffix = userId.replace(/-/g, '').slice(0, 12);
+    await this.prisma.db.$transaction([
+      this.prisma.db.refreshToken.updateMany({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      }),
+      this.prisma.db.pushToken.deleteMany({ where: { userId } }),
+      this.prisma.db.cart.deleteMany({ where: { userId } }),
+      this.prisma.db.user.update({
+        where: { id: userId },
+        data: {
+          firstName: 'Compte',
+          lastName: 'supprimé',
+          phone: `supprime_${suffix}`,
+          email: null,
+          isActive: false,
+          passwordHash: await argon2.hash(randomUUID()),
+        },
+      }),
+    ]);
+  }
+
   async changePassword(
     userId: string,
     currentPassword: string,
@@ -204,6 +259,148 @@ export class AuthService {
         data: { revokedAt: new Date() },
       }),
     ]);
+  }
+
+  /**
+   * Demande un code de réinitialisation.
+   *
+   * Toujours `{ ok: true }` : on ne révèle jamais si le numéro existe.
+   * Le code vit haché dans `CompanySetting` (`pwdreset:<téléphone>`), sans
+   * nouvelle table. L'événement SMS s'appelle `compte_code` : le relais du
+   * site refuse tout événement dont le nom contient password / reset / otp.
+   */
+  async requestPasswordReset(phoneRaw: string): Promise<{ ok: true }> {
+    const phone = normalizePhone(phoneRaw);
+    const user = await this.prisma.db.user.findUnique({
+      where: { phone },
+      select: { id: true, isActive: true },
+    });
+
+    if (user?.isActive) {
+      try {
+        const existing = await this.readReset(phone);
+        const now = Date.now();
+        const tooSoon =
+          existing !== null &&
+          existing.expiresAt > now &&
+          now - existing.sentAt < 60_000;
+
+        if (!tooSoon) {
+          const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+          const payload: ResetPayload = {
+            hash: await argon2.hash(code),
+            expiresAt: now + RESET_TTL_MS,
+            sentAt: now,
+            attempts: 0,
+          };
+          await this.prisma.db.companySetting.upsert({
+            where: { key: RESET_KEY(phone) },
+            create: { key: RESET_KEY(phone), value: JSON.stringify(payload) },
+            update: { value: JSON.stringify(payload) },
+          });
+
+          const sms = await this.sms.send({
+            to: phone,
+            body: `AGRIM : votre code de compte est ${code}. Il expire dans 15 minutes. Ne le communiquez à personne.`,
+            event: 'compte_code',
+            uniqueKey: `app:compte_code:${phone}:${now}`,
+          });
+          if (!sms.sent) {
+            // Sans relais (dev, tests) : le code est dans les journaux, jamais
+            // dans la réponse HTTP — celle-ci doit rester identique.
+            this.logger.log(
+              `Code compte non distribué (${sms.detail}) pour ${phone} : ${code}`,
+            );
+          }
+        }
+      } catch (error) {
+        // Une panne d'écriture ne doit pas distinguer un compte existant d'un
+        // numéro inconnu : la réponse reste { ok: true }.
+        this.logger.warn(
+          `Réinitialisation : impossible d'envoyer le code (${
+            error instanceof Error ? error.message : 'erreur inconnue'
+          }).`,
+        );
+      }
+    }
+
+    return { ok: true };
+  }
+
+  async resetPassword(input: {
+    phone: string;
+    code: string;
+    password: string;
+  }): Promise<void> {
+    const phone = normalizePhone(input.phone);
+    const invalid = new BadRequestException({
+      code: 'RESET_CODE_INVALID',
+      message: 'Code invalide ou expiré.',
+    });
+
+    const stored = await this.readReset(phone);
+    if (!stored || stored.expiresAt < Date.now() || (stored.attempts ?? 0) >= 5) {
+      if (stored) {
+        await this.prisma.db.companySetting.deleteMany({
+          where: { key: RESET_KEY(phone) },
+        });
+      }
+      throw invalid;
+    }
+
+    const matches = await argon2.verify(stored.hash, input.code).catch(() => false);
+    if (!matches) {
+      stored.attempts = (stored.attempts ?? 0) + 1;
+      await this.prisma.db.companySetting.update({
+        where: { key: RESET_KEY(phone) },
+        data: { value: JSON.stringify(stored) },
+      });
+      throw invalid;
+    }
+
+    const user = await this.prisma.db.user.findUnique({ where: { phone } });
+    if (!user?.isActive) {
+      await this.prisma.db.companySetting.deleteMany({
+        where: { key: RESET_KEY(phone) },
+      });
+      throw invalid;
+    }
+
+    const passwordHash = await argon2.hash(input.password);
+    await this.prisma.db.$transaction([
+      this.prisma.db.user.update({
+        where: { id: user.id },
+        data: { passwordHash },
+      }),
+      this.prisma.db.refreshToken.updateMany({
+        where: { userId: user.id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      }),
+      this.prisma.db.companySetting.deleteMany({
+        where: { key: RESET_KEY(phone) },
+      }),
+    ]);
+  }
+
+  private async readReset(phone: string): Promise<ResetPayload | null> {
+    const row = await this.prisma.db.companySetting.findUnique({
+      where: { key: RESET_KEY(phone) },
+      select: { value: true },
+    });
+    if (!row) return null;
+    try {
+      const parsed = JSON.parse(row.value) as ResetPayload;
+      if (
+        typeof parsed.hash !== 'string' ||
+        typeof parsed.expiresAt !== 'number' ||
+        typeof parsed.sentAt !== 'number'
+      ) {
+        return null;
+      }
+      return parsed;
+    } catch {
+      return null;
+    }
   }
 
   private async issueTokens(

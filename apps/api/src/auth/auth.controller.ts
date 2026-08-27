@@ -16,9 +16,11 @@ import {
 import { Public } from '../common/decorators/public.decorator';
 import { AuthService } from './auth.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshDto } from './dto/refresh.dto';
 import { RegisterDto } from './dto/register.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -72,6 +74,17 @@ export class AuthController {
     return user;
   }
 
+  @Post('me/delete')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Throttle({ default: { limit: 3, ttl: 300_000 } })
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Supprimer son compte (anonymisation, exigence App Store / Play Store)',
+  })
+  async deleteAccount(@CurrentUser() user: AuthenticatedUser): Promise<void> {
+    await this.auth.deleteAccount(user.id);
+  }
+
   @Post('change-password')
   @HttpCode(HttpStatus.NO_CONTENT)
   // Exige le mot de passe actuel : même limite que la connexion, pour qu'une
@@ -88,5 +101,30 @@ export class AuthController {
       dto.currentPassword,
       dto.newPassword,
     );
+  }
+
+  @Public()
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.OK)
+  // Un SMS se paie : on borne les demandes, y compris sur un numéro inconnu
+  // (la réponse est identique, il ne faut pas qu'un inconnu coûte moins cher
+  // à tester qu'un vrai compte).
+  @Throttle({ default: { limit: 3, ttl: 300_000 } })
+  @ApiOperation({
+    summary: 'Demander un code de réinitialisation (SMS)',
+  })
+  forgotPassword(@Body() dto: ForgotPasswordDto) {
+    return this.auth.requestPasswordReset(dto.phone);
+  }
+
+  @Public()
+  @Post('reset-password')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @ApiOperation({
+    summary: 'Choisir un nouveau mot de passe avec le code SMS',
+  })
+  async resetPassword(@Body() dto: ResetPasswordDto): Promise<void> {
+    await this.auth.resetPassword(dto);
   }
 }

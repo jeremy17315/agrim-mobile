@@ -29,6 +29,7 @@ async function main() {
 
   // Idempotent : on repart d'une base propre à chaque seed de dev.
   await prisma.$transaction([
+    prisma.productReview.deleteMany(),
     prisma.orderEvent.deleteMany(),
     prisma.orderItem.deleteMany(),
     prisma.payment.deleteMany(),

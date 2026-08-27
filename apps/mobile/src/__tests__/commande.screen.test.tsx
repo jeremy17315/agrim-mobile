@@ -52,6 +52,10 @@ jest.mock('@/api/orders', () => ({
   }),
 }));
 
+jest.mock('@/api/payments', () => ({
+  initiatePayment: jest.fn(),
+}));
+
 const address: Address = {
   id: '11111111-1111-4111-8111-111111111111',
   label: 'Maison',

@@ -54,6 +54,12 @@ jest.mock('@/api/orders', () => ({
   useCancelOrder: () => ({ mutate: mockCancelMutate, isPending: false }),
 }));
 
+jest.mock('@/api/payments', () => ({
+  initiatePayment: jest.fn(),
+  useInitiatePayment: () => ({ mutateAsync: jest.fn(), isPending: false }),
+  usePaymentStatus: () => ({ data: null, isPending: false }),
+}));
+
 function buildOrder(
   status: OrderStatus,
   events: { status: OrderStatus; createdAt: string }[],
@@ -221,4 +227,20 @@ it('affiche le message de succès seulement après création', () => {
 it('n’affiche pas le message de succès en consultation normale', () => {
   render(<SuiviCommandeScreen />);
   expect(screen.queryByText('Commande enregistrée')).toBeNull();
+});
+
+it('ne propose pas de reprendre un paiement à la livraison', () => {
+  render(<SuiviCommandeScreen />);
+  expect(screen.queryByText('Reprendre le paiement')).toBeNull();
+  expect(screen.getByText('Paiement à la livraison')).toBeTruthy();
+});
+
+it('propose de reprendre un paiement Mobile Money encore ouvert', () => {
+  const order = buildOrder('PENDING', [
+    { status: 'PENDING', createdAt: '2026-08-18T09:00:00.000Z' },
+  ]);
+  order.payment = { method: 'MOBILE_MONEY', status: 'AWAITING_CONFIRMATION' };
+  mockOrder(order);
+  render(<SuiviCommandeScreen />);
+  expect(screen.getByText('Reprendre le paiement')).toBeTruthy();
 });

@@ -1,6 +1,19 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
 import { PrismaService } from '../prisma/prisma.service';
+
+function resolveImageUrl(
+  raw: string | null | undefined,
+  siteBase: string,
+): string | null {
+  const value = (raw ?? '').trim();
+  if (!value) return null;
+  if (/^https?:\/\//i.test(value)) return value;
+  if (!siteBase) return null;
+  const base = siteBase.replace(/\/+$/, '');
+  return value.startsWith('/') ? `${base}${value}` : `${base}/${value}`;
+}
 
 export interface ListProductsParams {
   search?: string;
@@ -40,7 +53,15 @@ const productSelect = {
 
 @Injectable()
 export class ProductsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+  ) {}
+
+  private withPublicImage<T extends { imageUrl: string | null }>(row: T): T {
+    const site = this.config.get<string>('SITE_INTEGRATION_URL') ?? '';
+    return { ...row, imageUrl: resolveImageUrl(row.imageUrl, site) };
+  }
 
   async list(params: ListProductsParams) {
     const { search, category, featured, page, limit } = params;
@@ -75,7 +96,10 @@ export class ProductsService {
       this.prisma.db.product.count({ where }),
     ]);
 
-    return { data, pagination: { page, limit, total } };
+    return {
+      data: data.map((p) => this.withPublicImage(p)),
+      pagination: { page, limit, total },
+    };
   }
 
   async findBySlug(slug: string) {
@@ -89,6 +113,6 @@ export class ProductsService {
         message: 'Ce produit est introuvable.',
       });
     }
-    return product;
+    return this.withPublicImage(product);
   }
 }

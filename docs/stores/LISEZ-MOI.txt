@@ -1,0 +1,13 @@
+Captures magasins AGRIM — 25 août 2026
+
+01-catalogue.png     Catalogue (Ébène d'Or dès 700 F)
+02-fiche-produit.png Fiche Ébène d'Or, 5 kg à 3 500 F
+03-panier.png        Panier 5 300 F, livraison 1 000 F
+04-suivi.png         Suivi AGR-2026-0042, en préparation
+
+Play Store : 2 à 8 captures téléphone, JPEG ou PNG, 16:9 ou 9:16.
+App Store  : il faudra aussi les décliner en 6,7" et 6,1" (redimensionner
+             ces PNG suffit pour un premier dépôt TestFlight).
+
+Ce sont des maquettes de fiche, pas des captures de l'APK réel.
+Pour la revue Apple, prévois aussi 1–2 vraies captures de l'app installée.

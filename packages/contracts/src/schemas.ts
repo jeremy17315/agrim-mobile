@@ -154,6 +154,37 @@ export const productSchema = z.object({
 });
 export type Product = z.infer<typeof productSchema>;
 
+/* ──────────────────────────── Avis produits ────────────────────────────── */
+
+/** Un avis publié : prénom seul, jamais le téléphone. */
+export const productReviewSchema = z.object({
+  id: idSchema,
+  authorFirstName: z.string().min(1).max(80),
+  rating: z.number().int().min(1).max(5),
+  comment: z.string().min(1).max(800),
+  createdAt: z.iso.datetime(),
+});
+export type ProductReview = z.infer<typeof productReviewSchema>;
+
+export const productReviewsResponseSchema = z.object({
+  average: z.number().nullable(),
+  count: z.number().int().nonnegative(),
+  data: z.array(productReviewSchema),
+});
+export type ProductReviewsResponse = z.infer<
+  typeof productReviewsResponseSchema
+>;
+
+export const createProductReviewSchema = z.object({
+  rating: z.number().int().min(1).max(5),
+  comment: z
+    .string()
+    .trim()
+    .min(8, 'Écrivez au moins quelques mots (8 caractères).')
+    .max(800),
+});
+export type CreateProductReviewInput = z.infer<typeof createProductReviewSchema>;
+
 /* ──────────────────────────────── Panier ───────────────────────────────── */
 
 export const cartItemSchema = z.object({

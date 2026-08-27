@@ -1,12 +1,19 @@
-import { COMPANY, PAYMENT_METHODS, type PaymentMethod } from '@agrim/contracts';
+import {
+  COMPANY,
+  MOBILE_MONEY_PROVIDERS,
+  PAYMENT_METHODS,
+  type MobileMoneyProvider,
+  type PaymentMethod,
+} from '@agrim/contracts';
 import { randomUUID } from 'expo-crypto';
 import { useRouter } from 'expo-router';
 import { useMemo, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Linking, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ApiError, describeError } from '@/api/errors';
 import { useAddresses, useCreateOrder } from '@/api/orders';
+import { initiatePayment } from '@/api/payments';
 import { EmptyState, ErrorState, Skeleton } from '@/components/states';
 import { Banner, Button, Card, Icon, Text } from '@/components/ui';
 import { formatXof } from '@/lib/format';
@@ -29,7 +36,7 @@ const PAYMENT_LABELS: Record<PaymentMethod, { label: string; hint: string }> = {
   },
   MOBILE_MONEY: {
     label: 'Mobile Money',
-    hint: 'Bientôt disponible',
+    hint: 'Wave, Orange Money, MTN, Moov',
   },
   CARD: {
     label: 'Carte bancaire',
@@ -37,8 +44,17 @@ const PAYMENT_LABELS: Record<PaymentMethod, { label: string; hint: string }> = {
   },
 };
 
-/** Seul le paiement à la livraison est actif en V1 : aucun agrégateur branché. */
-const AVAILABLE_METHODS: PaymentMethod[] = ['CASH_ON_DELIVERY'];
+const AVAILABLE_METHODS: PaymentMethod[] = [
+  'CASH_ON_DELIVERY',
+  'MOBILE_MONEY',
+];
+
+const OPERATEUR_LIBELLES: Record<MobileMoneyProvider, string> = {
+  WAVE: 'Wave',
+  ORANGE_MONEY: 'Orange Money',
+  MTN_MOMO: 'MTN MoMo',
+  MOOV_MONEY: 'Moov Money',
+};
 
 export default function CommandeScreen() {
   const insets = useSafeAreaInsets();
@@ -54,6 +70,7 @@ export default function CommandeScreen() {
   const [addressId, setAddressId] = useState<string | null>(null);
   const [paymentMethod, setPaymentMethod] =
     useState<PaymentMethod>('CASH_ON_DELIVERY');
+  const [operateur, setOperateur] = useState<MobileMoneyProvider>('WAVE');
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   /**
@@ -81,12 +98,26 @@ export default function CommandeScreen() {
           quantity: i.quantity,
         })),
         paymentMethod,
+        mobileMoneyProvider:
+          paymentMethod === 'MOBILE_MONEY' ? operateur : undefined,
         idempotencyKey: idempotencyKey.current,
       });
 
       // Le panier n'est vidé qu'APRÈS confirmation serveur : en cas d'échec,
       // l'utilisateur retrouve ses articles.
       clearCart();
+
+      if (paymentMethod === 'MOBILE_MONEY') {
+        try {
+          const paiement = await initiatePayment(order.reference);
+          if (paiement.checkoutUrl) {
+            await Linking.openURL(paiement.checkoutUrl);
+          }
+        } catch {
+          // La commande existe : on envoie au suivi, le client pourra relancer.
+        }
+      }
+
       // Un seul écran de récapitulatif dans l'application : le suivi. Le
       // paramètre `nouvelle` déclenche le message de confirmation.
       router.replace(`/commandes/${order.reference}?nouvelle=1`);
@@ -263,6 +294,27 @@ export default function CommandeScreen() {
               </Pressable>
             );
           })}
+          {paymentMethod === 'MOBILE_MONEY' ? (
+            <View style={styles.operateurs}>
+              {MOBILE_MONEY_PROVIDERS.map((code) => {
+                const actif = operateur === code;
+                return (
+                  <Pressable
+                    key={code}
+                    onPress={() => setOperateur(code)}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: actif }}
+                    accessibilityLabel={OPERATEUR_LIBELLES[code]}
+                    style={[styles.operateur, actif && styles.addressActive]}
+                  >
+                    <Text variant="caption" color={actif ? 'green' : 'body'}>
+                      {OPERATEUR_LIBELLES[code]}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ) : null}
         </View>
 
         {/* Récapitulatif ------------------------------------------------- */}
@@ -392,6 +444,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: spacing.sm,
     paddingVertical: spacing.md,
+  },
+  operateurs: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  operateur: {
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    borderColor: palette.line,
+    backgroundColor: palette.card,
   },
 
   summary: { gap: spacing.sm },

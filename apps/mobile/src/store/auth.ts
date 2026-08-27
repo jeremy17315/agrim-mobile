@@ -4,6 +4,7 @@ import { Platform } from 'react-native';
 import { create } from 'zustand';
 
 import {
+  deleteAccount as deleteAccountRequest,
   login as loginRequest,
   logout as logoutRequest,
   refreshSession,
@@ -88,6 +89,7 @@ type AuthState = {
   signIn: (payload: LoginPayload) => Promise<void>;
   signUp: (payload: RegisterPayload) => Promise<void>;
   signOut: () => Promise<void>;
+  deleteAccount: () => Promise<void>;
 };
 
 export const useAuthStore = create<AuthState>()((set, get) => ({
@@ -161,6 +163,13 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       refreshToken: session.refreshToken,
       hydrated: true,
     });
+  },
+
+  deleteAccount: async () => {
+    await deleteAccountRequest();
+    await vaultDelete(ACCESS_TOKEN_KEY);
+    await vaultDelete(REFRESH_TOKEN_KEY);
+    set({ user: null, accessToken: null, refreshToken: null });
   },
 
   signOut: async () => {

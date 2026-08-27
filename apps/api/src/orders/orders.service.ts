@@ -10,6 +10,7 @@ import {
   PROVISIONAL_DELIVERY,
 } from '@agrim/contracts';
 
+import { CatalogSyncService } from '../catalog-sync/catalog-sync.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CreateOrderDto } from './dto/create-order.dto';
@@ -63,6 +64,7 @@ export class OrdersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
+    private readonly catalog: CatalogSyncService,
   ) {}
 
   /**
@@ -130,6 +132,8 @@ export class OrdersService {
         id: true,
         label: true,
         price: true,
+        originalPrice: true,
+        sourceRef: true,
         stock: true,
         isAvailable: true,
         product: { select: { name: true, isActive: true } },
@@ -178,13 +182,32 @@ export class OrdersService {
 
     // Prix issus de la base, et totaux calculés par la fonction PARTAGÉE avec
     // le mobile : les deux côtés ne peuvent pas diverger.
-    const lines = variants.map((v) => ({
-      variantId: v.id,
-      productName: v.product.name,
-      variantLabel: v.label,
-      unitPrice: v.price,
-      quantity: merged.get(v.id) ?? 0,
-    }));
+    const refs = variants
+      .map((v) => v.sourceRef)
+      .filter((r): r is string => Boolean(r));
+    const cotation = await this.catalog.quote(refs);
+    const lines = variants.map((v) => {
+      const cote =
+        cotation.status === 'ok' && v.sourceRef
+          ? cotation.prices.get(v.sourceRef)
+          : undefined;
+      let unitPrice = v.price;
+      if (cote) unitPrice = cote.prix;
+      else if (
+        cotation.status === 'unavailable' &&
+        v.originalPrice &&
+        v.originalPrice > v.price
+      ) {
+        unitPrice = v.originalPrice;
+      }
+      return {
+        variantId: v.id,
+        productName: v.product.name,
+        variantLabel: v.label,
+        unitPrice,
+        quantity: merged.get(v.id) ?? 0,
+      };
+    });
 
     const totals = computeCartTotals(
       lines.map((l) => ({ unitPrice: l.unitPrice, quantity: l.quantity })),

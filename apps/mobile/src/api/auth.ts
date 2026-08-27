@@ -67,6 +67,39 @@ export function logout(refreshToken: string): Promise<void> {
   }).then(() => undefined);
 }
 
+export function requestPasswordReset(phone: string): Promise<{ ok: true }> {
+  return apiRequest({
+    method: 'POST',
+    path: '/auth/forgot-password',
+    body: { phone },
+    schema: z.object({ ok: z.literal(true) }),
+    isPublic: true,
+  });
+}
+
+export function resetPassword(payload: {
+  phone: string;
+  code: string;
+  password: string;
+}): Promise<void> {
+  return apiRequest({
+    method: 'POST',
+    path: '/auth/reset-password',
+    body: payload,
+    schema: z.undefined(),
+    isPublic: true,
+  }).then(() => undefined);
+}
+
 export function fetchMe(): Promise<User> {
   return apiRequest({ path: '/auth/me', schema: userSchema });
+}
+
+/** Suppression de compte (anonymisation). Exigence App Store / Play Store. */
+export function deleteAccount(): Promise<void> {
+  return apiRequest({
+    method: 'POST',
+    path: '/auth/me/delete',
+    schema: z.undefined(),
+  }).then(() => undefined);
 }

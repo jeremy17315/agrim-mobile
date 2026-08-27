@@ -148,6 +148,16 @@ export default function ConnexionScreen() {
           />
 
           <Pressable
+            onPress={() => router.push('/(auth)/mot-de-passe-oublie')}
+            accessibilityRole="button"
+            style={styles.switch}
+          >
+            <Text variant="caption" color="green">
+              Mot de passe oublié ?
+            </Text>
+          </Pressable>
+
+          <Pressable
             onPress={() => router.push('/(auth)/inscription')}
             accessibilityRole="button"
             style={styles.switch}

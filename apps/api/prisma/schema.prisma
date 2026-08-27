@@ -137,6 +137,7 @@ model User {
   closedDeliveries Delivery[]   @relation("ClosedDeliveries")
   producer       Producer?
   pushTokens     PushToken[]
+  productReviews ProductReview[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -228,6 +229,7 @@ model Product {
   categoryId String           @db.Uuid
   category   Category         @relation(fields: [categoryId], references: [id])
   variants   ProductVariant[]
+  reviews    ProductReview[]
 
   /// Code de la gamme côté SITE — même rôle que Category.sourceCode.
   sourceCode String? @unique @db.VarChar(16)
@@ -272,6 +274,28 @@ model ProductVariant {
   updatedAt DateTime @updatedAt
 
   @@index([productId])
+}
+
+/// Avis client sur un produit.
+///
+/// Un couple (client, produit) : on note le riz, pas la commande. Modifier
+/// son avis écrase le précédent plutôt que d'en empiler plusieurs.
+model ProductReview {
+  id        String  @id @default(uuid()) @db.Uuid
+  productId String  @db.Uuid
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  userId    String  @db.Uuid
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Entier 1–5. Jamais de demi-étoile : un tap = une étoile.
+  rating  Int
+  comment String @db.VarChar(800)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([productId, userId])
+  @@index([productId, createdAt])
 }
 
 /* ─────────────────────────────── Panier ────────────────────────────── */
