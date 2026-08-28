@@ -313,12 +313,37 @@ export class CatalogSyncService {
       }
     }
 
-    // ── 3. Ce que le site ne vend plus ───────────────────────────────────
+    // ── 3. Ce que le site ne vend pas ────────────────────────────────────
     // Désactivé, jamais supprimé : des commandes le référencent.
-    if (referencesVues.size > 0) {
+    //
+    // Deux populations à retirer, et la seconde manquait :
+    //
+    //   `sourceRef` renseigné mais absent du catalogue — une référence que le
+    //   site a cessé de vendre.
+    //
+    //   `sourceRef` VIDE — une variante que le site n'a jamais confirmée.
+    //   C'est le cas des données de démarrage : le seed crée un catalogue
+    //   d'exemple sans rattachement. Tant que cette branche manquait, elles
+    //   survivaient à chaque synchronisation et cohabitaient avec le vrai
+    //   catalogue : l'application vendait une gamme entière inexistante et un
+    //   format « 900 g » sur cinq gammes, avec des stocks inventés. Un client
+    //   pouvait commander ce qui n'existe pas.
+    //
+    // Le rattachement se fait par `sourceRef` PUIS par (produit, poids) : une
+    // variante du seed qui correspond à une référence réelle est adoptée et
+    // reçoit son `sourceRef`. Ne restent donc sans rattachement que celles qui
+    // n'ont aucun équivalent au catalogue.
+    //
+    // Deux garde-fous avant d'écrire : un catalogue vide ne doit jamais vider
+    // la boutique, et une synchronisation partielle non plus — sans quoi une
+    // panne du site retirerait de la vente des produits bien réels.
+    if (referencesVues.size > 0 && rapport.errors.length === 0) {
       const retirees = await this.prisma.db.productVariant.updateMany({
         where: {
-          sourceRef: { not: null, notIn: [...referencesVues] },
+          OR: [
+            { sourceRef: { not: null, notIn: [...referencesVues] } },
+            { sourceRef: null },
+          ],
           isAvailable: true,
         },
         data: { isAvailable: false },
