@@ -88,7 +88,7 @@ export interface SyncReport {
   ok: boolean;
   source: string;
   generatedAt: string | null;
-  ranges: { created: number; updated: number };
+  ranges: { created: number; updated: number; deactivated: number };
   variants: { created: number; updated: number; deactivated: number };
   skipped: string[];
   errors: string[];
@@ -261,7 +261,7 @@ export class CatalogSyncService {
       ok: false,
       source: this.sourceUrl,
       generatedAt: null,
-      ranges: { created: 0, updated: 0 },
+      ranges: { created: 0, updated: 0, deactivated: 0 },
       variants: { created: 0, updated: 0, deactivated: 0 },
       skipped: [],
       errors: [],
@@ -351,11 +351,35 @@ export class CatalogSyncService {
       rapport.variants.deactivated = retirees.count;
     }
 
+    // ── 4. Les gammes que le site ne propose pas ─────────────────────────
+    // Sans cette etape, une gamme retiree du catalogue resterait affichee en
+    // RAYON VIDE : `products.list()` ne filtre que sur `isActive`, et n'inclut
+    // que les variantes disponibles. Une gamme dont toutes les variantes
+    // viennent d'etre desactivees s'afficherait donc sans rien a vendre.
+    //
+    // Meme rattachement que pour les variantes — `sourceCode` — et memes deux
+    // garde-fous : ni catalogue vide, ni synchronisation partielle.
+    const codesVus = [...productParCode.keys()];
+    if (codesVus.length > 0 && rapport.errors.length === 0) {
+      const gammesRetirees = await this.prisma.db.product.updateMany({
+        where: {
+          OR: [
+            { sourceCode: { not: null, notIn: codesVus } },
+            { sourceCode: null },
+          ],
+          isActive: true,
+        },
+        data: { isActive: false },
+      });
+      rapport.ranges.deactivated = gammesRetirees.count;
+    }
+
     rapport.ok = rapport.errors.length === 0;
     rapport.durationMs = Date.now() - debut;
 
     const resume =
-      `gammes ${rapport.ranges.created}+/${rapport.ranges.updated}~ · ` +
+      `gammes ${rapport.ranges.created}+/${rapport.ranges.updated}~/` +
+      `${rapport.ranges.deactivated}- · ` +
       `variantes ${rapport.variants.created}+/${rapport.variants.updated}~/` +
       `${rapport.variants.deactivated}- · ${rapport.durationMs} ms`;
     if (rapport.ok) this.logger.log(`Catalogue synchronisé : ${resume}`);
