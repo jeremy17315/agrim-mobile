@@ -19,6 +19,7 @@
 import 'dotenv/config';
 
 import { DeliveriesService } from './deliveries.service';
+import type { CatalogSyncService } from '../catalog-sync/catalog-sync.service';
 import type { DeliveryOtpService } from './delivery-otp.service';
 import type { NotificationsService } from '../notifications/notifications.service';
 import type { PrismaService } from '../prisma/prisma.service';
@@ -56,9 +57,15 @@ function makeHarness(orderStatus = 'OUT_FOR_DELIVERY') {
 
   const otp = { issue: jest.fn() } as unknown as DeliveryOtpService;
 
-  const service = new DeliveriesService(prisma, notifications, otp);
+  // La finalisation de la réservation passe par le SITE. Un échec de livraison
+  // ne finalise rien — ces tests le vérifient — mais le service en dépend.
+  const catalog = {
+    finaliseStock: jest.fn(async () => ({ status: 'ok', body: {} })),
+  } as unknown as CatalogSyncService;
 
-  return { service, tx, notifications };
+  const service = new DeliveriesService(prisma, notifications, otp, catalog);
+
+  return { service, tx, notifications, catalog };
 }
 
 describe('Échec de livraison', () => {

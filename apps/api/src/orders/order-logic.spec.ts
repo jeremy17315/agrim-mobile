@@ -20,23 +20,29 @@ describe('Référence de commande', () => {
 });
 
 describe('Calculs du panier', () => {
-  const opts = { baseFee: 1000, freeDeliveryThreshold: 25_000 };
+  // Le montant n'est plus d\u00e9duit d'un forfait : il vient de la grille du site
+  // (d\u00e9cision du 29 ao\u00fbt 2026). Cette fonction ne fait plus qu'additionner.
+  const opts = { deliveryFee: 1000 };
 
   it('calcule le total d\u2019une ligne', () => {
     expect(computeLineTotal({ unitPrice: 6000, quantity: 3 })).toBe(18_000);
   });
 
-  it('applique les frais de livraison sous le seuil', () => {
+  it('ajoute les frais de livraison d\u00e9cid\u00e9s en amont', () => {
     const t = computeCartTotals([{ unitPrice: 6000, quantity: 2 }], opts);
     expect(t).toEqual({ subtotal: 12_000, deliveryFee: 1000, total: 13_000 });
   });
 
-  it('offre la livraison au seuil exact', () => {
-    const t = computeCartTotals([{ unitPrice: 25_000, quantity: 1 }], opts);
+  it('ajoute z\u00e9ro quand la livraison est offerte', () => {
+    const t = computeCartTotals(
+      [{ unitPrice: 25_000, quantity: 1 }],
+      { deliveryFee: 0 },
+    );
     expect(t).toEqual({ subtotal: 25_000, deliveryFee: 0, total: 25_000 });
   });
 
   it('ne facture pas la livraison sur un panier vide', () => {
+    // M\u00eame avec un tarif non nul : il n'y a rien \u00e0 transporter.
     expect(computeCartTotals([], opts)).toEqual({
       subtotal: 0,
       deliveryFee: 0,

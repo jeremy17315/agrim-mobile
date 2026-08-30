@@ -1,7 +1,5 @@
 import {
-  amountUntilFreeDelivery,
   computeCartTotals,
-  PROVISIONAL_DELIVERY,
   type CartTotals,
   type Product,
   type ProductVariant,
@@ -200,7 +198,20 @@ export const useCartStore = create<CartState>()(
 
 /* -------------------------------- Sélecteurs ---------------------------- */
 
-export const DELIVERY_RULES = PROVISIONAL_DELIVERY;
+/**
+ * Frais de livraison : le panier n'en connaît AUCUN.
+ * ─────────────────────────────────────────────────
+ * Il appliquait un forfait de 1 000 F quand le site en facturait 3 500 pour
+ * Abidjan. Décision du 29 août 2026 : le tarif dépend de la ZONE, donc de
+ * l'adresse — que cet écran ne connaît pas encore.
+ *
+ * Afficher une estimation reviendrait à annoncer un montant qui changerait au
+ * paiement. Le fichier `cart-totals.ts` du contrat le dit lui-même : « le
+ * client verrait un total changer entre le panier et le paiement — la pire
+ * chose qui puisse arriver à la confiance ». Le panier affiche donc le
+ * sous-total ; les frais apparaissent au récapitulatif, calculés par le
+ * serveur à partir de l'adresse choisie.
+ */
 
 /**
  * Les sélecteurs qui renvoient un OBJET ne doivent jamais être passés
@@ -215,19 +226,17 @@ export function selectItemCount(state: Pick<CartState, 'items'>): number {
   return state.items.reduce((sum, i) => sum + i.quantity, 0);
 }
 
-/** Totaux calculés avec l'algorithme PARTAGÉ avec le backend. */
+/**
+ * Totaux du panier, frais de livraison NON compris.
+ *
+ * `deliveryFee: 0` n'est pas une promesse de gratuité : c'est l'absence
+ * d'information. Le montant facturé est celui que le serveur calcule.
+ */
 export function selectTotals(state: Pick<CartState, 'items'>): CartTotals {
   return computeCartTotals(
     state.items.map((i) => ({ unitPrice: i.unitPrice, quantity: i.quantity })),
-    DELIVERY_RULES,
+    { deliveryFee: 0 },
   );
-}
-
-/** Montant restant avant la livraison offerte (0 = seuil atteint). */
-export function selectAmountUntilFreeDelivery(
-  state: Pick<CartState, 'items'>,
-): number {
-  return amountUntilFreeDelivery(selectTotals(state).subtotal, DELIVERY_RULES);
 }
 
 /* ----------------------------------- Hooks ------------------------------ */
@@ -238,14 +247,16 @@ export function useCartTotals(): CartTotals {
   return useMemo(() => selectTotals({ items }), [items]);
 }
 
-/** Montant restant avant la livraison offerte. */
-export function useAmountUntilFreeDelivery(): number {
-  const { subtotal } = useCartTotals();
-  return useMemo(
-    () => amountUntilFreeDelivery(subtotal, DELIVERY_RULES),
-    [subtotal],
-  );
-}
+/**
+ * Poids restant avant la livraison offerte.
+ *
+ * Retiré : le seuil officiel est un POIDS (75 kg par défaut), réglé sur le
+ * site et modifiable sans redéploiement. L'annoncer depuis le panier
+ * supposerait de connaître une valeur que cet écran n'a pas — et une promesse
+ * de gratuité démentie au paiement coûte plus cher que l'absence de promesse.
+ * `weightUntilFreeDelivery` (dans le contrat) fera le calcul le jour où la
+ * grille sera servie à l'application.
+ */
 
 /** Nombre d'articles ; renvoie un nombre, donc comparable par référence. */
 export function useCartItemCount(): number {

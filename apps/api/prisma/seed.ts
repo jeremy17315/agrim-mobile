@@ -12,7 +12,6 @@ import * as argon2 from 'argon2';
 import {
   COMPANY,
   PACK_FORMATS,
-  PROVISIONAL_DELIVERY,
   RICE_PRICING,
   RICE_RANGES,
 } from '@agrim/contracts';
@@ -62,10 +61,38 @@ async function main() {
       { key: 'address', value: COMPANY.address },
       { key: 'phone', value: COMPANY.phone },
       { key: 'secondaryPhone', value: COMPANY.secondaryPhone },
-      { key: 'deliveryBaseFee', value: String(PROVISIONAL_DELIVERY.baseFee) },
+      // Grille de livraison : AMORÇAGE SEULEMENT, exactement comme le
+      // catalogue ci-dessous.
+      //
+      // Depuis la décision du 29 août 2026, la grille officielle appartient au
+      // SITE et arrive par `GET /api/integration/livraison`. Cette copie ne
+      // sert qu'à faire démarrer une base vide — sans elle, une installation
+      // neuve refuserait toute commande tant que le site n'a pas répondu.
+      // La première lecture réussie de la grille l'écrase.
+      //
+      // Les valeurs sont un CALQUE de `config.py:ZONES_LIVRAISON`. Les corriger
+      // ici ne change rien en production : il faut les corriger sur le site.
       {
-        key: 'freeDeliveryThreshold',
-        value: String(PROVISIONAL_DELIVERY.freeDeliveryThreshold),
+        key: 'deliveryGrid',
+        value: JSON.stringify({
+          zones: {
+            yamoussoukro: {
+              libelle: 'Yamoussoukro',
+              frais: 1000,
+              delai: '24 h',
+            },
+            abidjan: { libelle: 'Abidjan', frais: 3500, delai: '48 h' },
+            bouake: { libelle: 'Bouaké', frais: 3000, delai: '48 h' },
+            autre: { libelle: 'Autre ville', frais: 5000, delai: '72 h' },
+          },
+          zoneParDefaut: 'autre',
+          retrait: {
+            libelle: 'Retrait au dépôt (Aboukro Extension)',
+            frais: 0,
+            delai: '2 h',
+          },
+          livraisonOfferteSeuilKg: 75,
+        }),
       },
     ],
   });
@@ -242,10 +269,10 @@ async function main() {
 
   const quantity = 2;
   const subtotal = variant5kg.price * quantity;
-  const deliveryFee =
-    subtotal >= PROVISIONAL_DELIVERY.freeDeliveryThreshold
-      ? 0
-      : PROVISIONAL_DELIVERY.baseFee;
+  // Commande de démonstration. Le tarif réel vient du site, qu'on n'interroge
+  // pas depuis un seed : on fige celui de Yamoussoukro, zone du dépôt. C'est
+  // une donnée de DÉVELOPPEMENT — ce seed ne tourne jamais en production.
+  const deliveryFee = 1_000;
 
   const order = await prisma.order.create({
     data: {

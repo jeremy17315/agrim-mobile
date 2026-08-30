@@ -15,6 +15,7 @@ import {
   PAYMENT_METHODS,
   PAYMENT_STATUSES,
   ROLES,
+  STOCK_MOVEMENT_TYPES,
 } from './enums';
 import {
   FARM_LIMITS,
@@ -399,16 +400,97 @@ export const managedOrderSchema = z.object({
 export type ManagedOrder = z.infer<typeof managedOrderSchema>;
 
 /** Indicateurs du jour, calculés par le serveur. */
+const compteur = z.number().int().nonnegative();
+
 export const managerDashboardSchema = z.object({
-  revenueToday: z.number().int().nonnegative(),
-  ordersToday: z.number().int().nonnegative(),
-  toPrepare: z.number().int().nonnegative(),
-  activeDeliveries: z.number().int().nonnegative(),
-  lowStockCount: z.number().int().nonnegative(),
+  revenueToday: compteur,
+  ordersToday: compteur,
+  toPrepare: compteur,
+  activeDeliveries: compteur,
+  lowStockCount: compteur,
   /** Commandes en attente depuis trop longtemps. */
-  stalePendingCount: z.number().int().nonnegative(),
+  stalePendingCount: compteur,
+
+  // ── Détail ajouté par l'administration centrale (août 2026) ──────────────
+  //
+  // Facultatifs, et ils le resteront : l'application et l'API ne se déploient
+  // pas à la même seconde, et un champ manquant ne doit pas faire échouer la
+  // validation de TOUT le tableau de bord. Un écran qui affiche six chiffres
+  // sur treize reste utile ; un écran vide, non.
+
+  /** Répartition des commandes par statut, tous âges confondus. */
+  orders: z
+    .object({
+      pending: compteur,
+      confirmed: compteur,
+      preparing: compteur,
+      ready: compteur,
+      outForDelivery: compteur,
+      delivered: compteur,
+      cancelled: compteur,
+    })
+    .optional(),
+
+  catalog: z
+    .object({
+      productCount: compteur,
+      variantCount: compteur,
+      /** Stock à zéro : la vente est perdue maintenant. */
+      outOfStockCount: compteur,
+      /** Sous le seuil sans être à zéro : elle le sera demain. */
+      lowStockCount: compteur,
+    })
+    .optional(),
+
+  customers: z.object({ total: compteur }).optional(),
+
+  /** « Disponible » se déduit de l'absence de course en cours. */
+  couriers: z
+    .object({ total: compteur, busy: compteur, available: compteur })
+    .optional(),
 });
 export type ManagerDashboard = z.infer<typeof managerDashboardSchema>;
+
+/**
+ * Une ligne du journal des mouvements de stock.
+ *
+ * `stockBefore` / `stockAfter` sont conservés bien qu'ils soient
+ * recalculables : ils figent ce que le système croyait au moment du geste, et
+ * un enchaînement rompu entre deux lignes signale une écriture qui a échappé
+ * au journal.
+ */
+export const stockMovementSchema = z.object({
+  id: idSchema,
+  type: z.enum(STOCK_MOVEMENT_TYPES),
+  /** Variation signée : `+50` à la réception, `−2` à la commande. */
+  quantity: z.number().int(),
+  stockBefore: z.number().int(),
+  stockAfter: z.number().int(),
+  reason: z.string().nullable(),
+  /** Référence de la commande à l'origine du mouvement, s'il y en a une. */
+  reference: z.string().nullable(),
+  createdAt: z.coerce.date(),
+  /** `null` = mouvement du système. L'absence d'auteur est une information. */
+  actor: z.object({ name: z.string(), role: z.enum(ROLES) }).nullable(),
+});
+export type StockMovement = z.infer<typeof stockMovementSchema>;
+
+export const stockMovementPageSchema = z.object({
+  variant: z.object({
+    variantId: idSchema,
+    sku: z.string(),
+    productName: z.string(),
+    label: z.string(),
+    stock: z.number().int(),
+  }),
+  data: z.array(stockMovementSchema),
+  pagination: z.object({
+    page: z.number().int().positive(),
+    limit: z.number().int().positive(),
+    total: z.number().int().nonnegative(),
+  }),
+});
+export type StockMovementPage = z.infer<typeof stockMovementPageSchema>;
 
 export const stockItemSchema = z.object({
   variantId: idSchema,

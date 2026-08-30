@@ -22,7 +22,13 @@ import request from 'supertest';
 import { AppModule } from './app.module';
 import { configureApp } from './bootstrap';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
+import { CatalogSyncService } from './catalog-sync/catalog-sync.service';
 import { PrismaService } from './prisma/prisma.service';
+import { prisma as prismaClient } from './prisma/prisma.client';
+import {
+  createSiteIntegrationDouble,
+  referenceDeTest,
+} from './testing/site-integration.double';
 
 describe('Flux de bout en bout', () => {
   let app: INestApplication;
@@ -45,10 +51,21 @@ describe('Flux de bout en bout', () => {
 
   beforeAll(async () => {
     process.env.THROTTLE_DISABLED = '1';
+    // Le SITE est un système externe : sans double, `POST /orders` répond 503
+    // dès qu'il dort — juste en production, inexploitable en test. Le double
+    // applique le MÊME contrat, décrément conditionnel du stock compris.
+    // Voir `testing/site-integration.double.ts`.
+    const site = createSiteIntegrationDouble({
+      db: prismaClient,
+    } as unknown as PrismaService);
+
     const moduleRef = await Test.createTestingModule({
       imports: [AppModule],
       providers: [{ provide: APP_FILTER, useClass: HttpExceptionFilter }],
-    }).compile();
+    })
+      .overrideProvider(CatalogSyncService)
+      .useValue(site.service)
+      .compile();
 
     app = moduleRef.createNestApplication();
     app.setGlobalPrefix('api/v1');
@@ -90,7 +107,8 @@ describe('Flux de bout en bout', () => {
     variantId = variant.id;
     await prisma.db.productVariant.update({
       where: { id: variantId },
-      data: { stock: 2000 },
+      // Rattachement au site : sans `sourceRef`, la variante est invendable.
+      data: { stock: 2000, sourceRef: referenceDeTest(variantId) },
     });
   });
 

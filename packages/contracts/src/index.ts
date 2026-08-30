@@ -1,6 +1,7 @@
 export * from './enums';
 export * from './schemas';
 export * from './cart-totals';
+export * from './delivery';
 export * from './company';
 export * from './analytics';
 export * from './management';

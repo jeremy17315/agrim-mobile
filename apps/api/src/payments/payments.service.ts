@@ -26,6 +26,8 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
+import { CatalogSyncService } from '../catalog-sync/catalog-sync.service';
+import { cancelOrderAndReleaseStock } from '../common/stock/order-stock';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -93,6 +95,7 @@ export class PaymentsService {
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
     private readonly config: ConfigService,
+    private readonly catalog: CatalogSyncService,
     @Inject(PAYMENT_PROVIDER) private readonly gateway: PaymentProvider,
   ) {}
 
@@ -470,11 +473,36 @@ export class PaymentsService {
 
       const order = payment.order;
 
+      // La relecture ci-dessus ne suffit PAS à garantir l'unicité du règlement.
+      //
+      // En READ COMMITTED — l'isolation par défaut, celle qu'utilise Prisma —
+      // deux transactions concurrentes lisent toutes deux `PENDING` puis
+      // écrivent l'une après l'autre. Or ce chemin est atteint par DEUX
+      // appelants indépendants : le webhook du fournisseur et le balayage de
+      // réconciliation. Le stock d'une commande abandonnée était donc rendu
+      // deux fois, et le rayon gagnait des sacs qui n'existent pas.
+      //
+      // La bascule conditionnelle ci-dessous désigne un vainqueur : PostgreSQL
+      // réévalue la condition après avoir relâché le verrou de ligne, si bien
+      // que le perdant voit le statut déjà réglé et obtient `count === 0`.
+      // C'est le même mécanisme que le décrément de stock à la commande.
+      const claimed = await tx.payment.updateMany({
+        where: { id: payment.id, status: { notIn: [...SETTLED] } },
+        data:
+          outcome === 'PAID'
+            ? { status: 'SUCCEEDED', paidAt: new Date() }
+            : {
+                status: outcome === 'EXPIRED' ? 'EXPIRED' : 'FAILED',
+                failureReason:
+                  message.slice(0, 255) ||
+                  (outcome === 'EXPIRED'
+                    ? 'Délai de validation dépassé.'
+                    : 'Paiement refusé.'),
+              },
+      });
+      if (claimed.count === 0) return null;
+
       if (outcome === 'PAID') {
-        await tx.payment.update({
-          where: { id: payment.id },
-          data: { status: 'SUCCEEDED', paidAt: new Date() },
-        });
         await tx.order.update({
           where: { id: order.id },
           data: { status: 'CONFIRMED' },
@@ -486,35 +514,26 @@ export class PaymentsService {
             comment: 'Paiement confirmé.',
           },
         });
-        return { order, outcome };
+        return { order, outcome, reservationRef: null };
       }
-
-      await tx.payment.update({
-        where: { id: payment.id },
-        data: {
-          status: outcome === 'EXPIRED' ? 'EXPIRED' : 'FAILED',
-          failureReason:
-            message.slice(0, 255) ||
-            (outcome === 'EXPIRED'
-              ? 'Délai de validation dépassé.'
-              : 'Paiement refusé.'),
-        },
-      });
 
       // Le stock avait été décrémenté à la création de la commande : un
       // paiement refusé ou abandonné doit le rendre, sinon le rayon se vide de
       // commandes qui n'ont jamais été payées.
-      if (order.status !== 'CANCELLED') {
-        for (const item of order.items) {
-          await tx.productVariant.update({
-            where: { id: item.variantId },
-            data: { stock: { increment: item.quantity } },
-          });
-        }
-        await tx.order.update({
-          where: { id: order.id },
-          data: { status: 'CANCELLED' },
-        });
+      //
+      // Passe par le point unique : gagner la course sur le PAIEMENT ne dit
+      // rien de la COMMANDE, qu'un client ou un gestionnaire a pu annuler
+      // entre-temps — et qui a déjà rendu le stock dans ce cas.
+      //
+      // Aucun auteur, explicitement : cette annulation vient de l'échec ou de
+      // l'expiration d'un paiement, pas d'un humain. Le journal des mouvements
+      // affichera « système », ce qui est la vérité.
+      const { released, reservationRef } = await cancelOrderAndReleaseStock(
+        tx,
+        order.id,
+        null,
+      );
+      if (released) {
         await tx.orderEvent.create({
           data: {
             orderId: order.id,
@@ -524,10 +543,21 @@ export class PaymentsService {
         });
       }
 
-      return { order, outcome };
+      return { order, outcome, reservationRef: released ? reservationRef : null };
     });
 
     if (!settled) return;
+
+    // Le stock est retenu par le SITE : c'est à lui de le rendre. Hors
+    // transaction, parce que c'est un appel réseau.
+    if (settled.reservationRef) {
+      const resultat = await this.catalog.releaseStock(settled.reservationRef);
+      if (resultat.status !== 'ok') {
+        this.logger.warn(
+          `Réservation non libérée pour ${settled.order.reference} : elle expirera d'elle-même.`,
+        );
+      }
+    }
 
     // Hors transaction : un service de notification lent ne doit pas maintenir
     // un verrou sur les lignes de stock.

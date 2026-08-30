@@ -2,7 +2,6 @@ import type { Product, ProductVariant } from '@agrim/contracts';
 
 import {
   MAX_QUANTITY_PER_LINE,
-  selectAmountUntilFreeDelivery,
   selectItemCount,
   selectTotals,
   useCartStore,
@@ -137,22 +136,12 @@ describe('modification des quantités', () => {
 });
 
 describe('totaux', () => {
-  it('facture la livraison sous le seuil', () => {
+  it('somme les lignes sans y ajouter de frais', () => {
     useCartStore.getState().addItem(product, v5kg, 2); // 12 000 F
     const totals = selectTotals(useCartStore.getState());
 
     expect(totals.subtotal).toBe(12_000);
-    expect(totals.deliveryFee).toBe(1000);
-    expect(totals.total).toBe(13_000);
-  });
-
-  it('offre la livraison au seuil exact de 25 000 F', () => {
-    useCartStore.getState().addItem(product, { ...v5kg, price: 25_000 });
-    const totals = selectTotals(useCartStore.getState());
-
-    expect(totals.subtotal).toBe(25_000);
-    expect(totals.deliveryFee).toBe(0);
-    expect(totals.total).toBe(25_000);
+    expect(totals.total).toBe(12_000);
   });
 
   it('n’applique aucun frais sur un panier vide', () => {
@@ -182,15 +171,31 @@ describe('totaux', () => {
   });
 });
 
-describe('progression vers la livraison offerte', () => {
-  it('indique le montant restant', () => {
+describe('frais de livraison — le panier n’en décide plus', () => {
+  /**
+   * Décision tarifaire du 29 août 2026 : le tarif dépend de la ZONE, servie
+   * par le site. Le panier ne connaît pas encore l'adresse ; il ne doit donc
+   * ni annoncer un montant, ni promettre une gratuité.
+   *
+   * Ce test garde l'absence de règle locale — c'est elle qui avait produit la
+   * divergence 1 000 / 3 500.
+   */
+  it('n’ajoute aucun frais au sous-total', () => {
     useCartStore.getState().addItem(product, v5kg, 2); // 12 000
-    expect(selectAmountUntilFreeDelivery(useCartStore.getState())).toBe(13_000);
+    const totals = selectTotals(useCartStore.getState());
+
+    expect(totals.subtotal).toBe(12_000);
+    expect(totals.deliveryFee).toBe(0);
+    // Le total affiché au panier EST le sous-total : les frais s'ajoutent au
+    // récapitulatif, une fois l'adresse connue.
+    expect(totals.total).toBe(12_000);
   });
 
-  it('retourne zéro une fois le seuil atteint', () => {
+  it('n’invente pas de gratuité sur un gros panier', () => {
+    // Sous l'ancienne règle, 30 000 F déclenchaient « livraison offerte ».
+    // Le seuil officiel est désormais un POIDS, et il appartient au site.
     useCartStore.getState().addItem(product, { ...v5kg, price: 30_000 });
-    expect(selectAmountUntilFreeDelivery(useCartStore.getState())).toBe(0);
+    expect(selectTotals(useCartStore.getState()).deliveryFee).toBe(0);
   });
 });
 

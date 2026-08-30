@@ -20,7 +20,13 @@ import { TRACKING_CONFIG } from '@agrim/contracts';
 import { AppModule } from '../app.module';
 import { configureApp } from '../bootstrap';
 import { HttpExceptionFilter } from '../common/filters/http-exception.filter';
+import { CatalogSyncService } from '../catalog-sync/catalog-sync.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { prisma as prismaClient } from '../prisma/prisma.client';
+import {
+  createSiteIntegrationDouble,
+  referenceDeTest,
+} from '../testing/site-integration.double';
 import { haversineMeters } from './tracking.service';
 
 describe('Suivi GPS (e2e)', () => {
@@ -43,10 +49,21 @@ describe('Suivi GPS (e2e)', () => {
 
   beforeAll(async () => {
     process.env.THROTTLE_DISABLED = '1';
+    // Le SITE est un système externe : sans double, `POST /orders` répond 503
+    // dès qu'il dort — juste en production, inexploitable en test. Le double
+    // applique le MÊME contrat, décrément conditionnel du stock compris.
+    // Voir `testing/site-integration.double.ts`.
+    const site = createSiteIntegrationDouble({
+      db: prismaClient,
+    } as unknown as PrismaService);
+
     const moduleRef = await Test.createTestingModule({
       imports: [AppModule],
       providers: [{ provide: APP_FILTER, useClass: HttpExceptionFilter }],
-    }).compile();
+    })
+      .overrideProvider(CatalogSyncService)
+      .useValue(site.service)
+      .compile();
 
     app = moduleRef.createNestApplication();
     app.setGlobalPrefix('api/v1');
@@ -94,7 +111,10 @@ describe('Suivi GPS (e2e)', () => {
     variantId = variant.id;
     await prisma.db.productVariant.update({
       where: { id: variantId },
-      data: { stock: 500 },
+      // Le seed écrit le catalogue d'AMORÇAGE, sans `sourceRef` : une variante
+      // que le site n'a jamais confirmée, donc invendable (`VARIANT_NOT_SYNCED`).
+      // La suite fait ce que la synchronisation ferait.
+      data: { stock: 500, sourceRef: referenceDeTest(variantId) },
     });
   });
 

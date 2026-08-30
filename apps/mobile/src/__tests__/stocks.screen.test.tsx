@@ -120,15 +120,82 @@ it('envoie un apport, jamais une valeur absolue', () => {
 
   fireEvent.press(screen.getByLabelText('Réapprovisionner Royal Grains 5 kg'));
   fireEvent.changeText(screen.getByLabelText('Apport (unités)'), '50');
-  fireEvent.press(screen.getByText('Enregistrer l’apport'));
+  fireEvent.press(screen.getByText('Enregistrer le mouvement'));
 
   expect(mockAdjust).toHaveBeenCalledWith(
     {
       variantId: '11111111-1111-4111-8111-111111111111',
       delta: 50,
+      type: 'ENTREE',
+      reason: undefined,
     },
     expect.anything(),
   );
+});
+
+it('transforme un retrait en delta négatif', () => {
+  // Le gestionnaire choisit un geste, il ne tape jamais « −3 » : un signe
+  // moins sur un pavé numérique est un piège, et une erreur de saisie sur le
+  // stock coûte une vente.
+  render(<StocksScreen />);
+
+  fireEvent.press(screen.getByLabelText('Réapprovisionner Royal Grains 5 kg'));
+  fireEvent.press(screen.getByText('Retrait'));
+  fireEvent.changeText(screen.getByLabelText('Retrait (unités)'), '3');
+  fireEvent.press(screen.getByText('Enregistrer le mouvement'));
+
+  expect(mockAdjust).toHaveBeenCalledWith(
+    expect.objectContaining({ delta: -3, type: 'SORTIE' }),
+    expect.anything(),
+  );
+});
+
+it('refuse une correction d’inventaire sans motif', () => {
+  // Le serveur la refuserait de toute façon ; l'annoncer ici évite un
+  // aller-retour réseau pour se le faire dire.
+  render(<StocksScreen />);
+
+  fireEvent.press(screen.getByLabelText('Réapprovisionner Royal Grains 5 kg'));
+  fireEvent.press(screen.getByText('Correction'));
+  fireEvent.changeText(screen.getByLabelText('Écart constaté (unités)'), '2');
+  fireEvent.press(screen.getByText('Enregistrer le mouvement'));
+
+  expect(mockAdjust).not.toHaveBeenCalled();
+});
+
+it('joint le motif à une correction d’inventaire', () => {
+  render(<StocksScreen />);
+
+  fireEvent.press(screen.getByLabelText('Réapprovisionner Royal Grains 5 kg'));
+  fireEvent.press(screen.getByText('Correction'));
+  fireEvent.changeText(screen.getByLabelText('Écart constaté (unités)'), '2');
+  fireEvent.changeText(
+    screen.getByLabelText('Motif (obligatoire)'),
+    'Comptage du 29/08',
+  );
+  fireEvent.press(screen.getByText('Enregistrer le mouvement'));
+
+  expect(mockAdjust).toHaveBeenCalledWith(
+    expect.objectContaining({
+      delta: -2,
+      type: 'AJUSTEMENT',
+      reason: 'Comptage du 29/08',
+    }),
+    expect.anything(),
+  );
+});
+
+it('refuse un retrait supérieur au stock disponible', () => {
+  // Contrôle de courtoisie : c'est PostgreSQL qui tranche pour de bon, mais
+  // faire l'aller-retour pour un cas visible à l'écran serait maladroit.
+  render(<StocksScreen />);
+
+  fireEvent.press(screen.getByLabelText('Réapprovisionner Royal Grains 5 kg'));
+  fireEvent.press(screen.getByText('Retrait'));
+  fireEvent.changeText(screen.getByLabelText('Retrait (unités)'), '9999');
+  fireEvent.press(screen.getByText('Enregistrer le mouvement'));
+
+  expect(mockAdjust).not.toHaveBeenCalled();
 });
 
 it('rappelle le stock courant avant la saisie', () => {

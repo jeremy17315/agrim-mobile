@@ -26,6 +26,7 @@
  */
 import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import type { DeliveryGrid } from '@agrim/contracts';
 
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -59,6 +60,20 @@ interface SourceProduct {
   seuil_alerte: number;
   actif: boolean;
   disponible: boolean;
+  /**
+   * Le site autorise-t-il la vente de cette référence, stock mis à part ?
+   *
+   * `actif` seul ne le dit pas : le back office distingue le retrait du
+   * catalogue (`actif = 0`) de la rupture DÉCLARÉE — « il en reste en
+   * magasin, mais on n'en vend plus » — qui laisse la référence active. La
+   * boutique du site refuse la seconde ; l'application l'acceptait.
+   *
+   * Facultatif : un site antérieur à ce champ n'en envoie pas, et l'on
+   * retombe alors sur `actif`, l'ancien comportement. À rendre obligatoire
+   * une fois le site déployé.
+   */
+  vendable?: boolean;
+  disponibilite?: 'auto' | 'rupture';
   badge: string;
   couleur: string;
   image_url: string;
@@ -96,6 +111,27 @@ export interface SyncReport {
 }
 
 /**
+ * La référence est-elle en vente, selon le SITE ?
+ *
+ * Règle unique, appliquée aussi bien par la synchronisation que par l'audit
+ * `diff()` — deux définitions feraient réapparaître ici, sous forme de faux
+ * écarts, la divergence que cette fonction sert justement à supprimer.
+ *
+ * Le stock n'y entre pas : chaque plateforme tient le sien tant que la
+ * réservation n'est pas centralisée (règle 1 en tête de fichier). Ce que
+ * l'application copie, c'est l'AUTORISATION DE VENDRE, pas la quantité.
+ *
+ * Repli sur `actif` quand le site n'envoie pas encore `vendable` : la
+ * synchronisation doit continuer de fonctionner contre un site non redéployé,
+ * exactement comme avant ce correctif.
+ */
+function estVendable(produit: SourceProduct): boolean {
+  if (typeof produit.vendable === 'boolean') return produit.vendable;
+  if (produit.disponibilite === 'rupture') return false;
+  return produit.actif;
+}
+
+/**
  * Rattachement des gammes du site aux gammes DÉJÀ présentes ici.
  *
  * Nécessaire une seule fois : au premier passage, les catégories locales
@@ -116,14 +152,319 @@ const LEGACY_SLUGS: Record<string, string[]> = {
   SIK: ['sika'],
 };
 
+/**
+ * Grille de livraison relue du site, avec sa date de péremption.
+ *
+ * Mise en cache pour deux raisons, et la seconde est la plus importante :
+ * ne pas appeler le site à chaque passage en caisse, et surtout continuer à
+ * vendre quand il est injoignable. Un tarif de livraison ne change pas dans
+ * la minute ; une panne du site ne doit pas fermer la boutique.
+ */
+interface CachedGrid {
+  grid: DeliveryGrid;
+  fetchedAt: number;
+}
+
+/** Durée de fraîcheur du cache. Même ordre que la synchronisation catalogue. */
+const GRID_TTL_MS = 15 * 60_000;
+
 @Injectable()
 export class CatalogSyncService {
   private readonly logger = new Logger(CatalogSyncService.name);
+
+  private cachedGrid: CachedGrid | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
   ) {}
+
+  /**
+   * Grille officielle des frais de livraison — servie par le SITE.
+   *
+   * Décision métier du 29 août 2026 : le site fait foi, comme pour la grille
+   * produits. L'application n'a plus aucun tarif en dur ; elle lit celui-ci.
+   *
+   * Renvoie `null` quand la grille est indisponible ET jamais reçue. Ce cas
+   * est traité par l'appelant : voir `OrdersService.create`, qui refuse alors
+   * de deviner un montant plutôt que d'en facturer un faux.
+   *
+   * Une grille périmée est PRÉFÉRÉE à l'absence de grille : un tarif vieux de
+   * quelques heures reste un tarif officiel, alors qu'un refus de commande
+   * est une vente perdue.
+   *
+   * **Ne bloque JAMAIS un passage en caisse pour joindre le site.** Dès qu'une
+   * grille est connue, elle est renvoyée immédiatement et le rafraîchissement
+   * part en arrière-plan. La première version faisait l'inverse : chaque
+   * commande attendait jusqu'à huit secondes un site endormi, et le client
+   * regardait tourner un écran de paiement pour un tarif qui n'avait pas
+   * changé. Seule une installation qui n'a JAMAIS reçu de grille attend.
+   */
+  async deliveryGrid(): Promise<DeliveryGrid | null> {
+    const frais = this.cachedGrid;
+    if (frais && Date.now() - frais.fetchedAt < GRID_TTL_MS) return frais.grid;
+
+    const connue = await this.lastKnownGrid();
+    if (connue) {
+      // Rafraîchissement détaché : la commande en cours part avec le tarif
+      // connu, la suivante bénéficiera du nouveau.
+      //
+      // Le `catch` n'est pas décoratif : une promesse détachée qui rejette
+      // fait tomber le processus Node entier (unhandled rejection). Un site
+      // injoignable ne doit pas arrêter l'API.
+      void this.refreshGrid().catch(() => undefined);
+      return connue;
+    }
+
+    // Aucune grille, jamais : là seulement on attend le site.
+    return this.refreshGrid();
+  }
+
+  /** Rafraîchissement effectif. Un seul en vol à la fois. */
+  private refreshing: Promise<DeliveryGrid | null> | null = null;
+
+  private refreshGrid(): Promise<DeliveryGrid | null> {
+    // Sans ce garde, dix commandes simultanées déclencheraient dix appels au
+    // site pour la même information.
+    this.refreshing ??= this.fetchGrid().finally(() => {
+      this.refreshing = null;
+    });
+    return this.refreshing;
+  }
+
+  private async fetchGrid(): Promise<DeliveryGrid | null> {
+    const base = (this.config.get<string>('SITE_INTEGRATION_URL') ?? '').replace(
+      /\/+$/,
+      '',
+    );
+    const token = this.config.get<string>('SITE_INTEGRATION_TOKEN') ?? '';
+    if (!base || !token) return this.lastKnownGrid();
+
+    try {
+      const response = await fetch(`${base}/api/integration/livraison`, {
+        headers: {
+          'X-Sync-Token': token,
+          Accept: 'application/json',
+          'User-Agent': 'agrim-api/delivery-grid',
+        },
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (!response.ok) return this.lastKnownGrid();
+
+      const payload = (await response.json()) as {
+        zones?: Record<string, { libelle: string; frais: number; delai: string }>;
+        zone_par_defaut?: string;
+        retrait?: { libelle: string; frais: number; delai: string };
+        livraison_offerte_seuil_kg?: number;
+      };
+
+      // Une grille sans zones n'est pas une grille : la refuser vaut mieux que
+      // de facturer zéro à tout le monde.
+      if (!payload.zones || Object.keys(payload.zones).length === 0) {
+        this.logger.warn('Grille de livraison vide : ancienne grille conservée.');
+        return this.lastKnownGrid();
+      }
+
+      const grid: DeliveryGrid = {
+        zones: payload.zones,
+        zoneParDefaut: payload.zone_par_defaut ?? 'autre',
+        retrait: payload.retrait ?? { libelle: 'Retrait', frais: 0, delai: '' },
+        livraisonOfferteSeuilKg: payload.livraison_offerte_seuil_kg ?? 0,
+      };
+      this.cachedGrid = { grid, fetchedAt: Date.now() };
+      // Copie persistée : au redémarrage, l'API doit pouvoir facturer avant
+      // d'avoir joint le site. Même raisonnement que la copie du catalogue —
+      // c'est un cache, pas une source : le site reste le seul à décider.
+      await this.rememberGrid(grid);
+      return grid;
+    } catch {
+      this.logger.warn(
+        'Grille de livraison injoignable : ancienne grille conservée.',
+      );
+      return this.lastKnownGrid();
+    }
+  }
+
+  /* ─────────────────────────── Réservation de stock ────────────────────────
+   *
+   * Le SITE possède le stock (décision du 29 août 2026). Cette API ne tient
+   * plus de compteur concurrent : elle demande, elle ne décide pas.
+   *
+   * Les trois verbes ci-dessous n'implémentent AUCUNE règle — ils appellent
+   * `/api/integration/stock/*`, dont le contrat et l'atomicité vivent côté
+   * site (`reservations.py`). Réécrire cette logique ici recréerait les deux
+   * compteurs que ce lot supprime.
+   */
+
+  /** Résultat d'une demande de réservation, dans le vocabulaire de l'appelant. */
+  private async callStock(
+    chemin: 'reserver' | 'liberer' | 'confirmer' | 'finaliser',
+    corps: Record<string, unknown>,
+  ): Promise<
+    | { status: 'ok'; body: unknown }
+    | { status: 'refused'; message: string; details: unknown }
+    | { status: 'unavailable' }
+  > {
+    const base = (this.config.get<string>('SITE_INTEGRATION_URL') ?? '').replace(
+      /\/+$/,
+      '',
+    );
+    const token = this.config.get<string>('SITE_INTEGRATION_TOKEN') ?? '';
+    if (!base || !token) return { status: 'unavailable' };
+
+    try {
+      const response = await fetch(`${base}/api/integration/stock/${chemin}`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'X-Sync-Token': token,
+          Accept: 'application/json',
+        },
+        body: JSON.stringify(corps),
+        signal: AbortSignal.timeout(10_000),
+      });
+
+      if (response.ok) return { status: 'ok', body: await response.json() };
+
+      // 409 = conflit d'état côté site : stock insuffisant, référence retirée
+      // de la vente. C'est un refus MÉTIER, à traduire pour le client, et non
+      // une panne.
+      if (response.status === 409) {
+        const payload = (await response.json().catch(() => ({}))) as {
+          detail?: { message?: string; lignes?: unknown };
+        };
+        return {
+          status: 'refused',
+          message: payload.detail?.message ?? 'Stock insuffisant.',
+          details: payload.detail?.lignes ?? [],
+        };
+      }
+
+      this.logger.warn(`Stock ${chemin} : HTTP ${response.status}.`);
+      return { status: 'unavailable' };
+    } catch {
+      this.logger.warn(`Stock ${chemin} : site injoignable.`);
+      return { status: 'unavailable' };
+    }
+  }
+
+  /**
+   * Réserve le stock d'une commande auprès du site.
+   *
+   * `reference` est la clé d'idempotence de la commande : rejouer la même
+   * requête ne réserve pas deux fois (le site renvoie `rejeu: true`). C'est
+   * indispensable — l'appelant est un réseau mobile.
+   *
+   * `unavailable` n'est PAS un refus : c'est l'incapacité de savoir. Voir
+   * `OrdersService.create`, qui refuse alors la commande plutôt que de vendre
+   * un stock qu'aucun système ne lui a accordé.
+   */
+  reserveStock(
+    reference: string,
+    lines: ReadonlyArray<{ sourceRef: string; quantity: number }>,
+  ) {
+    return this.callStock('reserver', {
+      reference,
+      origine: 'app',
+      lignes: lines.map((l) => ({
+        reference_produit: l.sourceRef,
+        quantite: l.quantity,
+      })),
+    });
+  }
+
+  /**
+   * Rend au rayon le stock d'une commande annulée.
+   *
+   * Idempotent côté site : une réservation déjà réglée n'est pas rendue une
+   * seconde fois, donc une annulation rejouée ne crée pas de stock.
+   */
+  releaseStock(reference: string, motif = 'annulation') {
+    return this.callStock('liberer', { reference, motif, origine: 'app' });
+  }
+
+  /**
+   * Arrête le compte à rebours : la COMMANDE existe.
+   *
+   * Sans cet appel, l'expiration rendrait au rayon la marchandise d'une
+   * commande bien réelle — en particulier pour un paiement à la livraison,
+   * qui reste « en attente » jusqu'à la remise.
+   *
+   * Ne ferme PAS la porte de sortie : une annulation légitime doit encore
+   * rendre le stock. C'est `finaliseStock`, à la livraison, qui la ferme.
+   */
+  confirmStock(reference: string) {
+    return this.callStock('confirmer', { reference, origine: 'app' });
+  }
+
+  /**
+   * Ferme la réservation : la marchandise est remise au client.
+   *
+   * Seul état depuis lequel le stock ne revient plus. À appeler à la
+   * LIVRAISON, jamais avant — tant que la marchandise n'est pas partie, une
+   * annulation doit pouvoir la remettre en rayon.
+   *
+   * Idempotent côté site : une réservation déjà finalisée n'est pas comptée
+   * deux fois, et `finaliser` ne touche de toute façon jamais au compteur de
+   * stock. Une double finalisation est donc sans conséquence.
+   */
+  finaliseStock(reference: string) {
+    return this.callStock('finaliser', { reference, origine: 'app' });
+  }
+
+  /** Clé de la copie locale de la grille, dans les paramètres société. */
+  private static readonly GRID_KEY = 'deliveryGrid';
+
+  private async rememberGrid(grid: DeliveryGrid): Promise<void> {
+    try {
+      await this.prisma.db.companySetting.upsert({
+        where: { key: CatalogSyncService.GRID_KEY },
+        create: {
+          key: CatalogSyncService.GRID_KEY,
+          value: JSON.stringify(grid),
+        },
+        update: { value: JSON.stringify(grid) },
+      });
+    } catch (erreur) {
+      // Ne jamais faire échouer une commande parce que le CACHE n'a pas pu
+      // s'écrire : la grille en mémoire suffit à facturer.
+      this.logger.warn(
+        `Grille de livraison non persistée : ${(erreur as Error).message}`,
+      );
+    }
+  }
+
+  /**
+   * Dernière grille connue : mémoire d'abord, base ensuite.
+   *
+   * `null` signifie qu'aucune grille n'a JAMAIS été reçue — le cas d'une
+   * installation neuve dont le site n'a pas encore répondu. L'appelant refuse
+   * alors la commande plutôt que d'inventer un tarif.
+   */
+  private async lastKnownGrid(): Promise<DeliveryGrid | null> {
+    if (this.cachedGrid) return this.cachedGrid.grid;
+
+    try {
+      const ligne = await this.prisma.db.companySetting.findUnique({
+        where: { key: CatalogSyncService.GRID_KEY },
+        select: { value: true },
+      });
+      if (!ligne) return null;
+
+      const grid = JSON.parse(ligne.value) as DeliveryGrid;
+      if (!grid?.zones || Object.keys(grid.zones).length === 0) return null;
+
+      // Remise en mémoire, mais datée de zéro : la prochaine lecture
+      // retentera le site plutôt que de se contenter de cette copie.
+      this.cachedGrid = { grid, fetchedAt: 0 };
+      return grid;
+    } catch (erreur) {
+      this.logger.warn(
+        `Grille de livraison illisible en base : ${(erreur as Error).message}`,
+      );
+      return null;
+    }
+  }
 
   /**
    * URL du catalogue : dérivée de l'adresse du site, sauf surcharge explicite
@@ -150,6 +491,11 @@ export class CatalogSyncService {
    * Sans cet appel, on encaisse le prix de la copie (0–15 min de retard).
    * Si le site ne répond pas, on renvoie `null` : l'appelant vend alors le
    * prix local non promo (`originalPrice` s'il existe).
+   *
+   * `vendable` accompagne le prix pour la même raison que lui : dans la
+   * fenêtre entre deux synchronisations, le site a pu retirer la référence de
+   * la vente. Le champ est facultatif — un site non redéployé n'en envoie
+   * pas — et vaut alors `true` : sans information, on ne bloque pas une vente.
    */
   async quote(references: string[]): Promise<
     | { status: 'disabled' }
@@ -158,7 +504,12 @@ export class CatalogSyncService {
         status: 'ok';
         prices: Map<
           string,
-          { prix: number; prixBarre: number | null; disponible: boolean }
+          {
+            prix: number;
+            prixBarre: number | null;
+            disponible: boolean;
+            vendable: boolean;
+          }
         >;
       }
   > {
@@ -186,12 +537,22 @@ export class CatalogSyncService {
       const payload = (await response.json()) as {
         prix?: Record<
           string,
-          { prix: number; prix_barre: number | null; disponible: boolean } | null
+          {
+            prix: number;
+            prix_barre: number | null;
+            disponible: boolean;
+            vendable?: boolean;
+          } | null
         >;
       };
       const prices = new Map<
         string,
-        { prix: number; prixBarre: number | null; disponible: boolean }
+        {
+          prix: number;
+          prixBarre: number | null;
+          disponible: boolean;
+          vendable: boolean;
+        }
       >();
       for (const [ref, ligne] of Object.entries(payload.prix ?? {})) {
         if (ligne) {
@@ -199,6 +560,7 @@ export class CatalogSyncService {
             prix: ligne.prix,
             prixBarre: ligne.prix_barre,
             disponible: ligne.disponible,
+            vendable: ligne.vendable ?? true,
           });
         }
       }
@@ -488,7 +850,7 @@ export class CatalogSyncService {
       // L'application n'a donc aucune règle de prix à connaître.
       price: produit.prix,
       originalPrice: produit.prix_barre ?? null,
-      isAvailable: produit.actif,
+      isAvailable: estVendable(produit),
       sourceRef: produit.reference,
       syncedAt: new Date(),
     };
@@ -585,7 +947,7 @@ export class CatalogSyncService {
       compare('originalPrice', produit.prix_barre ?? null, locale.originalPrice);
       compare('label', produit.format, locale.label);
       compare('weightGrams', produit.poids_grammes, locale.weightGrams);
-      compare('isAvailable', produit.actif, locale.isAvailable);
+      compare('isAvailable', estVendable(produit), locale.isAvailable);
     }
 
     const referencesSite = new Set(catalogue.produits.map((p) => p.reference));

@@ -80,6 +80,41 @@ export const MOBILE_MONEY_PROVIDERS = [
 ] as const;
 export type MobileMoneyProvider = (typeof MOBILE_MONEY_PROVIDERS)[number];
 
+/**
+ * Origine d'un mouvement de stock — vocabulaire officiel, partagé.
+ *
+ * Le signe de la quantité dit le SENS (+ entrée, − sortie) ; ce type dit la
+ * RAISON. Les deux sont nécessaires : un −2 de vente et un −2 de casse
+ * n'appellent pas la même lecture d'inventaire.
+ *
+ * Doit rester identique à l'énumération `StockMovementType` du schéma Prisma.
+ */
+export const STOCK_MOVEMENT_TYPES = [
+  'ENTREE',
+  'SORTIE',
+  'AJUSTEMENT',
+  'COMMANDE',
+  'ANNULATION',
+  'RETOUR',
+] as const;
+export type StockMovementType = (typeof STOCK_MOVEMENT_TYPES)[number];
+
+/**
+ * Mouvements qu'un humain peut invoquer depuis l'administration.
+ *
+ * `COMMANDE` et `ANNULATION` en sont exclus : ils décrivent ce que le système
+ * fait seul, et un gestionnaire qui les choisirait falsifierait l'historique
+ * des ventes.
+ */
+export const MANUAL_STOCK_MOVEMENT_TYPES = [
+  'ENTREE',
+  'SORTIE',
+  'AJUSTEMENT',
+  'RETOUR',
+] as const satisfies readonly StockMovementType[];
+export type ManualStockMovementType =
+  (typeof MANUAL_STOCK_MOVEMENT_TYPES)[number];
+
 export const DELIVERY_STATUSES = [
   'UNASSIGNED',
   'ASSIGNED',

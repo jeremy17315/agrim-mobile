@@ -2,14 +2,19 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import {
   computeCartTotals,
+  computeDeliveryFee,
   isCancellableByClient,
-  PROVISIONAL_DELIVERY,
+  resolveDeliveryZone,
 } from '@agrim/contracts';
 
+import { cancelOrderAndReleaseStock } from '../common/stock/order-stock';
+import { recordStockMovement } from '../common/stock/stock-movement';
 import { CatalogSyncService } from '../catalog-sync/catalog-sync.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -61,6 +66,8 @@ const orderSelect = {
 
 @Injectable()
 export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
@@ -116,7 +123,9 @@ export class OrdersService {
 
     const address = await this.prisma.db.address.findFirst({
       where: { id: dto.addressId, userId },
-      select: { id: true },
+      // La VILLE sert au tarif de livraison : c'est elle qui décide de la
+      // zone, donc du montant facturé. Voir `@agrim/contracts/delivery`.
+      select: { id: true, city: true },
     });
     if (!address) {
       throw new NotFoundException({
@@ -136,6 +145,8 @@ export class OrdersService {
         sourceRef: true,
         stock: true,
         isAvailable: true,
+        // Le poids commande la gratuité au-delà du seuil du site.
+        weightGrams: true,
         product: { select: { name: true, isActive: true } },
       },
     });
@@ -186,6 +197,28 @@ export class OrdersService {
       .map((v) => v.sourceRef)
       .filter((r): r is string => Boolean(r));
     const cotation = await this.catalog.quote(refs);
+
+    // Le site est propriétaire du catalogue : s'il vient de retirer une
+    // référence de la vente, elle ne doit pas partir ici parce que notre copie
+    // date de quelques minutes. On ne bloque QUE sur une réponse explicite —
+    // site injoignable ou intégration désactivée laissent la vente passer,
+    // sans quoi une panne du site fermerait la boutique de l'application.
+    if (cotation.status === 'ok') {
+      const retirees = variants.filter(
+        (v) => v.sourceRef && cotation.prices.get(v.sourceRef)?.vendable === false,
+      );
+      if (retirees.length > 0) {
+        throw new BadRequestException({
+          code: 'VARIANT_UNAVAILABLE',
+          message: 'Un article de votre panier n’est plus disponible.',
+          details: retirees.map((v) => ({
+            variantId: v.id,
+            productName: v.product.name,
+          })),
+        });
+      }
+    }
+
     const lines = variants.map((v) => {
       const cote =
         cotation.status === 'ok' && v.sourceRef
@@ -206,47 +239,136 @@ export class OrdersService {
         variantLabel: v.label,
         unitPrice,
         quantity: merged.get(v.id) ?? 0,
+        weightGrams: v.weightGrams,
       };
     });
 
+    // ── Frais de livraison : la grille du SITE fait foi ────────────────────
+    //
+    // Décision métier du 29 août 2026. Avant, cette API appliquait un forfait
+    // de 1 000 F écrit en dur, quand le site facturait 3 500 F pour Abidjan :
+    // le même trajet coûtait deux prix selon l'écran ouvert par le client.
+    //
+    // Rien n'est calculé ici : la zone, le tarif et le seuil de gratuité
+    // viennent tous du site. C'est le seul moyen qu'un changement de tarif
+    // n'ait qu'un endroit où se faire.
+    const grid = await this.catalog.deliveryGrid();
+    if (!grid) {
+      // On ne devine pas un montant. Facturer un tarif inventé serait pire
+      // qu'un refus : le client paierait un prix qui n'est celui de personne.
+      throw new ServiceUnavailableException({
+        code: 'DELIVERY_GRID_UNAVAILABLE',
+        message:
+          'Les frais de livraison sont momentanément indisponibles. Réessayez dans un instant.',
+      });
+    }
+
+    const weightKg =
+      lines.reduce((sum, l) => sum + l.weightGrams * l.quantity, 0) / 1000;
+
+    const deliveryFee = computeDeliveryFee(
+      {
+        zone: resolveDeliveryZone(address.city, grid),
+        // Le retrait sur place n'est pas encore proposé par l'application :
+        // toute commande mobile est une livraison à domicile. Le jour où il
+        // le sera, c'est ce paramètre qui changera, pas le calcul.
+        mode: 'domicile',
+        weightKg,
+      },
+      grid,
+    );
+
     const totals = computeCartTotals(
       lines.map((l) => ({ unitPrice: l.unitPrice, quantity: l.quantity })),
-      PROVISIONAL_DELIVERY,
+      { deliveryFee },
     );
+
+    // ── Réservation du stock auprès du SITE ───────────────────────────────
+    //
+    // Cette API ne décrémente plus de compteur local. Le site possède le
+    // stock ; deux compteurs, c'est le même sac vendu deux fois.
+    //
+    // La réservation a lieu AVANT la transaction, et volontairement : un
+    // appel réseau tenu à l'intérieur retiendrait des verrous PostgreSQL
+    // pendant tout le temps de latence du site.
+    //
+    // La clé de réservation est `idempotencyKey`, pas la référence de
+    // commande — celle-ci n'existe qu'une fois le compteur incrémenté, donc
+    // trop tard. Cette clé vient du client, elle est unique par tentative, et
+    // c'est déjà elle qui empêche le doublon de commande : la rejouer donne
+    // la même réservation au lieu d'une seconde.
+    const reservables = variants.filter((v) => v.sourceRef);
+    if (reservables.length !== variants.length) {
+      // Une variante sans `sourceRef` n'est pas connue du site : elle vient du
+      // catalogue d'amorçage et ne devrait plus être vendable. La vendre
+      // signifierait décider du stock ici — précisément ce qu'on supprime.
+      throw new ConflictException({
+        code: 'VARIANT_NOT_SYNCED',
+        message: 'Un article de votre panier n’est pas encore synchronisé.',
+        details: variants
+          .filter((v) => !v.sourceRef)
+          .map((v) => ({ variantId: v.id, productName: v.product.name })),
+      });
+    }
+
+    const reservation = await this.catalog.reserveStock(
+      dto.idempotencyKey,
+      variants.map((v) => ({
+        sourceRef: v.sourceRef as string,
+        quantity: merged.get(v.id) ?? 0,
+      })),
+    );
+
+    if (reservation.status === 'refused') {
+      throw new ConflictException({
+        code: 'INSUFFICIENT_STOCK',
+        message: reservation.message,
+        details: reservation.details,
+      });
+    }
+    if (reservation.status === 'unavailable') {
+      // On ne vend pas un stock qu'aucun système ne nous a accordé. Refuser
+      // une commande est réparable ; vendre deux fois le même sac ne l'est pas.
+      throw new ServiceUnavailableException({
+        code: 'STOCK_SERVICE_UNAVAILABLE',
+        message:
+          'La disponibilité ne peut pas être confirmée pour le moment. Réessayez dans un instant.',
+      });
+    }
 
     const year = new Date().getFullYear();
 
-    const created = await this.prisma.db.$transaction(async (tx) => {
-      // Compteur annuel atomique : deux commandes simultanées obtiennent des
-      // séquences distinctes, donc jamais la même référence.
-      const counter = await tx.orderCounter.upsert({
-        where: { year },
-        create: { year, current: 1 },
-        update: { current: { increment: 1 } },
-        select: { current: true },
-      });
-
-      // Décrément conditionnel : `stock: { gte: q }` fait échouer la mise à
-      // jour si un autre client a vidé le stock entre-temps.
-      for (const line of lines) {
-        const updated = await tx.productVariant.updateMany({
-          where: { id: line.variantId, stock: { gte: line.quantity } },
-          data: { stock: { decrement: line.quantity } },
+    let created;
+    try {
+      created = await this.prisma.db.$transaction(async (tx) => {
+        // Compteur annuel atomique : deux commandes simultanées obtiennent des
+        // séquences distinctes, donc jamais la même référence.
+        const counter = await tx.orderCounter.upsert({
+          where: { year },
+          create: { year, current: 1 },
+          update: { current: { increment: 1 } },
+          select: { current: true },
         });
-        if (updated.count === 0) {
-          throw new ConflictException({
-            code: 'INSUFFICIENT_STOCK',
-            message: 'Le stock disponible ne couvre plus votre panier.',
-            details: [
-              { variantId: line.variantId, productName: line.productName },
-            ],
+
+        const reference = formatOrderReference(year, counter.current);
+
+        // Le stock est déjà retiré du rayon CHEZ LE SITE. On n'écrit ici que
+        // le journal, pour que l'inventaire local reste explicable — sans
+        // toucher au compteur, qui n'est plus une source de vérité mais une
+        // copie rafraîchie par la synchronisation.
+        for (const line of lines) {
+          await recordStockMovement(tx, {
+            variantId: line.variantId,
+            quantity: -line.quantity,
+            type: 'COMMANDE',
+            reference,
+            actorId: null,
           });
         }
-      }
 
-      const order = await tx.order.create({
+        const order = await tx.order.create({
         data: {
-          reference: formatOrderReference(year, counter.current),
+          reference,
           userId,
           addressId: dto.addressId,
           status: 'PENDING',
@@ -279,11 +401,33 @@ export class OrdersService {
             },
           },
         },
-        select: orderSelect,
-      });
+          select: orderSelect,
+        });
 
-      return order;
-    });
+        return order;
+      });
+    } catch (erreur) {
+      // Compensation : la réservation est prise mais la commande n'existe pas.
+      // Sans ce rattrapage, le stock resterait immobilisé jusqu'à l'expiration
+      // — trente minutes de rayon fermé pour rien.
+      await this.catalog.releaseStock(dto.idempotencyKey, 'echec_creation');
+      throw erreur;
+    }
+
+    // La vente est actée : la réservation devient définitive. Sans cet appel,
+    // l'expiration finirait par rendre au rayon la marchandise d'une commande
+    // bien réelle — le cas du paiement à la livraison, qui reste « en attente »
+    // jusqu'à la remise.
+    //
+    // Hors transaction et sans `await` bloquant l'échec : si le site ne répond
+    // pas, la commande reste valide et la réservation expirera. C'est un écart
+    // à rattraper par la réconciliation, pas une raison d'annuler une vente.
+    const confirmation = await this.catalog.confirmStock(dto.idempotencyKey);
+    if (confirmation.status !== 'ok') {
+      this.logger.warn(
+        `Réservation non confirmée pour ${created.reference} : le stock du site expirera.`,
+      );
+    }
 
     // Hors transaction, pour la même raison que l'annulation.
     await this.notifications.notify({
@@ -371,24 +515,43 @@ export class OrdersService {
       });
     }
 
+    let refReservation: string | null = null;
+
     const cancelled = await this.prisma.db.$transaction(async (tx) => {
-      for (const item of order.items) {
-        await tx.productVariant.update({
-          where: { id: item.variantId },
-          data: { stock: { increment: item.quantity } },
+      // Le statut lu plus haut date d'avant la transaction. La bascule
+      // conditionnelle tranche : si le bureau ou l'expiration du paiement
+      // vient d'annuler cette commande, on ne libère pas le stock une seconde
+      // fois. Voir `common/stock/order-stock.ts`.
+      const { released, reservationRef } = await cancelOrderAndReleaseStock(
+        tx,
+        order.id,
+        userId,
+      );
+      if (!released) {
+        throw new ConflictException({
+          code: 'ORDER_NOT_CANCELLABLE',
+          message: 'Cette commande ne peut plus être annulée.',
         });
       }
+      refReservation = reservationRef ?? null;
 
       await tx.orderEvent.create({
         data: { orderId: order.id, status: 'CANCELLED', actorId: userId },
       });
 
-      return tx.order.update({
+      return tx.order.findUniqueOrThrow({
         where: { id: order.id },
-        data: { status: 'CANCELLED' },
         select: orderSelect,
       });
     });
+
+    // Libération chez le site, HORS transaction : c'est un appel réseau, et le
+    // retenir dedans immobiliserait des verrous PostgreSQL.
+    //
+    // Seul le gagnant de la bascule arrive ici, et le site est lui-même
+    // idempotent : une réservation déjà réglée n'est pas rendue deux fois.
+    // Double garde, parce qu'un stock rendu en trop est du stock inventé.
+    await this.releaseReservation(refReservation, cancelled.reference);
 
     // Notification hors transaction : un service de push lent ne doit pas
     // maintenir un verrou sur les lignes de stock.
@@ -400,5 +563,29 @@ export class OrdersService {
     });
 
     return cancelled;
+  }
+
+  /**
+   * Rend au site le stock d'une commande annulée.
+   *
+   * Ne lève jamais : l'annulation est DÉJÀ écrite en base quand on arrive ici.
+   * Échouer maintenant rendrait la commande annulée pour le client tout en
+   * lui renvoyant une erreur — le pire des deux mondes. Un échec laisse la
+   * réservation expirer d'elle-même (trente minutes), et il est journalisé
+   * pour que l'écart soit visible.
+   */
+  private async releaseReservation(
+    reservationRef: string | null,
+    orderReference: string,
+  ): Promise<void> {
+    // Commande antérieure à la réservation centralisée : rien à libérer.
+    if (!reservationRef) return;
+
+    const resultat = await this.catalog.releaseStock(reservationRef);
+    if (resultat.status !== 'ok') {
+      this.logger.warn(
+        `Réservation non libérée pour ${orderReference} : elle expirera d'elle-même.`,
+      );
+    }
   }
 }

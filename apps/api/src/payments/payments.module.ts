@@ -1,6 +1,7 @@
 import { Logger, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
+import { CatalogSyncModule } from '../catalog-sync/catalog-sync.module';
 import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
 import { PAYMENT_PROVIDER, PaymentProvider } from './payment.provider';
@@ -21,6 +22,9 @@ import { SimulationPaymentProvider } from './providers/simulation.provider';
  * répond 503 plutôt que d'ouvrir une transaction qui n'aboutira jamais.
  */
 @Module({
+  // La libération du stock passe par le SITE : ce module en a besoin depuis
+  // qu'un paiement échoué ne recrédite plus de compteur local.
+  imports: [CatalogSyncModule],
   controllers: [PaymentsController],
   providers: [
     SimulationPaymentProvider,

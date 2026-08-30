@@ -8,8 +8,6 @@ import { Banner, Button, Card, Icon, Text } from '@/components/ui';
 import { formatWeight, formatXof } from '@/lib/format';
 import { useIsAuthenticated } from '@/store/auth';
 import {
-  DELIVERY_RULES,
-  useAmountUntilFreeDelivery,
   useCartStore,
   useCartTotals,
   type CartLineItem,
@@ -36,11 +34,6 @@ export default function PanierScreen() {
   const clear = useCartStore((s) => s.clear);
 
   const totals = useCartTotals();
-  const remaining = useAmountUntilFreeDelivery();
-  const progress = Math.min(
-    1,
-    totals.subtotal / DELIVERY_RULES.freeDeliveryThreshold,
-  );
 
   /**
    * Commander exige un compte : le serveur rattache la commande à un
@@ -118,32 +111,16 @@ export default function PanierScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.list}>
-        {remaining > 0 ? (
-          <Card style={styles.franco}>
-            <View style={styles.francoHead}>
-              <Icon name="truck" size={15} color="green" />
-              <Text variant="caption" color="body" style={styles.flex}>
-                Plus que{' '}
-                <Text variant="bodyStrong">{formatXof(remaining)}</Text> pour la
-                livraison offerte
-              </Text>
-            </View>
-            <View style={styles.bar}>
-              <View
-                style={[
-                  styles.barFill,
-                  { width: `${Math.round(progress * 100)}%` },
-                ]}
-              />
-            </View>
-          </Card>
-        ) : (
-          <Banner
-            tone="success"
-            message="Livraison offerte : le seuil est atteint."
-            icon={<Icon name="gift" size={15} color="green" />}
-          />
-        )}
+        {/* Les frais dépendent de la ZONE de livraison — donc de l'adresse,
+            choisie à l'étape suivante. Annoncer ici un montant ou un seuil de
+            gratuité reviendrait à promettre un total qui changerait au
+            paiement. On annonce donc le moment où il sera connu, pas une
+            estimation. Décision tarifaire du 29 août 2026. */}
+        <Banner
+          tone="info"
+          message="Les frais de livraison s’affichent à l’étape suivante, selon votre adresse."
+          icon={<Icon name="truck" size={15} color="info" />}
+        />
 
         {items.map((item) => (
           <CartLine
@@ -158,24 +135,19 @@ export default function PanierScreen() {
 
         <Card style={styles.summary}>
           <SummaryRow label="Sous-total" value={formatXof(totals.subtotal)} />
-          <SummaryRow
-            label="Livraison"
-            value={
-              totals.deliveryFee === 0
-                ? 'Offerte'
-                : formatXof(totals.deliveryFee)
-            }
-            highlight={totals.deliveryFee === 0}
-          />
+          {/* « À calculer » et non « Offerte » : zéro signifie ici que le
+              montant n'est pas connu, pas qu'il est nul. Écrire « Offerte »
+              serait une promesse que le récapitulatif démentirait. */}
+          <SummaryRow label="Livraison" value="À calculer" />
           <View style={styles.separator} />
           <View style={styles.totalRow}>
-            <Text variant="h3">Total</Text>
+            <Text variant="h3">Sous-total</Text>
             <Text variant="h1" color="green">
-              {formatXof(totals.total)}
+              {formatXof(totals.subtotal)}
             </Text>
           </View>
           <Text variant="micro" color="muted">
-            Montant confirmé par {COMPANY.name} au moment de la commande.
+            Livraison et total confirmés par {COMPANY.name} à l’étape suivante.
           </Text>
         </Card>
       </ScrollView>
@@ -185,10 +157,10 @@ export default function PanierScreen() {
       >
         <View>
           <Text variant="micro" color="muted">
-            TOTAL
+            SOUS-TOTAL
           </Text>
           <Text variant="h1" color="green">
-            {formatXof(totals.total)}
+            {formatXof(totals.subtotal)}
           </Text>
         </View>
         <View style={styles.flex}>

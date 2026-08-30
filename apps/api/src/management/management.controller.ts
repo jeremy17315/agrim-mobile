@@ -5,6 +5,7 @@ import {
   Get,
   Param,
   ParseBoolPipe,
+  ParseIntPipe,
   ParseUUIDPipe,
   Patch,
   Query,
@@ -15,7 +16,12 @@ import {
   ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
-import { ORDER_STATUSES, type OrderStatus } from '@agrim/contracts';
+import {
+  ORDER_STATUSES,
+  STOCK_MOVEMENT_TYPES,
+  type OrderStatus,
+  type StockMovementType,
+} from '@agrim/contracts';
 
 import {
   CurrentUser,
@@ -84,13 +90,37 @@ export class ManagementController {
   }
 
   @Patch('stock/:variantId')
-  @ApiOperation({ summary: 'Réapprovisionner ou régler le seuil' })
+  @ApiOperation({ summary: 'Réapprovisionner, corriger ou régler le seuil' })
   adjustStock(
     @Param('variantId', new ParseUUIDPipe({ version: '4' }))
     variantId: string,
     @Body() dto: AdjustStockDto,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.management.adjustStock(variantId, dto);
+    // L'auteur vient du jeton, jamais du corps de la requête : c'est ce qui
+    // rend le journal opposable.
+    return this.management.adjustStock(variantId, dto, user.id);
+  }
+
+  @Get('stock/:variantId/movements')
+  @ApiOperation({ summary: 'Historique des mouvements d’une variante' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'type', required: false, enum: STOCK_MOVEMENT_TYPES })
+  listStockMovements(
+    @Param('variantId', new ParseUUIDPipe({ version: '4' }))
+    variantId: string,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+    @Query('type') type?: StockMovementType,
+  ) {
+    return this.management.listStockMovements(
+      variantId,
+      Math.max(1, page),
+      // Borné : une page de mille lignes ne sert personne et charge la base.
+      Math.min(100, Math.max(1, limit)),
+      { type: STOCK_MOVEMENT_TYPES.includes(type!) ? type : undefined },
+    );
   }
 
   @Get('couriers')

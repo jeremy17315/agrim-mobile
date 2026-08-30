@@ -23,9 +23,17 @@ export interface CartTotals {
   total: number;
 }
 
-export interface DeliveryFeeRules {
-  baseFee: number;
-  freeDeliveryThreshold: number;
+/**
+ * Frais de livraison DÉJÀ décidés, à additionner.
+ *
+ * Ce module ne calcule plus le montant : depuis la décision du 29 août 2026,
+ * il vient de la grille du site (`computeDeliveryFee`, dans `delivery.ts`).
+ * Additionner et décider sont deux responsabilités, et les mélanger avait
+ * produit exactement le défaut corrigé — un forfait local qui contredisait le
+ * tarif officiel.
+ */
+export interface CartDeliveryFee {
+  deliveryFee: number;
 }
 
 export function computeLineTotal(line: CartLine): number {
@@ -40,25 +48,11 @@ export function computeLineTotal(line: CartLine): number {
 
 export function computeCartTotals(
   lines: readonly CartLine[],
-  options: DeliveryFeeRules,
+  options: CartDeliveryFee,
 ): CartTotals {
   const subtotal = lines.reduce((sum, l) => sum + computeLineTotal(l), 0);
-  // Livraison offerte au-delà du seuil ; panier vide = pas de frais.
-  const deliveryFee =
-    subtotal === 0 || subtotal >= options.freeDeliveryThreshold
-      ? 0
-      : options.baseFee;
+  // Un panier vide ne coûte pas de livraison, quel que soit le tarif : il n'y
+  // a rien à transporter.
+  const deliveryFee = subtotal === 0 ? 0 : options.deliveryFee;
   return { subtotal, deliveryFee, total: subtotal + deliveryFee };
-}
-
-/**
- * Montant restant avant la livraison offerte. `0` signifie « seuil atteint ».
- * Utilisé pour la barre de progression du panier.
- */
-export function amountUntilFreeDelivery(
-  subtotal: number,
-  options: DeliveryFeeRules,
-): number {
-  if (subtotal >= options.freeDeliveryThreshold) return 0;
-  return options.freeDeliveryThreshold - subtotal;
 }

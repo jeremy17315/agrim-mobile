@@ -17,6 +17,7 @@ import {
 import type { Prisma } from '../../generated/prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { CatalogSyncService } from '../catalog-sync/catalog-sync.service';
 import { DeliveryOtpService } from './delivery-otp.service';
 import type { UpdateDeliveryStatusDto } from './dto/update-delivery-status.dto';
 import type { VerifyOtpDto } from './dto/verify-otp.dto';
@@ -95,6 +96,7 @@ export class DeliveriesService {
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
     private readonly otp: DeliveryOtpService,
+    private readonly catalog: CatalogSyncService,
   ) {}
 
   /**
@@ -472,9 +474,14 @@ export class DeliveriesService {
 
     const owner = await this.prisma.db.order.findUnique({
       where: { id: delivery.orderId },
-      select: { userId: true, reference: true },
+      // `idempotencyKey` est la clé de la RÉSERVATION posée chez le site :
+      // c'est elle qu'il faut finaliser maintenant que la marchandise est
+      // remise.
+      select: { userId: true, reference: true, idempotencyKey: true },
     });
+
     if (owner) {
+      await this.finaliserReservation(owner.idempotencyKey, owner.reference);
       await this.notifications.notifyOrderStatus({
         userId: owner.userId,
         status: 'DELIVERED',
@@ -484,6 +491,44 @@ export class DeliveriesService {
     }
 
     return updated;
+  }
+
+  /**
+   * Ferme la réservation chez le SITE : la marchandise est chez le client.
+   *
+   * Pourquoi ici, et pourquoi sans jamais lever
+   * ────────────────────────────────────────────
+   * Tant qu'une réservation reste `CONFIRMEE`, elle est encore libérable —
+   * c'est voulu, une commande non livrée doit pouvoir rendre son stock. La
+   * remise au client est le fait physique qui ferme cette porte, et c'est le
+   * seul moment où on peut l'affirmer.
+   *
+   * L'appel a lieu APRÈS la transaction, et il n'échoue jamais bruyamment :
+   * la livraison est déjà écrite en base quand on arrive ici. Lever
+   * maintenant laisserait le livreur devant une erreur pour une course
+   * pourtant terminée, et il la rejouerait — sans rien réparer, puisque le
+   * site est simplement injoignable.
+   *
+   * Une finalisation manquée est sans danger immédiat : le stock a déjà été
+   * retiré et `finaliser` n'y touche pas. La réservation reste seulement
+   * libérable plus longtemps que nécessaire, ce que l'annulation d'une
+   * commande `DELIVERED` — impossible côté API — ne peut pas exploiter.
+   * L'écart est journalisé pour être rattrapable.
+   */
+  private async finaliserReservation(
+    reservationRef: string | null,
+    orderReference: string,
+  ): Promise<void> {
+    // Commande antérieure à la réservation centralisée : rien à finaliser.
+    if (!reservationRef) return;
+
+    const resultat = await this.catalog.finaliseStock(reservationRef);
+    if (resultat.status !== 'ok') {
+      this.logger.warn(
+        `Réservation non finalisée pour ${orderReference} : le site n’a pas répondu. ` +
+          'La marchandise est livrée ; la réservation reste ouverte côté site.',
+      );
+    }
   }
 
   /**
@@ -545,6 +590,9 @@ export class DeliveriesService {
         id: true,
         userId: true,
         status: true,
+        // Clé de la réservation posée chez le site, à finaliser une fois la
+        // course close.
+        idempotencyKey: true,
         delivery: { select: { id: true, status: true } },
       },
     });
@@ -616,6 +664,12 @@ export class DeliveriesService {
     this.logger.warn(
       `Livraison ${reference} close manuellement par ${managerId}.`,
     );
+
+    // Même clôture qu'une remise validée par code : la marchandise est chez
+    // le client, la réservation se ferme. Une clôture d'exception n'est pas
+    // une livraison de moindre valeur — la traiter autrement laisserait une
+    // réservation ouverte sur une commande bel et bien livrée.
+    await this.finaliserReservation(order.idempotencyKey, reference);
 
     await this.notifications.notifyOrderStatus({
       userId: order.userId,
@@ -704,27 +758,44 @@ export class DeliveriesService {
     }
 
     const now = new Date();
+    if (existing) {
+      // Le statut lu plus haut date d'avant l'écriture. Deux gestionnaires qui
+      // affectent la même commande au même instant passaient tous deux le
+      // contrôle, et le second écrasait le premier : un livreur voyait la
+      // course disparaître de sa tournée sans explication. Le filtre sur le
+      // statut fait de l'affectation une opération gagnant-unique.
+      const claimed = await this.prisma.db.delivery.updateMany({
+        where: { id: existing.id, status: { in: REASSIGNABLE } },
+        data: {
+          courierId,
+          status: 'ASSIGNED',
+          assignedAt: now,
+          // Nouvelle tentative : les horodatages de la précédente décriraient
+          // un trajet qui n'a pas eu lieu, et un `failureReason` resté en place
+          // afficherait « porte close » sur une course qui vient de repartir.
+          // L'historique, lui, est conservé dans le journal de la commande
+          // (OrderEvent).
+          ...(existing.status === 'FAILED'
+            ? {
+                acceptedAt: null,
+                inTransitAt: null,
+                arrivedAt: null,
+                failureReason: null,
+              }
+            : {}),
+        },
+      });
+      if (claimed.count === 0) {
+        throw new ConflictException({
+          code: 'DELIVERY_ALREADY_STARTED',
+          message: 'Cette livraison est déjà en cours.',
+        });
+      }
+    }
+
     const delivery = existing
-      ? await this.prisma.db.delivery.update({
+      ? await this.prisma.db.delivery.findUniqueOrThrow({
           where: { id: existing.id },
-          data: {
-            courierId,
-            status: 'ASSIGNED',
-            assignedAt: now,
-            // Nouvelle tentative : les horodatages de la précédente
-            // décriraient un trajet qui n'a pas eu lieu, et un `failureReason`
-            // resté en place afficherait « porte close » sur une course qui
-            // vient de repartir. L'historique, lui, est conservé dans le
-            // journal de la commande (OrderEvent).
-            ...(existing.status === 'FAILED'
-              ? {
-                  acceptedAt: null,
-                  inTransitAt: null,
-                  arrivedAt: null,
-                  failureReason: null,
-                }
-              : {}),
-          },
           select: deliverySelect,
         })
       : await this.prisma.db.delivery.create({

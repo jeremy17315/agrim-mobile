@@ -76,9 +76,11 @@ it('affiche la ligne, son total et le récapitulatif', () => {
   render(<PanierScreen />);
 
   expect(screen.getByText('RIZ BOAGNI Royal Grains')).toBeTruthy();
-  // 2 x 6 000 = 12 000 F, sous le seuil : 1 000 F de livraison.
+  // 2 × 6 000 = 12 000 F. Depuis la décision tarifaire du 29 août 2026, le
+  // panier n'ajoute plus de frais : ils dépendent de la zone, donc de
+  // l'adresse, qui n'est choisie qu'à l'étape suivante.
   expect(screen.getAllByText(`12${NB}000${NB}F`).length).toBeGreaterThan(0);
-  expect(screen.getAllByText(`13${NB}000${NB}F`).length).toBeGreaterThan(0);
+  expect(screen.queryAllByText(`13${NB}000${NB}F`)).toHaveLength(0);
 });
 
 it('incrémente la quantité depuis la ligne', () => {
@@ -99,21 +101,25 @@ it('retire la ligne via la corbeille', () => {
   expect(useCartStore.getState().items).toHaveLength(0);
 });
 
-it('affiche le reste à atteindre pour la livraison offerte', () => {
+it('annonce que les frais dépendent de l’adresse, sans les estimer', () => {
+  // Le panier ne connaît pas encore la zone de livraison. Annoncer un montant
+  // ici reviendrait à promettre un total qui changerait au paiement — ce que
+  // le contrat partagé décrit comme « la pire chose qui puisse arriver à la
+  // confiance ».
   useCartStore.getState().addItem(product, variant, 2); // 12 000 F
   render(<PanierScreen />);
 
-  expect(screen.getByText(/Plus que/)).toBeTruthy();
-  // 13 000 F apparaît aussi comme total : on vérifie la présence, pas l'unicité.
-  expect(screen.getAllByText(`13${NB}000${NB}F`).length).toBeGreaterThan(0);
+  expect(screen.getByText(/frais de livraison s’affichent/i)).toBeTruthy();
+  expect(screen.getByText('À calculer')).toBeTruthy();
 });
 
-it('signale la livraison offerte au-delà du seuil', () => {
+it('ne promet aucune gratuité sur un gros panier', () => {
+  // Sous l'ancienne règle, 30 000 F affichaient « livraison offerte ». Le
+  // seuil officiel est désormais un POIDS, et il appartient au site : cet
+  // écran n'a pas de quoi le vérifier.
   useCartStore.getState().addItem(product, { ...variant, price: 30_000 }, 1);
   render(<PanierScreen />);
 
-  expect(
-    screen.getByText('Livraison offerte : le seuil est atteint.'),
-  ).toBeTruthy();
-  expect(screen.getByText('Offerte')).toBeTruthy();
+  expect(screen.queryByText(/livraison offerte/i)).toBeNull();
+  expect(screen.queryByText('Offerte')).toBeNull();
 });

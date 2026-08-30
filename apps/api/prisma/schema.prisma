@@ -88,6 +88,32 @@ enum ProductionStatus {
   REJECTED
 }
 
+/// Origine d'un mouvement de stock.
+///
+/// Le signe de `quantity` dit le sens (+ entrée, − sortie) ; ce type dit la
+/// RAISON. Les deux sont nécessaires : un −2 de commande et un −2 de casse
+/// n'appellent pas la même lecture d'inventaire.
+enum StockMovementType {
+  /// Réapprovisionnement : de la marchandise entre en entrepôt.
+  ENTREE
+
+  /// Retrait décidé par la gestion : casse, don, prélèvement.
+  SORTIE
+
+  /// Correction d'inventaire après comptage physique. Ni entrée ni sortie
+  /// réelle : c'est le compteur qui avait tort.
+  AJUSTEMENT
+
+  /// Réservé par une commande client.
+  COMMANDE
+
+  /// Rendu par l'annulation d'une commande.
+  ANNULATION
+
+  /// Marchandise revenue en entrepôt après coup.
+  RETOUR
+}
+
 enum NotificationType {
   ORDER_CREATED
   ORDER_CONFIRMED
@@ -139,6 +165,7 @@ model User {
   producer       Producer?
   pushTokens     PushToken[]
   productReviews ProductReview[]
+  stockMovements StockMovement[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -270,11 +297,66 @@ model ProductVariant {
 
   cartItems  CartItem[]
   orderItems OrderItem[]
+  movements  StockMovement[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([productId])
+}
+
+/// Journal des mouvements de stock — une ligne par variation, sans exception.
+///
+/// Pourquoi cette table existe
+/// ───────────────────────────
+/// Le stock était un simple compteur : on lisait 148 sans pouvoir dire si
+/// c'était 150 moins deux ventes, ou 200 moins une erreur de saisie. Un écart
+/// d'inventaire n'était donc ni explicable ni imputable, et une correction
+/// silencieuse ne laissait aucune trace.
+///
+/// Ce journal est le SEUL endroit qui répond à « pourquoi ce chiffre ? ».
+/// Il est écrit dans la même transaction que la variation qu'il décrit : un
+/// mouvement sans écriture de stock, ou l'inverse, n'existe pas.
+///
+/// `stockBefore` et `stockAfter` sont conservés bien qu'ils soient
+/// recalculables : les relire évite de rejouer tout l'historique pour
+/// comprendre une ligne, et surtout ils figent ce que le système CROYAIT au
+/// moment du geste. Un écart entre `stockAfter` d'une ligne et `stockBefore`
+/// de la suivante est le signal qu'une écriture a échappé au journal.
+model StockMovement {
+  id        String         @id @default(uuid()) @db.Uuid
+  variantId String         @db.Uuid
+  variant   ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  type StockMovementType
+
+  /// Variation SIGNÉE : +50 à la réception, −2 à la commande.
+  /// Jamais zéro — un mouvement nul n'est pas un mouvement.
+  quantity    Int
+  stockBefore Int
+  stockAfter  Int
+
+  /// Motif libre. Obligatoire pour un ajustement d'inventaire (règle tenue
+  /// par le service, pas par la base : le motif d'une commande est implicite).
+  reason String? @db.VarChar(300)
+
+  /// Référence de commande pour les mouvements qui en découlent. C'est la
+  /// clé qui permet de remonter d'un écart de stock à la vente qui l'explique.
+  reference String? @db.VarChar(40)
+
+  /// Auteur du geste. `null` pour un mouvement produit par le système
+  /// (réservation à la commande, restitution par expiration d'un paiement) :
+  /// mentir sur l'auteur serait pire que l'absence d'auteur.
+  actorId String? @db.Uuid
+  actor   User?   @relation(fields: [actorId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  /// Sert la requête la plus fréquente : l'historique d'une variante, du plus
+  /// récent au plus ancien.
+  @@index([variantId, createdAt(sort: Desc)])
+  @@index([type, createdAt])
+  @@index([reference])
 }
 
 /// Avis client sur un produit.

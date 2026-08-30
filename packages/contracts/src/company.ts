@@ -133,8 +133,19 @@ export const RICE_PRICING = {
   'dietetique-violet': DIETETIQUE_PRICING,
 } as const;
 
-/** PROVISOIRE — règles de livraison non communiquées. */
-export const PROVISIONAL_DELIVERY = {
-  baseFee: 1000,
-  freeDeliveryThreshold: 25000,
-} as const;
+/**
+ * Frais de livraison : RETIRÉ, et il ne doit pas revenir.
+ * ───────────────────────────────────────────────────────
+ * Il y avait ici un forfait provisoire — 1 000 F, gratuit au-delà de
+ * 25 000 F — posé faute de règle communiquée. Le site, lui, facturait par
+ * zone : 3 500 F pour Abidjan. Le même trajet coûtait donc deux prix selon
+ * l'écran ouvert par le client.
+ *
+ * Décision métier du 29 août 2026 : **le SITE fait foi**, comme pour la
+ * grille produits (24 août). La règle vit désormais dans `delivery.ts`, et
+ * les VALEURS viennent de `GET /api/integration/livraison`.
+ *
+ * Ne pas réintroduire de constante tarifaire ici : ce serait recréer la
+ * divergence, et elle est invisible tant que personne ne compare les deux
+ * écrans.
+ */

@@ -1,8 +1,4 @@
-import {
-  COMPANY,
-  PROVISIONAL_DELIVERY,
-  SELLING_POINTS,
-} from '@agrim/contracts';
+import { COMPANY, SELLING_POINTS } from '@agrim/contracts';
 import { useRouter } from 'expo-router';
 import { RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -11,7 +7,6 @@ import { useCategories, useProducts } from '@/api/catalog';
 import { ProductCard } from '@/components/ProductCard';
 import { ErrorState, ProductGridSkeleton } from '@/components/states';
 import { Banner, Card, Icon, Pill, Text } from '@/components/ui';
-import { formatXof } from '@/lib/format';
 import { palette, radius, spacing } from '@/theme/tokens';
 
 /**
@@ -76,9 +71,14 @@ export default function HomeScreen() {
       </View>
 
       <View style={styles.body}>
+        {/* Le seuil de gratuité appartient au site et se compte en KILOS, pas
+            en francs (décision du 29 août 2026). L'annoncer ici supposerait de
+            connaître une valeur que cet écran n'a pas — et une promesse fausse
+            coûte plus cher qu'une bannière en moins. Le montant exact des
+            frais s'affiche au récapitulatif, calculé par le serveur. */}
         <Banner
           tone="success"
-          message={`Livraison offerte dès ${formatXof(PROVISIONAL_DELIVERY.freeDeliveryThreshold)} d'achat.`}
+          message="Riz local de luxe, livré partout en Côte d'Ivoire."
           icon={<Icon name="gift" size={15} color="green" />}
         />
 

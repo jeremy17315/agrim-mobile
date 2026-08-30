@@ -22,6 +22,27 @@ import { formatWeight } from '@/lib/format';
 import { palette, radius, spacing } from '@/theme/tokens';
 
 /**
+ * Mouvements qu'un gestionnaire peut saisir.
+ *
+ * `COMMANDE` et `ANNULATION` n'y figurent pas : ils décrivent ce que le
+ * système fait seul, et les proposer ici permettrait de maquiller une
+ * démarque en vente.
+ */
+const MOVEMENT_CHOICES = [
+  { value: 'ENTREE', label: 'Réception' },
+  { value: 'SORTIE', label: 'Retrait' },
+  { value: 'AJUSTEMENT', label: 'Correction' },
+] as const;
+
+type MovementChoice = (typeof MOVEMENT_CHOICES)[number]['value'];
+
+const MOVEMENT_PLACEHOLDER: Record<MovementChoice, string> = {
+  ENTREE: 'Livraison fournisseur',
+  SORTIE: 'Casse, don, prélèvement',
+  AJUSTEMENT: 'Comptage physique du 29/08',
+};
+
+/**
  * Stocks par variante.
  *
  * Le seuil d'alerte appartient à chaque variante : un 22,5 kg ne se
@@ -38,29 +59,67 @@ export default function StocksScreen() {
 
   const [editing, setEditing] = useState<StockItem | null>(null);
   const [amount, setAmount] = useState('');
+  const [movement, setMovement] = useState<MovementChoice>('ENTREE');
+  const [reason, setReason] = useState('');
 
   const alertCount =
     stock.data?.filter((i) => i.stock <= i.lowStockThreshold).length ?? 0;
 
+  const closeSheet = () => {
+    setEditing(null);
+    setAmount('');
+    setReason('');
+    setMovement('ENTREE');
+  };
+
   const submit = () => {
     if (!editing) return;
-    const delta = Number(amount.replace(/[^0-9]/g, ''));
-    if (!Number.isFinite(delta) || delta <= 0) {
-      Alert.alert('Quantité invalide', 'Indiquez un apport supérieur à zéro.');
+    const saisie = Number(amount.replace(/[^0-9]/g, ''));
+    if (!Number.isFinite(saisie) || saisie <= 0) {
+      Alert.alert('Quantité invalide', 'Indiquez une quantité supérieure à zéro.');
+      return;
+    }
+
+    // Le signe se déduit du geste choisi : on ne demande jamais à quelqu'un de
+    // taper « −3 » sur un pavé numérique.
+    const sortie = movement !== 'ENTREE';
+    const delta = sortie ? -saisie : saisie;
+
+    // Le serveur refuse un ajustement sans motif ; l'annoncer ici évite un
+    // aller-retour réseau pour se le faire dire.
+    if (movement === 'AJUSTEMENT' && !reason.trim()) {
+      Alert.alert(
+        'Motif obligatoire',
+        'Expliquez la correction : c’est ce qui rend l’inventaire vérifiable.',
+      );
+      return;
+    }
+
+    // Contrôle local de courtoisie seulement : c'est PostgreSQL qui tranche,
+    // et un retrait concurrent peut très bien vider le rayon d'ici là.
+    if (sortie && saisie > editing.stock) {
+      Alert.alert(
+        'Retrait impossible',
+        `Il ne reste que ${editing.stock} unité(s) en stock.`,
+      );
       return;
     }
 
     adjust.mutate(
-      { variantId: editing.variantId, delta },
       {
-        onSuccess: () => {
-          setEditing(null);
-          setAmount('');
-        },
-        onError: () =>
+        variantId: editing.variantId,
+        delta,
+        type: movement,
+        reason: reason.trim() || undefined,
+      },
+      {
+        onSuccess: closeSheet,
+        onError: (error) =>
           Alert.alert(
             'Enregistrement impossible',
-            'Le stock n’a pas pu être mis à jour. Réessayez.',
+            error instanceof Error
+              ? error.message
+              : 'Le stock n’a pas pu être mis à jour. Réessayez.',
           ),
       },
     );
@@ -163,7 +222,7 @@ export default function StocksScreen() {
               {editing.productName} {editing.label}
             </Text>
             <Pressable
-              onPress={() => setEditing(null)}
+              onPress={closeSheet}
               accessibilityRole="button"
               accessibilityLabel="Fermer"
               hitSlop={12}
@@ -177,8 +236,43 @@ export default function StocksScreen() {
             {editing.lowStockThreshold}
           </Text>
 
+          {/* Le geste d'abord, la quantité ensuite : c'est lui qui décide du
+              signe, et une saisie négative sur pavé numérique est un piège. */}
+          <View
+            style={styles.choices}
+            accessibilityRole="radiogroup"
+            accessibilityLabel="Nature du mouvement"
+          >
+            {MOVEMENT_CHOICES.map((choice) => {
+              const active = movement === choice.value;
+              return (
+                <Pressable
+                  key={choice.value}
+                  onPress={() => setMovement(choice.value)}
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: active }}
+                  style={[styles.choice, active && styles.choiceActive]}
+                >
+                  <Text
+                    variant="caption"
+                    color={active ? 'white' : 'body'}
+                    numberOfLines={1}
+                  >
+                    {choice.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
           <Input
-            label="Apport (unités)"
+            label={
+              movement === 'ENTREE'
+                ? 'Apport (unités)'
+                : movement === 'AJUSTEMENT'
+                  ? 'Écart constaté (unités)'
+                  : 'Retrait (unités)'
+            }
             placeholder="50"
             keyboardType="number-pad"
             value={amount}
@@ -186,11 +280,26 @@ export default function StocksScreen() {
             autoFocus={Platform.OS !== 'web'}
           />
 
+          <Input
+            label={
+              movement === 'AJUSTEMENT' ? 'Motif (obligatoire)' : 'Motif'
+            }
+            placeholder={MOVEMENT_PLACEHOLDER[movement]}
+            value={reason}
+            onChangeText={setReason}
+            maxLength={300}
+          />
+
           <Button
-            label="Enregistrer l’apport"
+            label="Enregistrer le mouvement"
             onPress={submit}
             loading={adjust.isPending}
           />
+
+          <Text variant="caption" color="muted">
+            Le mouvement est enregistré à votre nom dans l’historique de la
+            variante.
+          </Text>
         </View>
       ) : null}
     </View>
@@ -307,4 +416,18 @@ const styles = StyleSheet.create({
   },
   sheetHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   flex: { flex: 1 },
+  choices: { flexDirection: 'row', gap: spacing.xs },
+  choice: {
+    flex: 1,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.xs,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: palette.line,
+    alignItems: 'center',
+  },
+  choiceActive: {
+    backgroundColor: palette.green,
+    borderColor: palette.green,
+  },
 });

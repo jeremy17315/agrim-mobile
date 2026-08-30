@@ -15,10 +15,18 @@ import request from 'supertest';
 
 import { AppModule } from '../app.module';
 import { configureApp } from '../bootstrap';
+import { CatalogSyncService } from '../catalog-sync/catalog-sync.service';
 import { HttpExceptionFilter } from '../common/filters/http-exception.filter';
 import { PrismaService } from '../prisma/prisma.service';
+import { prisma as prismaClient } from '../prisma/prisma.client';
+import {
+  createSiteIntegrationDouble,
+  referenceDeTest,
+  type SiteIntegrationDouble,
+} from '../testing/site-integration.double';
 
 describe('Commandes (e2e)', () => {
+  jest.setTimeout(60000);
   let app: INestApplication;
   let prisma: PrismaService;
   const prefix = '/api/v1';
@@ -28,16 +36,33 @@ describe('Commandes (e2e)', () => {
   let addressId: string;
   let variantId: string;
   let variantPrice: number;
+  let variantWeightGrams: number;
+  let site: SiteIntegrationDouble;
 
   const createdOrderIds: string[] = [];
   const createdAddressIds: string[] = [];
 
   beforeAll(async () => {
     process.env.THROTTLE_DISABLED = '1';
+
+    // Le SITE est un système externe : catalogue, prix, grille de livraison et
+    // stock lui appartiennent depuis le 29 août 2026. Le laisser en jeu ici
+    // ferait dépendre la suite de sa disponibilité — `POST /orders` répond
+    // 503 dès qu'il dort, ce qui est juste en production et inexploitable en
+    // test. Le double applique le MÊME contrat, décrément conditionnel
+    // compris, si bien que les assertions de stock gardent leur sens.
+    const double = createSiteIntegrationDouble({
+      db: prismaClient,
+    } as unknown as PrismaService);
+    site = double.observe;
+
     const moduleRef = await Test.createTestingModule({
       imports: [AppModule],
       providers: [{ provide: APP_FILTER, useClass: HttpExceptionFilter }],
-    }).compile();
+    })
+      .overrideProvider(CatalogSyncService)
+      .useValue(double.service)
+      .compile();
 
     app = moduleRef.createNestApplication();
     app.setGlobalPrefix('api/v1');
@@ -72,13 +97,23 @@ describe('Commandes (e2e)', () => {
     // stock pour ne pas dépendre de l'ordre des tests.
     const variant = await prisma.db.productVariant.findFirstOrThrow({
       where: { isAvailable: true },
-      select: { id: true, price: true },
+      select: { id: true, price: true, weightGrams: true },
     });
     variantId = variant.id;
     variantPrice = variant.price;
+    variantWeightGrams = variant.weightGrams;
+
+    // Le seed écrit le catalogue d'AMORÇAGE, sans `sourceRef` : une variante
+    // que le site n'a jamais confirmée. `OrdersService.create` refuse de la
+    // vendre (`VARIANT_NOT_SYNCED`), et c'est la bonne règle — on ne vend pas
+    // un stock dont personne n'est propriétaire.
+    //
+    // La suite fait donc ce que la synchronisation ferait : elle rattache la
+    // variante à une référence de site. Sans cela, le test n'exercerait rien
+    // du tunnel de commande, il buterait sur sa précondition.
     await prisma.db.productVariant.update({
       where: { id: variantId },
-      data: { stock: 500 },
+      data: { stock: 500, sourceRef: referenceDeTest(variantId) },
     });
   });
 
@@ -127,11 +162,25 @@ describe('Commandes (e2e)', () => {
     expect(res.body.reference).toMatch(/^AGR-\d{4}-\d{4,}$/);
     expect(res.body.status).toBe('PENDING');
 
+    // Le PRIX vient du catalogue, jamais du client : le sous-total doit être
+    // exactement celui de la base.
     const expectedSubtotal = variantPrice * 2;
     expect(res.body.subtotal).toBe(expectedSubtotal);
-    expect(res.body.deliveryFee).toBe(expectedSubtotal >= 25_000 ? 0 : 1000);
+
+    // Les FRAIS viennent de la grille du site (décision du 29 août 2026), plus
+    // d'un forfait local. L'adresse est à Yamoussoukro, et deux exemplaires
+    // d'un format quelconque du catalogue pèsent moins que le seuil de
+    // gratuité : le tarif de la zone s'applique.
+    const poidsKg = (variantWeightGrams * 2) / 1000;
+    expect(poidsKg).toBeLessThan(75);
+    expect(res.body.deliveryFee).toBe(1000);
+
     expect(res.body.total).toBe(res.body.subtotal + res.body.deliveryFee);
     expect(Number.isInteger(res.body.total)).toBe(true);
+
+    // Le stock a bien été réservé auprès du site — c'est lui qui en décide
+    // désormais, et sans cette réservation la commande n'existerait pas.
+    expect(site.reservations.size + site.confirmees.length).toBeGreaterThan(0);
   });
 
   it('ignore tout prix envoyé par le client', async () => {

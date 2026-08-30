@@ -4,6 +4,8 @@ import {
   managerDashboardSchema,
   reviewableProductionSchema,
   stockItemSchema,
+  stockMovementPageSchema,
+  type ManualStockMovementType,
   type OrderStatus,
   type ProductionStatus,
 } from '@agrim/contracts';
@@ -37,6 +39,8 @@ export const managementKeys = {
     [...managementKeys.all, 'orders', filters ?? {}] as const,
   stock: (onlyAlerts?: boolean) =>
     [...managementKeys.all, 'stock', onlyAlerts ?? false] as const,
+  stockMovements: (variantId: string, page: number) =>
+    [...managementKeys.all, 'stock', variantId, 'movements', page] as const,
   couriers: () => [...managementKeys.all, 'couriers'] as const,
   productionReview: (status?: ProductionStatus) =>
     [...managementKeys.all, 'production-review', status ?? 'PENDING'] as const,
@@ -180,6 +184,12 @@ export function useAdjustStock() {
     }: {
       variantId: string;
       delta?: number;
+      /**
+       * Motif du mouvement. Omis, le signe décide (`ENTREE` / `SORTIE`).
+       * `AJUSTEMENT` exige en outre une `reason` — le serveur la réclame.
+       */
+      type?: ManualStockMovementType;
+      reason?: string;
       lowStockThreshold?: number;
     }) =>
       apiRequest({
@@ -189,6 +199,31 @@ export function useAdjustStock() {
         schema: stockItemSchema,
       }),
   );
+}
+
+/**
+ * Historique d'une variante — « pourquoi ce chiffre ? ».
+ *
+ * Chargé à la demande (`enabled`) : personne n'ouvre l'historique de chaque
+ * ligne de l'inventaire, et le tirer d'avance ferait autant de requêtes que
+ * de références affichées.
+ */
+export function useStockMovements(
+  variantId: string | null,
+  page = 1,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: managementKeys.stockMovements(variantId ?? '', page),
+    queryFn: ({ signal }) =>
+      apiRequest({
+        path: `/management/stock/${variantId}/movements`,
+        query: { page },
+        schema: stockMovementPageSchema,
+        signal,
+      }),
+    enabled: enabled && Boolean(variantId),
+  });
 }
 
 /**
