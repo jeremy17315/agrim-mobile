@@ -8,8 +8,10 @@
  * découplées » (docs/refonte/02, § 3.5).
  */
 export interface OutboxHandler {
-  /** Type d'événement traité (`ORDER_CONFIRMED`, `PAYMENT_FAILED`…). */
-  readonly type: string;
+  /** Types d'événements traités (`ORDER_CONFIRMED`, `PAYMENT_FAILED`…).
+   * Un handler peut couvrir plusieurs types — le dispatcher de messagerie
+   * couvre les siens par sa table de routage. */
+  readonly types: readonly string[];
 
   /** Traite l'événement. Doit être idempotent : un événement peut être
    * rejoué après un bail expiré ou un échec partiel. */

@@ -187,6 +187,7 @@ pas) :
 | `apps/api/src/prisma/prisma.client.ts` | Pool pg calibré (`PG_*`), timeouts |
 | `apps/api/src/common/stock/reserve-stock.ts` | Primitives `lockVariantsForOrder` / `reserveStockForOrder` / `releaseStockForOrder` (+ spec unitaire sur le faux Prisma à clauses évaluées) |
 | `apps/api/src/config/stock-mode.ts` | **Commutateur `STOCK_MODE`** (`site`\|`local`, défaut `site`) — la délégation d'`OrdersService` et la branche locale de `cancelOrderAndReleaseStock` |
+| `apps/api/src/messaging/*` | **Itération « messaging »** : ports `WhatsappPort`/`EmailPort` (HTTP agrégateur / SMTP nodemailer, pilotes inertes si non configurés), table de routage, `MessagingDispatcher` (handler d'outbox → 3 canaux + `MessageLog`), 8 tests unitaires |
 | `apps/api/src/common/cron/cron-locks.service.ts` | Verrou à bail atomique |
 | `apps/api/src/common/guards/cron-secret.guard.ts` | Auth cron fail-closed |
 | `apps/api/src/jobs/*` | Module jobs : registre, contrôleur, drain outbox |
@@ -225,6 +226,45 @@ variable ne change rien (défaut sûr). Les tests e2e existants tournent en
 mode `site` : le comportement établi ne peut pas régresser par inadvertance ;
 la couverture du mode `local` (primitives + `T-CONC-01` sur PG réel) est
 définie au livrable 09.
+
+---
+
+## 9. Itération « messaging » — la diffusion découplée est opérationnelle
+
+La boucle de l'outbox est désormais **fermée de bout en bout** :
+
+```
+transaction métier → outbox_events → cron outbox-drain (ou drain en ligne)
+    → MessagingDispatcher (table de routage)
+        ├─ PUSH      → NotificationsService (in-app + pilote push existant)
+        ├─ WHATSAPP  → WhatsappPort  (HTTP agrégateur si WHATSAPP_API_URL/TOKEN)
+        └─ EMAIL     → EmailPort     (SMTP nodemailer si SMTP_HOST — serveur LWS)
+             chaque tentative → MessageLog (SENT/FAILED/SKIPPED + détail)
+```
+
+Règles implémentées et testées (`messaging.dispatcher.spec.ts`, 8 tests) :
+
+1. **Routage économe** : le push (gratuit) porte presque tout ; WhatsApp +
+   e-mail réservés aux moments qui comptent (`ORDER_CONFIRMED`,
+   `PAYMENT_SUCCEEDED`, `ORDER_DELIVERED`). Un seul endroit décide
+   (`messaging.routing.ts`).
+2. **Idempotence par canal** : clé unique dérivée de l'identifiant
+   d'événement (`evt-1:whatsapp`) — un drain rejoué (bail expiré) ne
+   renvoie pas deux fois.
+3. **Politique d'échec** : tous les canaux actifs en échec ⇒ l'événement
+   repart (back-off du drain) ; au moins un canal passé ⇒ événement clos,
+   les échecs restent visibles en FAILED (jamais de double envoi des
+   canaux déjà partis). Un canal non configuré est SKIPPED — pas une panne.
+4. **Aucune coordonnée dans les payloads** : le dispatcher résout
+   téléphone/e-mail depuis l'annuaire, pas depuis l'événement.
+5. **Pilotes inertes par défaut** : sans configuration, les canaux sont
+   sautés sans erreur — le module s'installe partout et s'allume par `.env`.
+
+Limites assumées de l'itération : l'échec partiel ne retente PAS le canal
+perdant (reprise manuelle / back-office à venir) ; le push reste le pilote
+existant (Expo) — la migration FCM/native reste une itération dédiée
+(livrable 03, § 3.5) ; les paniers abandonnés arriveront avec leur job
+`abandoned-carts` (il émettra dans la MÊME outbox).
 
 ---
 

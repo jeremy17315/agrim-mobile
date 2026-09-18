@@ -118,16 +118,18 @@ export class JobsService {
     let failed = 0;
 
     for (const handler of this.handlers) {
-      let event: OutboxEventPayload | null;
-      while ((event = await this.claimOne(handler.type))) {
-        try {
-          await handler.handle(event);
-          await this.markDone(event.id);
-          processed += 1;
-        } catch (error) {
-          const message = (error as Error).message.slice(0, 480);
-          await this.markRetryOrFail(event, message);
-          failed += 1;
+      for (const type of handler.types) {
+        let event: OutboxEventPayload | null;
+        while ((event = await this.claimOne(type))) {
+          try {
+            await handler.handle(event);
+            await this.markDone(event.id);
+            processed += 1;
+          } catch (error) {
+            const message = (error as Error).message.slice(0, 480);
+            await this.markRetryOrFail(event, message);
+            failed += 1;
+          }
         }
       }
     }

@@ -47,6 +47,21 @@ const envSchema = z.object({
    */
   STOCK_MODE: z.enum(['site', 'local']).default('site'),
 
+  /**
+   * Diffusion WhatsApp (agrégateur REST générique : Cloud API Meta, WATI…).
+   * URL + jeton absents ⇒ pilote inerte : canal sauté sans erreur (un canal
+   * non configuré n'est pas une panne — docs/refonte/02 § 3.5).
+   */
+  WHATSAPP_API_URL: z.string().default(''),
+  WHATSAPP_API_TOKEN: z.string().default(''),
+
+  /** Diffusion e-mail transactionnelle — SMTP du compte LWS (cPanel). */
+  SMTP_HOST: z.string().default(''),
+  SMTP_PORT: z.coerce.number().int().positive().default(587),
+  SMTP_USER: z.string().default(''),
+  SMTP_PASSWORD: z.string().default(''),
+  SMTP_FROM: z.string().default(''),
+
   // Stockage de fichiers. Le pilote local convient au développement et à un
   // déploiement mono-serveur ; un pilote S3-compatible viendra derrière la
   // même interface sans changer ces réglages métier.
