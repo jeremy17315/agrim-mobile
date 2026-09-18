@@ -78,6 +78,9 @@ interface LockedVariant {
   weightGrams: number;
   label: string;
   productName: string;
+  /** Le produit porteur est-il actif ? Une variante disponible sous un
+   * produit désactivé ne doit pas se vendre. */
+  productActive: boolean;
 }
 
 /**
@@ -106,7 +109,8 @@ export async function lockVariantsForOrder(
            v."price",
            v."weightGrams",
            v."label",
-           p."name" AS "productName"
+           p."name" AS "productName",
+           p."isActive" AS "productActive"
     FROM "ProductVariant" v
     JOIN "Product" p ON p."id" = v."productId"
     WHERE v."id"::text IN (${Prisma.join(ordered)})
@@ -145,7 +149,7 @@ export async function reserveStockForOrder(
         [{ variantId: line.variantId, productName: '(inconnu)' }],
       );
     }
-    if (!variant.isAvailable) {
+    if (!variant.productActive || !variant.isAvailable) {
       throw new StockReservationError(
         'VARIANT_UNAVAILABLE',
         'Un article de votre panier n’est plus disponible.',
@@ -220,7 +224,8 @@ export async function reserveStockForOrder(
 export async function releaseStockForOrder(
   tx: Prisma.TransactionClient,
   lines: readonly StockReservationLine[],
-  reference: string,
+  reference: string | null,
+  actorId: string | null = null,
 ): Promise<void> {
   const ordered = [...lines].sort((a, b) =>
     a.variantId.localeCompare(b.variantId),
@@ -247,7 +252,9 @@ export async function releaseStockForOrder(
         stockBefore: variant.stock - line.quantity,
         stockAfter: variant.stock,
         reference,
-        actorId: null,
+        // L'auteur est celui de l'annulation (client, gestionnaire, ou null
+        // pour une expiration de paiement) — jamais un auteur inventé.
+        actorId,
       },
     });
   }

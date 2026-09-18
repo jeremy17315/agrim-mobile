@@ -37,6 +37,16 @@ const envSchema = z.object({
   PG_IDLE_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
   PG_STATEMENT_TIMEOUT_MS: z.coerce.number().int().positive().default(20_000),
 
+  /**
+   * Propriété du stock. `site` (défaut) : chaque commande réserve le stock
+   * chez le site (architecture de transition). `local` : cette base possède
+   * le stock, avec verrouillage transactionnel — à ne basculer QUE quand le
+   * site lit cette base (docs/refonte/08, phase 4) : basculer trop tôt,
+   * c'est deux compteurs pour un même entrepôt, donc de la double vente
+   * réelle. Voir `config/stock-mode.ts`.
+   */
+  STOCK_MODE: z.enum(['site', 'local']).default('site'),
+
   // Stockage de fichiers. Le pilote local convient au développement et à un
   // déploiement mono-serveur ; un pilote S3-compatible viendra derrière la
   // même interface sans changer ces réglages métier.

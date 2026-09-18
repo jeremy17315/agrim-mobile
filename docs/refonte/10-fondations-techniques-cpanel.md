@@ -185,17 +185,46 @@ pas) :
 | `apps/api/prisma/schema.prisma` | +6 modèles : `Promotion`, `CronLock`, `OutboxEvent`, `WebhookEvent`, `IdempotencyRecord`, `MessageLog` |
 | `apps/api/prisma/migrations/20260918120000_fondations_ssot/` | Tables nouvelles + CHECK (`stock >= 0`, mouvement non nul, cohérence des lignes) + index partiels (1 promotion active/variante, dédoublonnage webhook) — **purement additif** |
 | `apps/api/src/prisma/prisma.client.ts` | Pool pg calibré (`PG_*`), timeouts |
-| `apps/api/src/common/stock/reserve-stock.ts` | Primitives `lockVariantsForOrder` / `reserveStockForOrder` / `releaseStockForOrder` |
+| `apps/api/src/common/stock/reserve-stock.ts` | Primitives `lockVariantsForOrder` / `reserveStockForOrder` / `releaseStockForOrder` (+ spec unitaire sur le faux Prisma à clauses évaluées) |
+| `apps/api/src/config/stock-mode.ts` | **Commutateur `STOCK_MODE`** (`site`\|`local`, défaut `site`) — la délégation d'`OrdersService` et la branche locale de `cancelOrderAndReleaseStock` |
 | `apps/api/src/common/cron/cron-locks.service.ts` | Verrou à bail atomique |
 | `apps/api/src/common/guards/cron-secret.guard.ts` | Auth cron fail-closed |
 | `apps/api/src/jobs/*` | Module jobs : registre, contrôleur, drain outbox |
-| `apps/api/src/orders/checkout.service.ts` | **Implémentation de référence** du checkout SSOT (non câblée : le contrôleur actuel reste sur la transition site-jusqu'au bascule — voir `docs/refonte/08`) |
+| `apps/api/src/orders/checkout.service.ts` | Checkout SSOT **câblé derrière `STOCK_MODE=local`** (`OrdersService.create` délègue) : prix/promotions/grille lus sous verrou, outbox, idempotence stricte (rejeu, conflit de corps, course P2002) |
 | `apps/api/src/config/env.validation.ts`, `.env.example` | `CRON_SECRET`, `PG_*` |
 
-**Reste aux itérations suivantes** : câblage du `CheckoutService` à la place
-de la réservation distante (itération « orders »), handlers de diffusion du
-module messaging (itération « notifications »), modules `catalog` en écriture
-et `backoffice`.
+**Reste aux itérations suivantes** : handlers de diffusion du module
+messaging (itération « notifications »), modules `catalog` en écriture et
+`backoffice`. Le câblage du checkout est **fait** (voir § 8) mais sous
+commutateur — il ne change rien en production tant que `STOCK_MODE=site`.
+
+---
+
+## 8. Le commutateur `STOCK_MODE` — câblage fait, bascule à ne PAS déclencher
+
+Le checkout SSOT est désormais **dans le chemin de production**, derrière un
+commutateur explicite (`config/stock-mode.ts`, variable `STOCK_MODE`) :
+
+| Mode | Chemin commande | Chemin annulation |
+| --- | --- | --- |
+| `site` (défaut, production actuelle) | réservation à distance via `catalog-sync` (inchangé, byte pour byte) | journal local + libération de la réservation chez le site |
+| `local` | `CheckoutService` : verrou `FOR UPDATE` → prix/promotions/grille lus **sous verrou** → décrément conditionnel → journal + outbox + `IdempotencyRecord` dans UNE transaction | `releaseStockForOrder` : incrément conditionnel + journal véridique, dans la transaction d'annulation (`order-stock.ts`, point de passage unique — client, gestion et expiration de paiement convergent) |
+
+**Pourquoi un commutateur plutôt qu'une coupure franche** : tant que le site
+FastAPI décompte encore son propre compteur, activer `local` créerait deux
+stocks pour un même entrepôt — la double vente, pour de vrai. La bascule fait
+donc partie de la phase 4 de la migration (`docs/refonte/08`) :
+
+1. le site lit catalogue/stock dans la base centrale (ou par l'API) ;
+2. inventaire physique figé saisi (stock initial `ENTREE`) ;
+3. **et seulement là** : `STOCK_MODE=local` au `.env`, `restart.txt`, smoke
+   tests commande+annulation, surveillance du journal `StockMovement`.
+
+Avant cette phase, la valeur reste `site` — un déploiement qui oublie la
+variable ne change rien (défaut sûr). Les tests e2e existants tournent en
+mode `site` : le comportement établi ne peut pas régresser par inadvertance ;
+la couverture du mode `local` (primitives + `T-CONC-01` sur PG réel) est
+définie au livrable 09.
 
 ---
 

@@ -20,6 +20,7 @@ import {
   reserveStockForOrder,
   StockReservationError,
 } from '../common/stock/reserve-stock';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CreateOrderDto } from './dto/create-order.dto';
 import { formatOrderReference } from './order-reference';
@@ -77,12 +78,19 @@ const IDEMPOTENCY_TTL_DAYS = 7;
  */
 @Injectable()
 export class CheckoutService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   async create(userId: string, dto: CreateOrderDto) {
     const requestHash = this.fingerprint(userId, dto);
 
-    return this.prisma.db.$transaction(async (tx) => {
+    // `isReplay` distingue une création fraîche d'un rejeu : on ne notifie
+    // qu'une fois, à la création — le rejeu renvoie la commande d'origine
+    // sans renvoyer la notification (même règle que le mode `site`).
+    let isReplay = false;
+    const created = await this.prisma.db.$transaction(async (tx) => {
       // ── Idempotence : le rejeu AVANT tout effet ──────────────────────
       const existing = await tx.idempotencyRecord.findUnique({
         where: { scope_key: { scope: 'orders', key: dto.idempotencyKey } },
@@ -95,6 +103,7 @@ export class CheckoutService {
             message: 'Cette clé d’idempotence a déjà servi pour autre chose.',
           });
         }
+        isReplay = true;
         return this.replay(tx, dto.idempotencyKey, userId);
       }
 
@@ -211,39 +220,56 @@ export class CheckoutService {
       }
 
       // ── Écritures métier : tout ou rien ───────────────────────────────
-      const order = await tx.order.create({
-        data: {
-          reference,
-          userId,
-          addressId: dto.addressId,
-          status: 'PENDING',
-          subtotal: totals.subtotal,
-          deliveryFee: totals.deliveryFee,
-          total: totals.total,
-          note: dto.note ?? null,
-          idempotencyKey: dto.idempotencyKey,
-          items: {
-            create: lines.map((l) => ({
-              variantId: l.variantId,
-              productName: l.productName,
-              variantLabel: l.variantLabel,
-              unitPrice: l.unitPrice,
-              quantity: l.quantity,
-              lineTotal: l.unitPrice * l.quantity,
-            })),
-          },
-          events: { create: { status: 'PENDING', actorId: userId } },
-          payment: {
-            create: {
-              method: dto.paymentMethod,
-              provider: dto.mobileMoneyProvider ?? null,
-              amount: totals.total,
-              status: 'PENDING',
+      // Course d'idempotence : deux requêtes simultanées avec la même clé
+      // passent toutes deux le contrôle initial, l'unicité de
+      // `Order.idempotencyKey` tranche. Le perdant est remis sur la voie du
+      // rejeu (même commande, même réponse) au lieu d'un 500 brut — et sa
+      // transaction entière est annulée : aucun stock décrémenté qui traîne.
+      let order;
+      try {
+        order = await tx.order.create({
+          data: {
+            reference,
+            userId,
+            addressId: dto.addressId,
+            status: 'PENDING',
+            subtotal: totals.subtotal,
+            deliveryFee: totals.deliveryFee,
+            total: totals.total,
+            note: dto.note ?? null,
+            idempotencyKey: dto.idempotencyKey,
+            items: {
+              create: lines.map((l) => ({
+                variantId: l.variantId,
+                productName: l.productName,
+                variantLabel: l.variantLabel,
+                unitPrice: l.unitPrice,
+                quantity: l.quantity,
+                lineTotal: l.unitPrice * l.quantity,
+              })),
+            },
+            events: { create: { status: 'PENDING', actorId: userId } },
+            payment: {
+              create: {
+                method: dto.paymentMethod,
+                provider: dto.mobileMoneyProvider ?? null,
+                amount: totals.total,
+                status: 'PENDING',
+              },
             },
           },
-        },
-        select: orderSelect,
-      });
+          select: orderSelect,
+        });
+      } catch (erreur) {
+        if (
+          erreur instanceof Prisma.PrismaClientKnownRequestError &&
+          erreur.code === 'P2002'
+        ) {
+          isReplay = true;
+          return this.replay(tx, dto.idempotencyKey, userId);
+        }
+        throw erreur;
+      }
 
       // L'événement naît AVEC la commande, dans la même transaction : aucun
       // ordre créé sans son événement, aucune notification perdue en silence.
@@ -273,6 +299,21 @@ export class CheckoutService {
 
       return order;
     });
+
+    // Hors transaction, même comportement que le mode `site` : la commande
+    // existe, le client est prévenu. L'événement d'outbox (écrit dans la
+    // transaction) assure déjà la diffusion découplée ; cet appel in-app
+    // reste le canal direct existant jusqu'à l'itération « messaging ».
+    if (!isReplay) {
+      await this.notifications.notify({
+        userId,
+        type: 'ORDER_CREATED',
+        reference: created.reference,
+        orderId: created.id,
+      });
+    }
+
+    return created;
   }
 
   /** Le rejeu renvoie EXACTEMENT la commande d'origine, au centime. */
