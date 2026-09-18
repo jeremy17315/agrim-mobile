@@ -35,8 +35,8 @@
 | 6 | Architecture du module CinetPay | `05-module-cinetpay.md` | ✅ |
 | 7 | Workflow Livraison & OTP | `06-workflow-livraison-otp.md` | ✅ |
 | 8 | Procédure de déploiement LWS / cPanel | `07-deploiement-lws-cpanel.md` | ✅ |
-| 9 | Stratégie de migration des données | `08-migration-donnees.md` | ⏳ |
-| 10 | Plan de tests complet | `09-plan-de-tests.md` | ⏳ |
+| 9 | Stratégie de migration des données | `08-migration-donnees.md` | ✅ |
+| 10 | Plan de tests complet | `09-plan-de-tests.md` | ✅ |
 
 ## Rapport avec la documentation historique
 
