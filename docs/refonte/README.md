@@ -31,8 +31,8 @@
 | 2 | Diagramme d'architecture globale | `01-architecture-cible.md` | ✅ |
 | 3 | Architecture logicielle backend (modules) | `02-backend-modules.md` | ✅ |
 | 4 | Modèle de données cible (ERD PostgreSQL) | `03-modele-donnees.md` | ✅ |
-| 5 | Contrats d'API v1 `/api/v1` | `04-contrats-api.md` | ⏳ |
-| 6 | Architecture du module CinetPay | `05-module-cinetpay.md` | ⏳ |
+| 5 | Contrats d'API v1 `/api/v1` | `04-contrats-api.md` | ✅ |
+| 6 | Architecture du module CinetPay | `05-module-cinetpay.md` | ✅ |
 | 7 | Workflow Livraison & OTP | `06-workflow-livraison-otp.md` | ⏳ |
 | 8 | Procédure de déploiement LWS / cPanel | `07-deploiement-lws-cpanel.md` | ⏳ |
 | 9 | Stratégie de migration des données | `08-migration-donnees.md` | ⏳ |
