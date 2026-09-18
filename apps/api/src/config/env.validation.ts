@@ -17,6 +17,26 @@ const envSchema = z.object({
   JWT_REFRESH_SECRET: z.string().min(16),
   JWT_REFRESH_TTL: z.string().default('30d'),
 
+  /**
+   * Secret des appels de Cron cPanel vers /jobs/* (en-tête X-Cron-Secret).
+   * Vide = tous les jobs refusés, fail-closed : un endpoint de jobs ouvert
+   * par oubli de configuration serait une administration anonyme.
+   * Générer : `openssl rand -hex 32`.
+   */
+  CRON_SECRET: z.string().default(''),
+
+  /**
+   * Pool PostgreSQL. Avec l'adaptateur PrismaPg, ces réglages pilotent le
+   * Pool node-postgres (les paramètres `connection_limit` de l'URL ne
+   * s'appliquent pas). Arithmétique mutualisé : connexions totales ≈
+   * processus Passenger × PG_POOL_MAX. Ne pas monter sans connaître le
+   * max_connections de l'hébergeur (docs/refonte/10 § 1).
+   */
+  PG_POOL_MAX: z.coerce.number().int().positive().default(10),
+  PG_CONNECT_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
+  PG_IDLE_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
+  PG_STATEMENT_TIMEOUT_MS: z.coerce.number().int().positive().default(20_000),
+
   // Stockage de fichiers. Le pilote local convient au développement et à un
   // déploiement mono-serveur ; un pilote S3-compatible viendra derrière la
   // même interface sans changer ces réglages métier.
