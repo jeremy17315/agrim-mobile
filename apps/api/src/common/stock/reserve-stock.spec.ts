@@ -1,3 +1,17 @@
+// Mock VIRTUEL du client généré : il n'existe pas hors CI (produit par
+// `prisma generate`). Les valeurs d'énumération sont celles du schéma —
+// les assertions restent des comparaisons de valeurs réelles.
+jest.mock('../../../generated/prisma/client', () => ({
+  StockMovementType: {
+    ENTREE: 'ENTREE',
+    SORTIE: 'SORTIE',
+    AJUSTEMENT: 'AJUSTEMENT',
+    COMMANDE: 'COMMANDE',
+    ANNULATION: 'ANNULATION',
+    RETOUR: 'RETOUR',
+  },
+}), { virtual: true });
+
 import { StockMovementType } from '../../../generated/prisma/client';
 
 import {

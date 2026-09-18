@@ -268,6 +268,45 @@ existant (Expo) — la migration FCM/native reste une itération dédiée
 
 ---
 
+## 10. Itération « catalog » — l'écriture du catalogue existe, verrouillée jusqu'à la bascule
+
+Nouveau module `apps/api/src/catalog/` (administration ; le public lit
+toujours via `/products` et `/categories`, inchangés) :
+
+| Route | Effet |
+| --- | --- |
+| `POST /catalog/categories`, `PATCH /catalog/categories/:id` | gammes |
+| `POST /catalog/products` (avec variantes), `PATCH`, `DELETE /catalog/products/:id` | « suppression » = retrait du rayon (`isActive`/`isAvailable` à faux — jamais physique : des commandes référencent) |
+| `POST /catalog/products/:id/variants`, `PATCH /catalog/variants/:id`, `GET /catalog/variants/:id` | formats, prix de base, seuils, disponibilité ; détail avec **prix effectif** |
+| `POST /catalog/promotions`, `PATCH /catalog/promotions/:id`, `GET /catalog/promotions` | prix promotionnel DATÉ (remplace la colonne `originalPrice` figée) |
+
+Règles implémentées et testées (12 tests) :
+
+1. **Verrou de bascule** : toute écriture exige `STOCK_MODE=local` — sinon
+   503 `CATALOG_WRITES_ON_SITE`. Écrire avant la bascule produirait des
+   modifications silencieusement écrasées par la synchro du site (toutes
+   les 15 min) : la pire divergence, celle qu'on ne voit pas.
+2. **Promotions exclusives** : UN SEUL prix actif par variante — l'index
+   partiel en base tranche ; la création désactive l'existante dans la
+   même transaction ; une course concurrente perdante reçoit 409
+   `PROMOTION_ALREADY_ACTIVE`. Prix ≥ prix de base ⇒ 400 (pas de faux
+   rabais). Dates incohérentes ⇒ 400.
+3. **Désactivation en cascade, réactivation non** : désactiver un produit
+   retire ses variantes du rayon ; réactiver ne les remet PAS en bloc —
+   geste explicite, variante par variante.
+4. **L'ajustement de stock existe déjà** (`management/adjustStock` via
+   `applyStockChange`, décrément conditionnel + journal) : pas de
+   duplication — le back-office l'utilisera tel quel.
+
+### Couplage de bascule (à ne PAS oublier le jour J)
+
+`STOCK_MODE=local` et `SITE_INTEGRATION_URL=` (vide, synchro coupée)
+vont ENSEMBLE : une synchro qui continuerait de tourner écraserait prix et
+stocks locaux toutes les 15 minutes. Les deux lignes du `.env` changent au
+même instant, suivies des smoke tests catalogue.
+
+---
+
 ## 6. Invariants de fondations — à ne jamais casser
 
 1. Toute écriture de stock passe par `common/stock` — jamais de
