@@ -212,3 +212,35 @@ et `backoffice`.
    dans la release qui cesse d'utiliser la colonne.
 5. `CRON_SECRET` reste requis pour tout job : un endpoint de jobs ouvert
    est une administration anonyme.
+
+---
+
+## 7. Correctif CI requis (à appliquer par un mainteneur)
+
+**Constat** : la CI est rouge sur `main` depuis la migration Prisma 7
+(job « Lint · typecheck · tests unitaires » échoue à « Générer le client
+Prisma »). Cause : Prisma 7 charge `prisma.config.ts` à **tout** appel CLI —
+y compris `generate`, qui n'ouvre pourtant aucune connexion — et exige
+`DATABASE_URL` à ce chargement. Le job e2e passe parce qu'il définit la
+variable ; le job de vérification, non.
+
+Le sandbox de conception ne peut pas pousser de modification de workflow
+(permission GitHub `workflows` absente du jeton). **Correctif à appliquer**
+dans `.github/workflows/ci.yml`, au job `verification` :
+
+```yaml
+  verification:
+    name: Lint · typecheck · tests unitaires
+    runs-on: ubuntu-latest
+    env:
+      # Prisma 7 charge prisma.config.ts à tout appel CLI et y exige
+      # DATABASE_URL ; generate n'ouvre aucune connexion : valeur factice.
+      DATABASE_URL: postgresql://dummy:dummy@127.0.0.1:5432/dummy?schema=public
+    steps:
+      # … (inchangé)
+```
+
+Jusqu'à application : le job de vérification reste rouge (bruit connu),
+mais le job **e2e-api** — qui génère le client, applique les migrations sur
+un vrai PostgreSQL 17 et exécute les 243 tests — reste la porte de
+validation effective de chaque push.
