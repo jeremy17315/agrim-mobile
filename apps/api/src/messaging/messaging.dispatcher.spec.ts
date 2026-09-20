@@ -55,7 +55,8 @@ function portWhatsapp(reponse: Partial<WhatsappResult>) {
     port: {
       send: jest.fn(async (m: WhatsappMessage): Promise<WhatsappResult> => {
         appels.push(m);
-        return { sent: false, duplicate: false, ...reponse };
+        // Fake piloté par le test : le cast dit exactement ce qu'il en est.
+        return { sent: false, duplicate: false, ...reponse } as WhatsappResult;
       }),
     } as unknown as import('./whatsapp.provider').WhatsappPort,
   };
@@ -68,7 +69,7 @@ function portEmail(reponse: Partial<EmailResult>) {
     port: {
       send: jest.fn(async (m: EmailMessage): Promise<EmailResult> => {
         appels.push(m);
-        return { sent: false, duplicate: false, ...reponse };
+        return { sent: false, duplicate: false, ...reponse } as EmailResult;
       }),
     } as unknown as import('./email.provider').EmailPort,
   };

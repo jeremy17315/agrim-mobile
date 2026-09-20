@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 
-import { prisma } from '../prisma/prisma.client';
+import { prisma } from '../../prisma/prisma.client';
 
 /**
  * Verrou d'exclusion mutuelle pour les tâches planifiées.

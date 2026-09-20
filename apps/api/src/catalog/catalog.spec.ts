@@ -81,7 +81,7 @@ jest.mock('../prisma/prisma.client', () => {
   const category = {
     create: async ({ data }: { data: Rec }) => {
       echouerSiProgrammé();
-      const rec = { id: `rec-${++etat.seq}`, ...data } as Rec;
+      const rec = { ...data, id: `rec-${++etat.seq}` } as Rec;
       etat.categories.set(rec.id, rec);
       return rec;
     },
@@ -98,10 +98,10 @@ jest.mock('../prisma/prisma.client', () => {
     create: async ({ data }: { data: { variants?: { create?: Rec[] } } & Rec }) => {
       echouerSiProgrammé();
       const { variants, ...reste } = data;
-      const rec = { id: `rec-${++etat.seq}`, ...reste } as Rec;
+      const rec = { ...reste, id: `rec-${++etat.seq}` } as Rec;
       etat.products.set(rec.id, rec);
       rec.variants = (variants?.create ?? []).map((v) => {
-        const vr = { id: `rec-${++etat.seq}`, productId: rec.id, ...v } as Rec;
+        const vr = { ...v, id: `rec-${++etat.seq}`, productId: rec.id } as Rec;
         etat.variants.set(vr.id, vr);
         return vr;
       });
@@ -121,7 +121,7 @@ jest.mock('../prisma/prisma.client', () => {
       etat.variants.get(where.id) ?? null,
     create: async ({ data }: { data: Rec }) => {
       echouerSiProgrammé();
-      const rec = { id: `rec-${++etat.seq}`, ...data } as Rec;
+      const rec = { ...data, id: `rec-${++etat.seq}` } as Rec;
       etat.variants.set(rec.id, rec);
       return rec;
     },
@@ -152,12 +152,12 @@ jest.mock('../prisma/prisma.client', () => {
     create: async ({ data }: { data: Rec }) => {
       echouerSiProgrammé();
       const rec = {
+        ...data,
         id: `rec-${++etat.seq}`,
         createdAt: new Date(),
         // Défaut de colonne du schéma : le vrai Prisma l'applique, le faux
         // doit le faire aussi, sinon les tests prouvent un monde faux.
         isActive: true,
-        ...data,
       } as Rec;
       etat.promotions.set(rec.id, rec);
       return rec;
@@ -332,7 +332,9 @@ describe('PromotionsService.create', () => {
   it('une course entre deux créations est tranchée par l’index (409)', async () => {
     const { promotions } = services();
     etat.failureP2002 = new Prisma.PrismaClientKnownRequestError('unique', {
+      // Signature réelle du constructeur : clientVersion est requis.
       code: 'P2002',
+      clientVersion: 'test',
     });
 
     await expect(
@@ -399,7 +401,9 @@ describe('CatalogService — produits', () => {
   it('conflit de SKU/slug (P2002) ⇒ 409 lisible', async () => {
     const { catalog } = services();
     etat.failureP2002 = new Prisma.PrismaClientKnownRequestError('unique', {
+      // Signature réelle du constructeur : clientVersion est requis.
       code: 'P2002',
+      clientVersion: 'test',
     });
 
     await expect(
