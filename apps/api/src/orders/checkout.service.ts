@@ -14,7 +14,7 @@ import {
   type DeliveryGrid,
 } from '@agrim/contracts';
 import { Prisma } from '../../generated/prisma/client';
-import { estP2002 } from '../../common/prisma/prisma-erreur';
+import { estP2002 } from '../common/prisma/prisma-erreur';
 
 import {
   lockVariantsForOrder,

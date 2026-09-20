@@ -5,7 +5,7 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { estP2002 } from '../../common/prisma/prisma-erreur';
+import { estP2002 } from '../common/prisma/prisma-erreur';
 
 import { currentStockMode } from '../config/stock-mode';
 import { prisma } from '../prisma/prisma.client';

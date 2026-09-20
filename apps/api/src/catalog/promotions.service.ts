@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { estP2002 } from '../../common/prisma/prisma-erreur';
+import { estP2002 } from '../common/prisma/prisma-erreur';
 
 import { prisma } from '../prisma/prisma.client';
 import { CatalogService, assertPromotionDates } from './catalog.service';
