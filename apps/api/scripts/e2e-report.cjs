@@ -22,12 +22,12 @@ try {
   for (const r of data.testResults || []) {
     if (r.status !== 'failed') continue;
     const fichier = r.name.replace(/^.*src\//, 'src/');
-    for (const t of r.testResults || []) {
+    for (const t of r.assertionResults || r.testResults || []) {
       if (t.status !== 'failed') continue;
       tests.push({
         fichier,
         nom: t.fullName || t.title,
-        msg: (t.failureMessages || []).join(' | ').slice(0, 320),
+        msg: (t.failureMessages || []).join(' | ').slice(0, 430),
       });
     }
     if ((r.testResults || []).every((t) => t.status !== 'failed')) {
@@ -59,8 +59,10 @@ const envFlags = {
     const client = new DefaultArtifactClient();
     const repertoire = '/tmp/e2e-rapport';
     fs.mkdirSync(repertoire, { recursive: true });
-    fs.writeFileSync(path.join(repertoire, 'rapport.json'), JSON.stringify({ resume, tests }, null, 2));
-    const r = await client.uploadArtifact('e2e-rapport', ['rapport.json'], repertoire);
+    const fichier = path.join(repertoire, 'rapport.json');
+    fs.writeFileSync(fichier, JSON.stringify({ resume, tests }, null, 2));
+    // v2 du client: chemins de fichiers ABSOLUS.
+    const r = await client.uploadArtifact('e2e-rapport', [fichier], repertoire);
     console.log('artifact publié:', JSON.stringify(r));
   } catch (e) {
     console.log('::error::' + escape(`ARTIFACT FAIL: ${(e && e.message) || e} | env=${JSON.stringify(envFlags)}`));
