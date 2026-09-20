@@ -14,6 +14,9 @@
  *  - un autre compte ne peut ni lire ni payer la commande d'autrui.
  */
 import 'dotenv/config';
+// AVANT l'import d'AppModule : ConfigModule fige l'environnement validé au
+// chargement — posé après, le mode asynchrone ne serait jamais vu.
+import './testing/simulation-asynchrone';
 
 import { INestApplication } from '@nestjs/common';
 import { APP_FILTER } from '@nestjs/core';
@@ -46,11 +49,6 @@ describe('Parcours web — commander et payer via /api/v1', () => {
 
   beforeAll(async () => {
     process.env.THROTTLE_DISABLED = '1';
-    // Le vrai parcours Mobile Money est ASYNCHRONE : `initiate` ouvre la
-    // transaction, c'est le webhook de l'opérateur qui tranche. Le pilote
-    // de simulation doit suivre ce chemin ici — le parcours synchrone ne
-    // prouverait rien du webhook.
-    process.env.PAYMENT_SIMULATION_ASYNC = 'true';
 
     const site = createSiteIntegrationDouble({
       db: prismaClient,
@@ -211,9 +209,15 @@ describe('Parcours web — commander et payer via /api/v1', () => {
     orderIds.push(corps[0].body!.id!);
   });
 
-  it('parcours payé : initiate ouvre, le webhook de l’opérateur confirme', async () => {
+  it('parcours payé : initiate ouvre, SANS confirmer tout seul', async () => {
     const { commande } = await commandeEnAttente();
-    expect(commande.status).toBe('PENDING');
+    // En asynchrone, l'initiation NE tranche pas : tant que l'opérateur
+    // n'a pas parlé, la commande reste en attente — c'est ce qui rend le
+    // webhook irremplaçable (et sa réconciliation nécessaire).
+    const fiche = await server()
+      .get(`${prefix}/orders/${commande.reference}`)
+      .set(auth(clientToken));
+    expect(fiche.body.status).toBe('PENDING');
   });
 
   it('un webhook REJOUÉ est acquitté sans second effet', async () => {
