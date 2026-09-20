@@ -5,16 +5,16 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
-  ServiceUnavailableException,
 } from '@nestjs/common';
 import {
   computeCartTotals,
   computeDeliveryFee,
   resolveDeliveryZone,
-  type DeliveryGrid,
 } from '@agrim/contracts';
 import { Prisma } from '../../generated/prisma/client';
 import { estP2002 } from '../common/prisma/prisma-erreur';
+import { promosActives } from '../common/pricing/effective-price';
+import { readDeliveryGrid } from './delivery-grid';
 
 import {
   lockVariantsForOrder,
@@ -50,7 +50,6 @@ const orderSelect = {
 } as const;
 
 /** Clé du paramètre société portant la grille officielle de livraison. */
-const DELIVERY_GRID_KEY = 'deliveryGrid';
 
 /** Durée de conservation d'une clé d'idempotence consommée. */
 const IDEMPOTENCY_TTL_DAYS = 7;
@@ -144,14 +143,15 @@ export class CheckoutService {
       // relecture entre-temps qui pourrait voir un autre monde que le verrou.
       const promotions = await tx.promotion.findMany({
         where: { variantId: { in: [...merged.keys()] }, isActive: true },
-        select: { variantId: true, priceXof: true, startsAt: true, endsAt: true },
+        select: { isActive: true, variantId: true, priceXof: true, startsAt: true, endsAt: true },
       });
+      // Règle de prix UNIQUE (common/pricing) : checkout, catalogue et
+      // lectures publiques tranchent la promotion de la même façon — un
+      // panier affiché ne peut jamais différer d'un panier facturé.
       const now = new Date();
       const effective = new Map<string, number>();
-      for (const promo of promotions) {
-        const starts = promo.startsAt <= now;
-        const notEnded = !promo.endsAt || promo.endsAt >= now;
-        if (starts && notEnded) effective.set(promo.variantId, promo.priceXof);
+      for (const promo of promosActives(promotions, now)) {
+        effective.set(promo.variantId, promo.priceXof);
       }
 
       const lines = [...merged.entries()].map(([variantId, quantity]) => {
@@ -167,7 +167,7 @@ export class CheckoutService {
         };
       });
 
-      const grid = await this.readDeliveryGrid(tx);
+      const grid = await readDeliveryGrid(tx);
       const weightKg =
         lines.reduce((sum, l) => sum + l.weightGrams * l.quantity, 0) / 1000;
       const deliveryFee = computeDeliveryFee(
@@ -326,40 +326,6 @@ export class CheckoutService {
     return tx.order.findUniqueOrThrow({ where: { id: order.id }, select: orderSelect });
   }
 
-  /** La grille de livraison vit dans `CompanySetting` — modifiable en
-   * back-office sans redéploiement, et unique pour les trois clients.
-   * On ne devine JAMAIS un tarif : grille absente ou illisible ⇒ refus de
-   * commander (503), jamais un forfait inventé. */
-  private async readDeliveryGrid(
-    tx: Prisma.TransactionClient,
-  ): Promise<DeliveryGrid> {
-    const setting = await tx.companySetting.findUnique({
-      where: { key: DELIVERY_GRID_KEY },
-      select: { value: true },
-    });
-    if (!setting) {
-      throw new ServiceUnavailableException({
-        code: 'DELIVERY_GRID_UNAVAILABLE',
-        message:
-          'Les frais de livraison sont momentanément indisponibles. Réessayez dans un instant.',
-      });
-    }
-    try {
-      const grid = JSON.parse(setting.value) as DeliveryGrid;
-      // Validation minimale de forme : une grille corrompue ne doit pas
-      // produire un montant plausible mais faux.
-      if (!grid.zones || typeof grid.zoneParDefaut !== 'string') {
-        throw new Error('forme inattendue');
-      }
-      return grid;
-    } catch {
-      throw new ServiceUnavailableException({
-        code: 'DELIVERY_GRID_UNAVAILABLE',
-        message:
-          'Les frais de livraison sont momentanément indisponibles. Réessayez dans un instant.',
-      });
-    }
-  }
 
   /** Empreinte stable du couple (utilisateur, intention) : l'ordre des
    * lignes ne doit pas transformer un rejeu en conflit. */

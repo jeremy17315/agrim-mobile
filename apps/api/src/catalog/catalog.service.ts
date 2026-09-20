@@ -5,6 +5,8 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
+
+import { prixEffectif, promosActives } from '../common/pricing/effective-price';
 import { estP2002 } from '../common/prisma/prisma-erreur';
 
 import { currentStockMode } from '../config/stock-mode';
@@ -310,7 +312,9 @@ export class CatalogService {
         product: { select: { id: true, name: true, isActive: true } },
         promotions: {
           where: { isActive: true },
-          select: { id: true, priceXof: true, label: true, startsAt: true, endsAt: true },
+          // isActive est relue ICI : la règle de prix (common/pricing) le
+          // re-vérifie — et la projection doit nourrir la règle.
+          select: { isActive: true, id: true, priceXof: true, label: true, startsAt: true, endsAt: true },
         },
       },
     });
@@ -320,10 +324,13 @@ export class CatalogService {
         message: 'Variante introuvable.',
       });
     }
-    const promo = variant.promotions[0] ?? null;
+    // Règle de prix UNIQUE : une promotion périmée (endsAt passé) ou non
+    // encore ouverte n'est PAS une promotion — la fiche admin doit dire la
+    // même chose que le checkout et que les lectures publiques.
+    const promo = promosActives(variant.promotions)[0] ?? null;
     return {
       ...variant,
-      effectivePrice: promo ? Math.min(promo.priceXof, variant.price) : variant.price,
+      effectivePrice: prixEffectif(variant.price, promo),
       promotion: promo,
     };
   }
