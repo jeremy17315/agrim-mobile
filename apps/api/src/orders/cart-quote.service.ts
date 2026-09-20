@@ -11,8 +11,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { readDeliveryGrid } from './delivery-grid';
 import type { CartQuoteDto } from './dto/cart-quote.dto';
 
-/** Écho d'une ligne, telle que le devis l'a RECALCULÉE. */
-interface LigneDevis {
+/** Écho d'une ligne, telle que le devis l'a RECALCULÉE. Exporté : le
+ * type apparaît dans la déclaration publique du service (declaration). */
+export interface LigneDevis {
   variantId: string;
   sku: string;
   productName: string;
