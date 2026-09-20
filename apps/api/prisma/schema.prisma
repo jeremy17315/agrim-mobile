@@ -2,9 +2,17 @@
 // Toute modification passe par une migration Prisma (section 12).
 // Montants : entiers XOF, sans décimales. Poids : grammes entiers.
 
+// Générateur « prisma-client » (Prisma 7, Rust-free) : aucun moteur natif,
+// le client parle PostgreSQL via l'adaptateur @prisma/adapter-pg déjà en
+// place (src/prisma/prisma.client.ts). Le générateur hérité
+// « prisma-client-js », lui, exige le téléchargement de moteurs natifs —
+// impossible sur un réseau filtré, et inutile ici.
 generator client {
-  provider = "prisma-client-js"
-  output   = "../generated/prisma"
+  provider                = "prisma-client"
+  output                  = "../generated/prisma"
+  runtime                 = "nodejs"
+  moduleFormat            = "cjs"
+  generatedFileExtension  = "ts"
 }
 
 datasource db {

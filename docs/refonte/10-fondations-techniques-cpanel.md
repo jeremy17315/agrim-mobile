@@ -410,3 +410,66 @@ première fois** (generate, lint, typecheck strict des 3 workspaces, tests
 contrats + mobile). Job e2e : rouge au step « Tests d'intégration »,
 signature antérieure à toutes les itérations, diagnostic bloqué sur
 l'illisibilité des logs depuis le sandbox.
+
+---
+
+## 12. Faire tourner l'application — générateur Rust-free & environnements restreints
+
+Livré avec l'itération « mise en fonction ». L'application tourne désormais
+de bout en bout HORS CI, prouvée par : génération du client, migrations,
+seed, build de production, démarrage, et le parcours métier complet en HTTP
+(catalogue → devis → commande → paiement → CONFIRMED) — puis 391/391 tests
+locaux sur une PostgreSQL 17 réelle.
+
+### a) Le générateur `prisma-client` (Rust-free) remplace `prisma-client-js`
+
+- `schema.prisma` : `provider = "prisma-client"`, `runtime = "nodejs"`,
+  `moduleFormat = "cjs"`, `generatedFileExtension = "ts"`. Le client rendu
+  n'embarque AUCUN moteur natif : il parle PostgreSQL via l'adaptateur
+  `@prisma/adapter-pg` déjà en place (`src/prisma/prisma.client.ts` passe
+  l'adaptateur au constructeur).
+- Conséquence build : le client généré est des SOURCES TypeScript —
+  `rootDir` passe de `./src` à `./` (tsconfig.json) et `dist/` reflète les
+  deux arbres (`dist/src/main.js`, `dist/generated/`). `nest-cli.json` :
+  `entryFile: "src/main"` ; script `start:prod` : `node dist/src/main.js`.
+- Conséquence typecheck : surface de types identique — 0 erreur sur tout le
+  dépôt au premier passage avec client réel.
+- CI/production : aucun changement d'usage (`npm run db:generate` — le CLI
+  télécharge le moteur de schéma, comme avant).
+
+### b) Réseau filtré (bac à sable, certains hébergements)
+
+`prisma generate` exige du CLI la PRÉSENCE du moteur de schéma (jamais son
+exécution) : sur un réseau qui bloque `binaries.prisma.sh` :
+
+```bash
+PRISMA_SCHEMA_ENGINE_BINARY=/usr/bin/true \
+PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING=1 \
+npm run db:generate -w @agrim/api
+```
+
+### c) Migrations sans le CLI
+
+`apps/api/scripts/apply-migrations.cjs` applique le SQL versionné en
+répliquant le protocole du CLI (table `_prisma_migrations`, checksums,
+une transaction par migration). Compatible dans les deux sens : un
+`prisma migrate deploy` ultérieur reconnaît le journal et ne ré-applique
+rien. Usage : `DATABASE_URL=… node scripts/apply-migrations.cjs`.
+
+### d) Recette locale complète (prouvée)
+
+```bash
+npm ci && npm run build -w @agrim/contracts
+# PostgreSQL 17 quelconque (natif, Docker interdit ici, binaire npm
+# embedded-postgres, …) puis :
+DATABASE_URL=… node apps/api/scripts/apply-migrations.cjs
+npm run db:seed -w @agrim/api
+npm run build -w @agrim/api && node apps/api/dist/src/main.js
+# Swagger : http://localhost:3000/api/v1/docs — comptes seed 07000000 01→06
+```
+
+Pièges rencontrés (à ne pas retomber dessus) : `tsx` n'émet PAS les
+métadonnées de décorateurs — le DI Nest casse au démarrage ; toujours
+exécuter le build `tsc`. La génération `generatedFileExtension = "js"`
+n'émet pas de `.d.ts` dans cette configuration → tout le code retombe en
+`any` : garder `"ts"`.
