@@ -396,9 +396,9 @@ CI — le job `verification` était court-circuité depuis la migration Prisma
 7)** :
 - `cron-locks.service.ts` importait `'../prisma/prisma.client'` depuis
   `src/common/cron/` — chemin qui ne résolvait vers RIEN. Toute suite
-  chargeant le verrou cron crashait au démarrage. **Candidate n°1 à la
-  rouge e2e historique** — le fix est poussé, le job e2e reste néanmoins
-  rouge : logs requis (voir § 7).
+  chargeant le verrou cron crashait au démarrage. (La rouge e2e, elle, avait
+  DEUX autres causes — interférence inter-suites et `instanceof` P2002 —
+  toutes résolues : voir § 7. CI entièrement verte, 364 tests.)
 - `messaging.dispatcher` : `email` déclaré non-nullable alors que le schéma
   le rend nullable (les voies SKIPPED géraient déjà l'absence).
 - `catalog.spec` : ordre spread/identifiant dans les fakes + signature
