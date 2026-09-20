@@ -17,7 +17,9 @@ async function bootstrap(): Promise<void> {
   });
   const config = app.get(ConfigService);
 
-  const port = config.getOrThrow<number>('API_PORT');
+  // Passenger (cPanel/LWS) impose son port via l'environnement : il FAIT
+  // FOI en production. API_PORT reste le repli local (démo, tests).
+  const port = Number(process.env.PORT) || config.getOrThrow<number>('API_PORT');
   const prefix = config.getOrThrow<string>('API_GLOBAL_PREFIX');
   const isProd = config.get<string>('NODE_ENV') === 'production';
 

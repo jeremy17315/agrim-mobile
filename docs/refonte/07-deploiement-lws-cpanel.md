@@ -76,11 +76,18 @@ api.domaine.tld                   # sous-domaine → racine applicative Passenge
 ### 3.3 Application Node.js (Passenger)
 
 1. cPanel → **Setup Node.js App** → *Create Application* :
-   - Node.js version : **20.x** (la plus récente disponible ≥ 20) ;
-   - Application mode : **Production** ;
-   - Application root : `agrim-api` ;
-   - Application URL : `api.domaine.tld` ;
-   - Application startup file : `dist/main.js`.
+   - Node.js version : **20.x ou plus** (la plus récente ≥ 20.19 — sur une
+     offre qui ne propose que ≤ 16, changer d'offre : NestJS 11 et Prisma 7
+     refusent de tourner en dessous, aucun contournement possible) ;
+   - Application mode : **Development** le temps de la mise en service
+     (bascule en **Production** après vérifications — le mode Production
+     active la validation stricte des secrets et ferme Swagger) ;
+   - Application root : `agrim-api` (la RACINE du dépôt — monorepo npm :
+     `node_modules` y vit, pas dans `apps/api`) ;
+   - Application URL : sous-domaine `api` du domaine principal
+     (`api.agrimsarl.ci`) — JAMAIS le domaine racine, le site y vit ;
+   - Application startup file : `apps/api/dist/src/main.js` (le client
+     Prisma Rust-free se compile avec `src/` — voir docs/refonte/10 §12).
 2. **Créer** (l'app démarre même sans code : elle s'activera au premier dépôt).
 
 ### 3.4 Récupération du code
@@ -104,7 +111,7 @@ cd ~/agrim-api
 npm ci --include=dev                # @nestjs/cli, prisma, tsx sont des devDependencies
 npm run build -w packages/contracts # contrats partagés d'abord
 npm run db:generate -w apps/api     # prisma generate (client + engines)
-npm run build -w apps/api           # nest build → dist/main.js
+npm run build -w apps/api           # nest build → apps/api/dist/src/main.js
 ```
 
 > **Note Passenger** : Passenger fournit le port via la variable
