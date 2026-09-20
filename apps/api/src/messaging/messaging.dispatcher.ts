@@ -129,11 +129,13 @@ export class MessagingDispatcher implements OutboxHandler {
     }
   }
 
+  // `email` est nullable au schéma (un compte peut n'avoir ni e-mail ni
+  // téléphone) : chaque canal décide lui-même de sa voie SKIPPED.
   private async sendOn(
     channel: string,
     event: OutboxEventPayload,
     payload: OrderEventPayload,
-    user: { phone: string; email: string } | null,
+    user: { phone: string; email: string | null } | null,
     content: { title: string; body: string },
   ): Promise<{
     status: 'SENT' | 'FAILED' | 'SKIPPED';
@@ -189,7 +191,7 @@ export class MessagingDispatcher implements OutboxHandler {
     channel: string,
     event: OutboxEventPayload,
     payload: OrderEventPayload,
-    user: { phone: string; email: string } | null,
+    user: { phone: string; email: string | null } | null,
     fields: {
       status: string;
       error?: string;

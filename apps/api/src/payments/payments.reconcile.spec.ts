@@ -103,7 +103,7 @@ function makeHarness(
   const tx = {
     ...socle.brut,
     outboxEvent: {
-      create: jest.fn(async ({ data }: { data: { type: string; payload: object } }) => {
+      create: jest.fn(async ({ data }: { data: { type: string; payload: Record<string, unknown> } }) => {
         evenements.push({ type: data.type, payload: data.payload });
         return data;
       }),
