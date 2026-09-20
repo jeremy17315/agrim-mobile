@@ -323,32 +323,27 @@ même instant, suivies des smoke tests catalogue.
 
 ---
 
-## 7. Correctif CI requis (à appliquer par un mainteneur)
+## 7. CI — historique du correctif « Générer le client Prisma » (RÉSOLU côté dépôt)
 
-**Constat** : la CI est rouge sur `main` depuis la migration Prisma 7
-(job « Lint · typecheck · tests unitaires » échoue à « Générer le client
+**Constat** : la CI était rouge sur `main` depuis la migration Prisma 7
+(job « Lint · typecheck · tests unitaires » échouait à « Générer le client
 Prisma »). Cause : Prisma 7 charge `prisma.config.ts` à **tout** appel CLI —
 y compris `generate`, qui n'ouvre pourtant aucune connexion — et exige
 `DATABASE_URL` à ce chargement. Le job e2e passe parce qu'il définit la
 variable ; le job de vérification, non.
 
-Le sandbox de conception ne peut pas pousser de modification de workflow
-(permission GitHub `workflows` absente du jeton). **Correctif à appliquer**
-dans `.github/workflows/ci.yml`, au job `verification` :
+**Correctif appliqué (itération « paiements »)** : repli explicite dans
+`apps/api/prisma.config.ts` — la config charge une URL nommée
+`generate-only` quand `DATABASE_URL` est absente. `generate` n'ouvre aucune
+connexion : le job de vérification passe. Toute commande qui touche
+réellement la base (`migrate deploy`, `seed`) reçoit une vraie
+`DATABASE_URL` (job e2e, production) et ne voit jamais le repli ; un
+`migrate` lancé sans variable échoue à la connexion, immédiatement et sans
+ambiguïté. La variante « ajouter un env factice dans `ci.yml` » reste
+possible mais devient inutile.
 
-```yaml
-  verification:
-    name: Lint · typecheck · tests unitaires
-    runs-on: ubuntu-latest
-    env:
-      # Prisma 7 charge prisma.config.ts à tout appel CLI et y exige
-      # DATABASE_URL ; generate n'ouvre aucune connexion : valeur factice.
-      DATABASE_URL: postgresql://dummy:dummy@127.0.0.1:5432/dummy?schema=public
-    steps:
-      # … (inchangé)
-```
-
-Jusqu'à application : le job de vérification reste rouge (bruit connu),
-mais le job **e2e-api** — qui génère le client, applique les migrations sur
-un vrai PostgreSQL 17 et exécute les 243 tests — reste la porte de
-validation effective de chaque push.
+**Reste rouge (signature d'origine, antérieure à toutes les itérations)** :
+le job e2e-api échoue au step « Tests d'intégration » — diagnostic bloqué
+sur l'illisibilité des logs depuis le sandbox (voir 00, § journal). Tant que
+ce step est rouge, le job e2e reste le point à éclaircir AVEC les logs d'un
+run vu depuis le navigateur du mainteneur.
