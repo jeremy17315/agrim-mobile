@@ -48,8 +48,7 @@ type Rec = Record<string, unknown> & {
   [k: string]: unknown;
 };
 
-const { prisma, etat } = jest.requireMock('../prisma/prisma.client') as {
-  prisma: any;
+const { etat } = jest.requireMock('../prisma/prisma.client') as {
   etat: {
     categories: Map<string, Rec>;
     products: Map<string, Rec>;

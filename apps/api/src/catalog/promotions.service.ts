@@ -30,7 +30,7 @@ import type { CreatePromotionDto, UpdatePromotionDto } from './dto/promotion.dto
 export class PromotionsService {
   constructor(private readonly catalog: CatalogService) {}
 
-  async create(dto: CreatePromotionDto, actorId: string) {
+  async create(dto: CreatePromotionDto, _actorId: string) {
     this.catalog.assertWritesAllowed();
 
     const startsAt = dto.startsAt ? new Date(dto.startsAt) : new Date();

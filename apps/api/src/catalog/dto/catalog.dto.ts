@@ -6,7 +6,6 @@ import {
   IsArray,
   IsBoolean,
   IsInt,
-  IsISO8601,
   IsOptional,
   IsString,
   IsUUID,
