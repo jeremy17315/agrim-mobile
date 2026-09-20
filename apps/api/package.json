@@ -13,7 +13,7 @@
     "db:migrate:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
     "db:update-catalog": "tsx prisma/update-catalog.ts",
-    "test": "jest",
+    "test": "jest --json --outputFile=/tmp/jest-e2e.json; code=$?; if [ -n \"$CI\" ]; then node scripts/e2e-report.cjs /tmp/jest-e2e.json; fi; exit $code",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "lint": "eslint src prisma --max-warnings 0",
     "format": "prettier --write \"src/**/*.ts\" \"prisma/**/*.ts\""
