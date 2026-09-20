@@ -17,14 +17,21 @@ export type MessageChannel = 'PUSH' | 'WHATSAPP' | 'EMAIL';
 
 export const ROUTING: Record<string, readonly MessageChannel[]> = {
   ORDER_CREATED: ['PUSH'],
+  // Le moment client par excellence : un seul message multi-canal, pas deux.
+  // PAYMENT_SUCCEEDED et ORDER_CONFIRMED décrivent le même instant — le
+  // paiement est l'angle SYSTEME (audit), la confirmation l'angle CLIENT.
   ORDER_CONFIRMED: ['PUSH', 'WHATSAPP', 'EMAIL'],
   ORDER_PREPARING: ['PUSH'],
   ORDER_READY: ['PUSH'],
   ORDER_OUT_FOR_DELIVERY: ['PUSH'],
   ORDER_DELIVERED: ['PUSH', 'EMAIL'],
-  ORDER_CANCELLED: ['PUSH'],
-  PAYMENT_SUCCEEDED: ['PUSH', 'WHATSAPP', 'EMAIL'],
-  PAYMENT_FAILED: ['PUSH'],
+  // Un client dont le paiement a échoué doit le savoir POUR REESSAYER :
+  // l'annulation mérite les trois canaux, pas seulement le push.
+  ORDER_CANCELLED: ['PUSH', 'WHATSAPP', 'EMAIL'],
+  // Audit seul : la diffusion client est portée par ORDER_CONFIRMED /
+  // ORDER_CANCELLED. Router aussi ici ferait deux WhatsApp pour un paiement.
+  PAYMENT_SUCCEEDED: [],
+  PAYMENT_FAILED: [],
   DELIVERY_ASSIGNED: ['PUSH'],
   DELIVERY_FAILED: ['PUSH'],
 };

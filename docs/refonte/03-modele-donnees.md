@@ -430,6 +430,32 @@ site / exigences SSOT) · **[Retiré]**.
 | `CompanySetting` | **[Existant]** | Paramètres sans redéploiement — dont la **grille de livraison** (JSON versionné, modifiable back-office) |
 | `OrderCounter` → `DocumentCounter` | **[Modifié]** | Voir 3.3 |
 
+#### Fonctionnement du drain d'outbox (implémenté, itération « messaging → paiements »)
+
+- **Émission** : les événements sont écrits DANS la transaction de l'effet métier
+  (`settle()` du paiement, checkout en mode `local`) — un paiement confirmé sans
+  son événement n'existe pas ; la diffusion ne peut plus être perdue par un
+  processus recyclé.
+- **Deux moteurs, un seul drain** (`apps/api/src/jobs/outbox-drain.ts`) :
+  1. *kick post-commit* — `kickOutboxDrain()` est appelé hors transaction, après
+     commit (paiements, checkout) : tente la diffusion immédiatement, sans jamais
+     bloquer la réponse HTTP ni prolonger les verrous ;
+  2. *cron* `POST /jobs/run/outbox-drain` (cPanel, cadence courte) — filet de
+     rattrapage : événements que le kick n'a pas pu traiter (processus recyclé,
+     panne des canaux, back-off en cours).
+- **Claim atomique** : chaque événement est réclamé par
+  `UPDATE … WHERE id = (SELECT id FROM outbox_events WHERE status='PENDING' AND attempts < max AND nextAttemptAt <= now() ORDER BY createdAt FOR UPDATE SKIP LOCKED) RETURNING`
+  — deux instances ne traitent jamais le même événement, sans verrou applicatif.
+- **Politique d'échec** : back-off `min(2^(n-1), 60)` minutes (`nextAttemptAt`),
+  `OUTBOX_MAX_ATTEMPTS` = 10 puis `FAILED` **conservé** (jamais effacé — base de
+  reprise manuelle). Le dispatcher clos l'événement dès qu'UN canal passe ; tous
+  KO ⇒ relance.
+- **Routage** (docs/refonte, itération messaging) : `ORDER_CONFIRMED` /
+  `ORDER_CANCELLED` = push + WhatsApp + e-mail ; `PAYMENT_SUCCEEDED` /
+  `PAYMENT_FAILED` = audit seul (`[]`) — sinon deux WhatsApp par paiement.
+- **Dédoublonnage canal** : clé d'idempotence `« eventId:canal »` portée aux
+  transports ; un drain rejoué ne renvoie pas deux fois.
+
 ---
 
 ## 4. Contraintes critiques (migrations SQL brutes requises)

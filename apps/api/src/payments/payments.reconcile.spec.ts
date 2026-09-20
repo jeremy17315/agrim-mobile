@@ -24,13 +24,31 @@
 // entièrement simulé — mais la variable doit exister, comme dans les suites e2e.
 import 'dotenv/config';
 
+// Client généré ABSENT hors CI (produit par `prisma generate`) : mock
+// virtuel. Les énumérations utilisées par le graphe d'imports
+// (payments.service → order-stock → reserve-stock) sont des stubs
+// suffisants — ces specs testent des DÉCISIONS, pas le codegen.
+jest.mock('../../generated/prisma/client', () => ({
+  PrismaClient: class {},
+  StockMovementType: {
+    ENTREE: 'ENTREE',
+    SORTIE: 'SORTIE',
+    AJUSTEMENT: 'AJUSTEMENT',
+    COMMANDE: 'COMMANDE',
+    ANNULATION: 'ANNULATION',
+    RETOUR: 'RETOUR',
+  },
+  Prisma: {
+    join: (parts: unknown[]) => parts.join(', '),
+  },
+}), { virtual: true });
+
 import { ConfigService } from '@nestjs/config';
 
 import type { CatalogSyncService } from '../catalog-sync/catalog-sync.service';
 import { fakeStockTx } from '../common/stock/stock-tx.fake';
 import { PaymentsService } from './payments.service';
 import type { PaymentProvider } from './payment.provider';
-import type { NotificationsService } from '../notifications/notifications.service';
 import type { PrismaService } from '../prisma/prisma.service';
 
 type AnyFn = jest.Mock;
@@ -41,6 +59,7 @@ const ORDER = {
   reference: 'AGR-2026-0001',
   userId: 'user-1',
   status: 'PENDING',
+  total: 5000,
   items: [
     { variantId: 'variant-a', quantity: 2 },
     { variantId: 'variant-b', quantity: 3 },
@@ -78,8 +97,17 @@ function makeHarness(
 
   const etatPaiement = { status: paymentStatus };
 
+  /** Événements d'outbox réellement poussés par settle — vérifiables. */
+  const evenements: Array<{ type: string; payload: Record<string, unknown> }> = [];
+
   const tx = {
     ...socle.brut,
+    outboxEvent: {
+      create: jest.fn(async ({ data }: { data: { type: string; payload: object } }) => {
+        evenements.push({ type: data.type, payload: data.payload });
+        return data;
+      }),
+    },
     payment: {
       findUnique: jest.fn(async () => ({
         id: 'pay-1',
@@ -113,18 +141,40 @@ function makeHarness(
     },
   };
 
+  /** Traces de webhook : état + comportement programmable du registre. */
+  const webhooks = {
+    lignes: [] as Array<Record<string, unknown>>,
+    /** Prochaine création faite échouer en P2002 (simulation de rejeu). */
+    doublonP2002: false,
+  };
+
   const prisma = {
     db: {
-      payment: { findMany: jest.fn().mockResolvedValue([]) },
+      payment: {
+        findMany: jest.fn().mockResolvedValue([]),
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+      webhookEvent: {
+        create: jest.fn(async ({ data }: { data: Record<string, unknown> }) => {
+          if (webhooks.doublonP2002) {
+            const e = new Error('unique constraint') as Error & { code?: string };
+            e.code = 'P2002';
+            throw e;
+          }
+          const ligne = { id: `wh-${webhooks.lignes.length + 1}`, ...data };
+          webhooks.lignes.push(ligne);
+          return ligne;
+        }),
+        update: jest.fn(async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
+          const ligne = webhooks.lignes.find((l) => l.id === where.id);
+          if (ligne) Object.assign(ligne, data);
+          return { ...ligne, ...data };
+        }),
+      },
       // Exécute le callback comme le ferait Prisma, avec notre `tx`.
       $transaction: jest.fn((cb: (t: typeof tx) => unknown) => cb(tx)),
     },
   } as unknown as PrismaService;
-
-  const notifications = {
-    notify: jest.fn().mockResolvedValue(undefined),
-    notifyOrderStatus: jest.fn().mockResolvedValue(undefined),
-  } as unknown as NotificationsService;
 
   const gateway = {
     name: 'simulation',
@@ -145,7 +195,6 @@ function makeHarness(
 
   const service = new PaymentsService(
     prisma,
-    notifications,
     config,
     catalog,
     gateway,
@@ -155,11 +204,12 @@ function makeHarness(
     service,
     prisma,
     tx,
-    notifications,
     gateway,
     etat,
     mouvements: socle.mouvements,
     catalog,
+    evenements,
+    webhooks,
   };
 }
 
@@ -233,17 +283,44 @@ describe('PaymentsService.reconcilePending', () => {
     });
   });
 
-  it('prévient le client plutôt que de le laisser dans le noir', async () => {
-    const { service, prisma, notifications } = makeHarness();
+  it('prévient le client plutôt que de le laisser dans le noir (via l’outbox)', async () => {
+    const { service, prisma, evenements } = makeHarness();
     (prisma.db.payment.findMany as AnyFn).mockResolvedValue([
       { id: 'pay-1', expiresAt: passe, providerReference: 'TX-1' },
     ]);
 
     await service.reconcilePending(now);
 
-    expect(notifications.notify).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'PAYMENT_FAILED', userId: ORDER.userId }),
+    // La diffusion part d'un événement écrit DANS la transaction du
+    // règlement — plus jamais d'une notification directe qui peut tomber
+    // avec le processus (docs/refonte/03 § 3.7).
+    expect(evenements.map((e) => e.type)).toEqual(
+      expect.arrayContaining(['PAYMENT_FAILED', 'ORDER_CANCELLED']),
     );
+    expect(evenements[0].payload).toMatchObject({
+      userId: ORDER.userId,
+      orderId: ORDER.id,
+      reference: ORDER.reference,
+    });
+  });
+
+  it('un règlement réussi émet PAYMENT_SUCCEEDED et ORDER_CONFIRMED dans la même transaction', async () => {
+    const { service, prisma, gateway, evenements } = makeHarness();
+    (prisma.db.payment.findMany as AnyFn).mockResolvedValue([
+      { id: 'pay-1', expiresAt: futur, providerReference: 'TX-1' },
+    ]);
+    (gateway.verify as AnyFn).mockResolvedValue({
+      status: 'PAID',
+      message: 'Paiement confirmé.',
+    });
+
+    await service.reconcilePending(now);
+
+    expect(evenements.map((e) => e.type)).toEqual([
+      'PAYMENT_SUCCEEDED',
+      'ORDER_CONFIRMED',
+    ]);
+    expect(evenements[1].payload).toMatchObject({ total: ORDER.total });
   });
 
   it('interroge le fournisseur tant que le délai court encore', async () => {
@@ -317,5 +394,98 @@ describe('PaymentsService.reconcilePending', () => {
     const result = await service.reconcilePending(now);
 
     expect(result.expired).toBe(1);
+  });
+});
+
+describe('PaymentsService.handleCallback — dédoublonnage', () => {
+  it('un webhook rejoué est acquitté SANS EFFET (porte d’idempotence)', async () => {
+    const { service, prisma, gateway, webhooks } = makeHarness();
+    (gateway.readCallback as AnyFn).mockReturnValue({
+      providerReference: 'TX-1',
+      orderReference: ORDER.reference,
+      status: 'PAID',
+    });
+    // Rejeu : l'index unique refuse la seconde ligne.
+    webhooks.doublonP2002 = true;
+
+    const reponse = await service.handleCallback('simulation', { cpm_trans_id: 'TX-1' }, {});
+
+    expect(reponse).toEqual({ received: true });
+    // Aucun règlement relancé : pas de recherche de paiement, pas de transaction.
+    expect(prisma.db.payment.findFirst as AnyFn).not.toHaveBeenCalled();
+    expect(prisma.db.$transaction as AnyFn).not.toHaveBeenCalled();
+  });
+
+  it('un webhook neuf aboutit au règlement et marque la trace PROCESSED', async () => {
+    const { service, prisma, gateway, webhooks, etat } = makeHarness();
+    (gateway.readCallback as AnyFn).mockReturnValue({
+      providerReference: 'TX-1',
+      orderReference: ORDER.reference,
+      status: 'PAID',
+    });
+    (prisma.db.payment.findFirst as AnyFn).mockResolvedValue({
+      id: 'pay-1',
+      status: 'AWAITING_CONFIRMATION',
+      providerReference: 'TX-1',
+    });
+    // Invariant nº 1 : le succès annoncé est reconfirmé auprès du fournisseur.
+    (gateway.verify as AnyFn).mockResolvedValue({
+      status: 'PAID',
+      message: 'Paiement confirmé.',
+    });
+
+    const reponse = await service.handleCallback('simulation', { cpm_trans_id: 'TX-1' }, {});
+
+    expect(reponse).toEqual({ received: true });
+    expect(gateway.verify).toHaveBeenCalledWith('TX-1');
+    expect(etat.payment).toBe('SUCCEEDED');
+    expect(etat.order).toBe('CONFIRMED');
+    expect(webhooks.lignes).toHaveLength(1);
+    expect(webhooks.lignes[0]).toMatchObject({
+      provider: 'simulation',
+      externalId: 'TX-1',
+      signatureValid: true,
+      status: 'PROCESSED',
+    });
+  });
+
+  it('une signature invalide est tracée REJECTED et n’encaisse rien', async () => {
+    const { service, prisma, gateway, webhooks } = makeHarness();
+    (gateway.readCallback as AnyFn).mockImplementation(() => {
+      throw new Error('Signature du callback invalide.');
+    });
+
+    const reponse = await service.handleCallback(
+      'simulation',
+      { cpm_trans_id: 'TX-FALSIFIE' },
+      {},
+    );
+
+    expect(reponse).toEqual({ received: true });
+    expect(prisma.db.$transaction as AnyFn).not.toHaveBeenCalled();
+    expect(webhooks.lignes[0]).toMatchObject({
+      externalId: 'TX-FALSIFIE',
+      signatureValid: false,
+      status: 'REJECTED',
+    });
+  });
+
+  it('un webhook dont le statut reste PENDING est journalisé IGNORED', async () => {
+    const { service, prisma, gateway, webhooks, etat } = makeHarness();
+    (gateway.readCallback as AnyFn).mockReturnValue({
+      providerReference: 'TX-1',
+      orderReference: ORDER.reference,
+      status: 'PENDING',
+    });
+    (prisma.db.payment.findFirst as AnyFn).mockResolvedValue({
+      id: 'pay-1',
+      status: 'AWAITING_CONFIRMATION',
+      providerReference: 'TX-1',
+    });
+
+    await service.handleCallback('simulation', { cpm_trans_id: 'TX-1' }, {});
+
+    expect(etat.payment).toBe('AWAITING_CONFIRMATION'); // rien n'a été tranché
+    expect(webhooks.lignes[0]).toMatchObject({ status: 'IGNORED' });
   });
 });

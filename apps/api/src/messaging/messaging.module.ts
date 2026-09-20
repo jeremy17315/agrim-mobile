@@ -14,7 +14,7 @@ import {
   WHATSAPP_PROVIDER,
   WhatsappPort,
 } from './whatsapp.provider';
-import { OUTBOX_HANDLERS } from '../jobs/outbox.handler';
+import { OUTBOX_HANDLERS, registerOutboxHandlers } from '../jobs/outbox.handler';
 
 /**
  * Module de diffusion découplée (docs/refonte/02, § 3.5).
@@ -25,8 +25,10 @@ import { OUTBOX_HANDLERS } from '../jobs/outbox.handler';
  *     d'agrégateur, sinon pilote inerte ;
  *   - SMTP_HOST renseigné ⇒ pilote SMTP (nodemailer), sinon pilote inerte.
  *
- * Le dispatcher est exposé au `JobsModule` sous le jeton `OUTBOX_HANDLERS` :
- * c'est LUI que le drain d'outbox appelle — jamais un module métier.
+ * Le dispatcher est exposé au `JobsModule` sous le jeton `OUTBOX_HANDLERS`
+ * ET enregistré dans le registre global des handlers : c'est ainsi que le
+ * drain post-commit (`kickOutboxDrain`, sans injection de dépendances pour
+ * éviter les cycles) opère sur LA MÊME instance DI — avec ses ports réels.
  */
 @Module({})
 export class MessagingModule {
@@ -58,6 +60,17 @@ export class MessagingModule {
         ...channels,
         MessagingDispatcher,
         { provide: OUTBOX_HANDLERS, useExisting: MessagingDispatcher },
+        {
+          // Amorce le registre du drain post-commit avec l'instance DI
+          // (et non un clone sans dépendances — ce serait une bombe à la
+          // première notification).
+          provide: 'OUTBOX_REGISTRY_SEED',
+          useFactory: (dispatcher: MessagingDispatcher) => {
+            registerOutboxHandlers(dispatcher);
+            return true;
+          },
+          inject: [MessagingDispatcher],
+        },
       ],
       exports: [OUTBOX_HANDLERS],
     };

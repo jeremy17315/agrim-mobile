@@ -26,5 +26,30 @@ export interface OutboxEventPayload {
   attempts: number;
 }
 
-/** Jeton d'injection des handlers enregistrés (vide par défaut). */
+/** Jeton d'injection des handlers enregistrés (chemin DI, pour le cron). */
 export const OUTBOX_HANDLERS = Symbol('OUTBOX_HANDLERS');
+
+/**
+ * Registre des handlers — chemin SANS injection de dépendances.
+ *
+ * Le drain post-commit (`kickOutboxDrain`) est appelé depuis des services
+ * métier (orders, payments) qui ne peuvent pas importer le `JobsModule` sans
+ * créer un cycle (JobsModule → ReconciliationModule → PaymentsModule). Le
+ * registre est rempli au démarrage par le module qui possède les handlers
+ * (`MessagingModule.register()`) ; le métier, lui, n'appelle qu'un
+ * `kickOutboxDrain()` sans dépendance.
+ */
+const REGISTRE: OutboxHandler[] = [];
+
+export function registerOutboxHandlers(
+  ...handlers: OutboxHandler[]
+): void {
+  for (const handler of handlers) {
+    if (!REGISTRE.includes(handler)) REGISTRE.push(handler);
+  }
+}
+
+/** Les handlers actuellement enregistrés (lecture pour le drain). */
+export function outboxHandlers(): readonly OutboxHandler[] {
+  return REGISTRE;
+}

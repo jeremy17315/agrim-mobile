@@ -20,7 +20,7 @@ import {
   reserveStockForOrder,
   StockReservationError,
 } from '../common/stock/reserve-stock';
-import { NotificationsService } from '../notifications/notifications.service';
+import { kickOutboxDrain } from '../jobs/outbox-drain';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CreateOrderDto } from './dto/create-order.dto';
 import { formatOrderReference } from './order-reference';
@@ -78,10 +78,7 @@ const IDEMPOTENCY_TTL_DAYS = 7;
  */
 @Injectable()
 export class CheckoutService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly notifications: NotificationsService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async create(userId: string, dto: CreateOrderDto) {
     const requestHash = this.fingerprint(userId, dto);
@@ -300,18 +297,12 @@ export class CheckoutService {
       return order;
     });
 
-    // Hors transaction, même comportement que le mode `site` : la commande
-    // existe, le client est prévenu. L'événement d'outbox (écrit dans la
-    // transaction) assure déjà la diffusion découplée ; cet appel in-app
-    // reste le canal direct existant jusqu'à l'itération « messaging ».
-    if (!isReplay) {
-      await this.notifications.notify({
-        userId,
-        type: 'ORDER_CREATED',
-        reference: created.reference,
-        orderId: created.id,
-      });
-    }
+    // Diffusion AU PLUS TÔT, hors transaction : l'événement ORDER_CREATED
+    // est déjà durablement en base (écrit DANS la transaction) — le kick
+    // tente de le diffuser immédiatement sans jamais bloquer la réponse,
+    // et le cron `outbox-drain` reste le filet. Un rejeu, lui, ne kick pas :
+    // l'événement d'origine a déjà été diffusé.
+    if (!isReplay) kickOutboxDrain();
 
     return created;
   }

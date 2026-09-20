@@ -17,6 +17,13 @@
  * ce qu'on veut d'un test qui garde un invariant d'argent.
  */
 import { cancelOrderAndReleaseStock } from './order-stock';
+// Mock VIRTUEL du client généré : absent hors CI (produit par prisma generate).
+jest.mock('../../../generated/prisma/client', () => ({
+  StockMovementType: {
+    ENTREE: 'ENTREE', SORTIE: 'SORTIE', AJUSTEMENT: 'AJUSTEMENT',
+    COMMANDE: 'COMMANDE', ANNULATION: 'ANNULATION', RETOUR: 'RETOUR',
+  },
+}), { virtual: true });
 import { fakeStockTx, type FakeLine } from './stock-tx.fake';
 
 /** Une commande d'une ligne, avec le stock de départ de sa variante. */
@@ -208,5 +215,79 @@ describe('cancelOrderAndReleaseStock', () => {
       expect([statut, resultat.reservationRef]).toEqual([statut, 'idem-key-1']);
       expect(mouvements).toHaveLength(1);
     }
+  });
+});
+
+
+// ── Mode `local` (bascule SSOT) — la restitution devient RÉELLE ─────────
+//
+// Depuis la refonte, ce fichier porte DEUX mondes, choisis par STOCK_MODE :
+//  - `site` (ci-dessus, défaut) : le stock est retenu par le site, la
+//    fonction arbitre l'annulation et rend la clé de réservation ;
+//  - `local` (ci-dessous) : CETTE base possède le stock — le compteur est
+//    recrédité pour de vrai, et le journal décrit la vérité, pas une copie.
+describe('cancelOrderAndReleaseStock — STOCK_MODE=local', () => {
+  beforeEach(() => {
+    process.env.STOCK_MODE = 'local';
+  });
+
+  afterEach(() => {
+    delete process.env.STOCK_MODE;
+  });
+
+  it('recrédite réellement le compteur et journalise le mouvement véridique', async () => {
+    const { tx, etat, mouvements } = harnais(
+      'PENDING',
+      [{ variantId: 'variant-a', quantity: 2 }],
+      10,
+    );
+
+    const resultat = await cancelOrderAndReleaseStock(tx, 'order-1');
+
+    expect(resultat.released).toBe(true);
+    // Aucune réservation distante en mode local : rien à libérer ailleurs.
+    expect(resultat.reservationRef).toBeNull();
+    // Le compteur est vrai : 10 en rayon, la commande avait pris 2, l'annulation les rend.
+    expect(etat.stocks['variant-a']).toBe(12);
+    expect(mouvements).toHaveLength(1);
+    expect(mouvements[0]).toMatchObject({
+      variantId: 'variant-a',
+      type: 'ANNULATION',
+      quantity: 2,
+      stockBefore: 10,
+      stockAfter: 12,
+      reference: 'AGR-2026-0042',
+      actorId: null,
+    });
+  });
+
+  it('multi-lignes : chaque variante est recréditée de sa quantité', async () => {
+    const { tx, etat, mouvements } = harnais(
+      'READY',
+      [
+        { variantId: 'variant-a', quantity: 2 },
+        { variantId: 'variant-b', quantity: 3 },
+      ],
+      5,
+    );
+
+    const resultat = await cancelOrderAndReleaseStock(tx, 'order-1');
+
+    expect(resultat.released).toBe(true);
+    expect(etat.stocks['variant-a']).toBe(7);
+    expect(etat.stocks['variant-b']).toBe(8);
+    expect(mouvements).toHaveLength(2);
+  });
+
+  it('le perdant de la course ne rend rien, comme en mode site', async () => {
+    // L'exclusion par transition de statut est le MÊME en mode local : seule
+    // la façon de rendre le stock change, pas l'arbitrage.
+    const { tx, etat, mouvements } = harnais('CANCELLED', [{ variantId: 'variant-a', quantity: 2 }], 5);
+
+    const resultat = await cancelOrderAndReleaseStock(tx, 'order-1');
+
+    expect(resultat.released).toBe(false);
+    expect(etat.stocks['variant-a']).toBe(5);
+    expect(mouvements).toHaveLength(0);
   });
 });

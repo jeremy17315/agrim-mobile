@@ -1,28 +1,19 @@
 import {
   ConflictException,
-  Inject,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
 
 import { CronLocksService, DEFAULT_LOCK_TTL_SECONDS } from '../common/cron/cron-locks.service';
-import { prisma } from '../prisma/prisma.client';
 import { ReconciliationService } from '../reconciliation/reconciliation.service';
-import {
-  OUTBOX_HANDLERS,
-  OutboxEventPayload,
-  OutboxHandler,
-} from './outbox.handler';
+import { drainOutbox } from './outbox-drain';
 
 /** Résumé retourné au cron (et visible dans `cron_locks.lastStatus`). */
 export interface JobSummary {
   job: string;
   detail: string;
 }
-
-/** Plafond de reprises avant abandon définitif d'un événement. */
-const OUTBOX_MAX_ATTEMPTS = 10;
 
 /**
  * Exécuteur des tâches planifiées — le point d'entrée des Cron Jobs cPanel.
@@ -33,6 +24,10 @@ const OUTBOX_MAX_ATTEMPTS = 10;
  *    (`cron_locks`) et doit rester idempotent par construction ;
  *  - un job absent du registre répond 404 : ne jamais accepter un nom
  *    quelconque, même derrière le secret.
+ *
+ * Le drain d'outbox, lui, vit dans `outbox-drain.ts` : partagé avec le
+ * drain post-commit (`kickOutboxDrain`), il est réclamé atomiquement en
+ * base — le cron n'en est que le filet de rattrapage.
  */
 @Injectable()
 export class JobsService {
@@ -54,20 +49,24 @@ export class JobsService {
       },
     },
 
-    // Diffusion des événements métier (outbox). Sans handler enregistré
-    // (module notifications à venir), il ne réclame rien et rend la main :
-    // le mécanisme est en place, les consommateurs arrivent avec la
-    // refonte « messaging ».
+    // Filet de rattrapage de la diffusion : tout événement que le drain
+    // post-commit n'a pas pu traiter (processus recyclé, panne des canaux,
+    // back-off en cours) est repris ici, à la cadence du cron.
     'outbox-drain': {
       ttlSeconds: 120,
-      run: () => this.drainOutbox(),
+      run: async () => {
+        const { processed, failed } = await drainOutbox();
+        return `outbox : ${processed} événement(s) traité(s), ${failed} en échec`;
+      },
     },
   };
 
+  // Le drain résout les handlers par le registre global (amorcé par
+  // MessagingModule au bootstrap) — aucune dépendance à injecter ici, et
+  // donc aucun cycle possible.
   constructor(
     private readonly locks: CronLocksService,
     private readonly reconciliation: ReconciliationService,
-    @Inject(OUTBOX_HANDLERS) private readonly handlers: OutboxHandler[],
   ) {}
 
   /**
@@ -103,104 +102,5 @@ export class JobsService {
   /** Noms des jobs exécutables (introspection, usage opérationnel). */
   list(): string[] {
     return Object.keys(this.registry);
-  }
-
-  /**
-   * Réclame et traite les événements d'outbox arrivés à échéance.
-   *
-   * La réclamation est atomique et ciblée : UPDATE ... WHERE id = (SELECT …
-   * FOR UPDATE SKIP LOCKED). Deux drains simultanés — deux processus
-   * Passenger, par exemple — se partagent les événements sans jamais en
-   * traiter deux fois un même.
-   */
-  private async drainOutbox(): Promise<string> {
-    let processed = 0;
-    let failed = 0;
-
-    for (const handler of this.handlers) {
-      for (const type of handler.types) {
-        let event: OutboxEventPayload | null;
-        while ((event = await this.claimOne(type))) {
-          try {
-            await handler.handle(event);
-            await this.markDone(event.id);
-            processed += 1;
-          } catch (error) {
-            const message = (error as Error).message.slice(0, 480);
-            await this.markRetryOrFail(event, message);
-            failed += 1;
-          }
-        }
-      }
-    }
-
-    return `outbox : ${processed} événement(s) traité(s), ${failed} en échec`;
-  }
-
-  /**
-   * Réclame UN événement du type donné, de façon atomique. La fenêtre
-   * « lire puis marquer » n'existe pas : l'UPDATE et le SELECT verrouillé
-   * forment un seul énoncé — PostgreSQL arbitre entre drains concurrents.
-   */
-  private async claimOne(type: string): Promise<OutboxEventPayload | null> {
-    const rows = await prisma.$queryRaw<
-      { id: string; type: string; payload: unknown; attempts: number }[]
-    >`
-      UPDATE "outbox_events"
-      SET "status" = 'PROCESSING', "attempts" = "attempts" + 1
-      WHERE "id" = (
-        SELECT "id" FROM "outbox_events"
-        WHERE "status" = 'PENDING'
-          AND "availableAt" <= now()
-          AND "type" = ${type}
-        ORDER BY "createdAt"
-        LIMIT 1
-        FOR UPDATE SKIP LOCKED
-      )
-      RETURNING "id", "type", "payload", "attempts"
-    `;
-    return rows[0] ?? null;
-  }
-
-  private async markDone(id: string): Promise<void> {
-    await prisma.$executeRaw`
-      UPDATE "outbox_events"
-      SET "status" = 'DONE', "processedAt" = now()
-      WHERE "id" = ${id}
-    `;
-  }
-
-  /**
-   * Échec de traitement : re-planification avec back-off exponentiel, et
-   * abandon tracé au plafond. Un événement en FAILED reste visible — on ne
-   * supprime jamais une preuve de dysfonctionnement.
-   */
-  private async markRetryOrFail(
-    event: OutboxEventPayload,
-    error: string,
-  ): Promise<void> {
-    if (event.attempts >= OUTBOX_MAX_ATTEMPTS) {
-      await prisma.$executeRaw`
-        UPDATE "outbox_events"
-        SET "status" = 'FAILED', "processedAt" = now(), "lastError" = ${error}
-        WHERE "id" = ${event.id}
-      `;
-      this.logger.error(
-        `Événement ${event.type} (${event.id}) abandonné après ${event.attempts} tentatives : ${error}`,
-      );
-      return;
-    }
-
-    // Back-off : 1, 2, 4, 8… minutes, plafonné à 60. Assez patient pour
-    // une panne WhatsApp passagère, assez prompt pour ne pas faire attendre
-    // un client une heure pour une notification urgente.
-    const delayMinutes = Math.min(2 ** (event.attempts - 1), 60);
-    await prisma.$executeRaw`
-      UPDATE "outbox_events"
-      SET "status" = 'PENDING',
-          "availableAt" = now() + (${delayMinutes} * interval '1 minute'),
-          "lastError" = ${error}
-      WHERE "id" = ${event.id}
-    `;
   }
 }

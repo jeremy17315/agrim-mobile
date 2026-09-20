@@ -135,6 +135,21 @@ describe('MessagingDispatcher — routage', () => {
     expect(etat.logs.filter((l) => l.status === 'SENT')).toHaveLength(3);
   });
 
+  it('PAYMENT_* sont des événements d’audit : clos sans AUCUN envoi', async () => {
+    // La diffusion client est portée par ORDER_CONFIRMED / ORDER_CANCELLED.
+    // Router aussi PAYMENT_* ferait DEUX WhatsApp pour un seul paiement.
+    const wa = portWhatsapp({ sent: true });
+    const em = portEmail({ sent: true });
+    for (const type of ['PAYMENT_SUCCEEDED', 'PAYMENT_FAILED']) {
+      await dispatcher(wa.port, em.port).handle({ ...EVENEMENT, type });
+    }
+
+    expect(notifications.notify).not.toHaveBeenCalled();
+    expect(wa.appels).toHaveLength(0);
+    expect(em.appels).toHaveLength(0);
+    expect(etat.logs).toHaveLength(0);
+  });
+
   it('un événement non routé est clos sans rien faire', async () => {
     const wa = portWhatsapp({ sent: true });
     const em = portEmail({ sent: true });
@@ -215,7 +230,7 @@ describe('MessagingDispatcher — journal', () => {
     const em = portEmail({ sent: true });
     await dispatcher(wa.port, em.port).handle({
       ...EVENEMENT,
-      type: 'PAYMENT_SUCCEEDED',
+      type: 'ORDER_CONFIRMED',
     });
 
     const logWhatsapp = etat.logs.find((l) => l.channel === 'WHATSAPP');
