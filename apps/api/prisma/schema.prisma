@@ -2,9 +2,17 @@
 // Toute modification passe par une migration Prisma (section 12).
 // Montants : entiers XOF, sans décimales. Poids : grammes entiers.
 
+// Générateur « prisma-client » (Prisma 7, Rust-free) : aucun moteur natif,
+// le client parle PostgreSQL via l'adaptateur @prisma/adapter-pg déjà en
+// place (src/prisma/prisma.client.ts). Le générateur hérité
+// « prisma-client-js », lui, exige le téléchargement de moteurs natifs —
+// impossible sur un réseau filtré, et inutile ici.
 generator client {
-  provider = "prisma-client-js"
-  output   = "../generated/prisma"
+  provider                = "prisma-client"
+  output                  = "../generated/prisma"
+  runtime                 = "nodejs"
+  moduleFormat            = "cjs"
+  generatedFileExtension  = "ts"
 }
 
 datasource db {
@@ -298,6 +306,7 @@ model ProductVariant {
   cartItems  CartItem[]
   orderItems OrderItem[]
   movements  StockMovement[]
+  promotions Promotion[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -718,4 +727,168 @@ model CompanySetting {
 model OrderCounter {
   year    Int @id
   current Int @default(0)
+}
+
+/* ─────────── Fondations SSOT (refonte — voir docs/refonte/) ───────────
+   Convention de nommage : les tables TECHNIQUES introduites par la refonte
+   et pilotées en SQL brut adoptent le snake_case (@@map) ; les tables
+   métier conservent la convention Prisma existante. Une seule règle : ne
+   JAMAIS renommer une table métier existante (14 migrations en dépendent). */
+
+/// Prix promotionnel daté, posé par le back-office.
+///
+/// Le prix barré cesse d'être une colonne figée sur la variante : c'est un
+/// état daté, avec un début et une fin, dont l'API calcule le prix effectif
+/// (`promo active sinon prix de base`). Un seul prix actif par variante,
+/// garanti par un index partiel unique en base (migration fondations).
+model Promotion {
+  id        String         @id @default(uuid()) @db.Uuid
+  variantId String         @db.Uuid
+  variant   ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  /// Prix promotionnel en XOF entier. Ne peut pas être négatif ni absurde :
+  /// vérifié par le service de back-office, pas par la base.
+  priceXof Int
+  /// Libellé affiché aux clients (« Rentrée », « Fin de série »…).
+  label String @db.VarChar(80)
+
+  startsAt DateTime  @default(now())
+  endsAt   DateTime?
+  isActive Boolean   @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([variantId, isActive])
+}
+
+/// Verrou d'exclusion mutuelle des tâches planifiées (cron cPanel).
+///
+/// Les crons cPanel réveillent l'API par HTTP ; rien n'empêche deux
+/// déclencheurs de se chevaucher (double ligne crontab, cadence trop serrée
+/// devant un job lent). Le verrou est pris par un INSERT ... ON CONFLICT
+/// atomique — voir `CronLocksService`. Le bail (`lockedUntil`) est vital sur
+/// Passenger : si le processus est recyclé au milieu d'un job, le verrou doit
+/// se libérer tout seul, sinon plus aucune exécution ne passerait jamais.
+model CronLock {
+  job String @id @db.VarChar(60)
+
+  /// Non nuls tant qu'un job tient le verrou.
+  lockedAt    DateTime?
+  lockedUntil DateTime?
+
+  lastRunStartedAt   DateTime?
+  lastRunFinishedAt  DateTime?
+  lastStatus         String?   @db.VarChar(20)
+  lastError          String?   @db.VarChar(500)
+  runCount           Int       @default(0)
+  updatedAt          DateTime  @updatedAt
+
+  @@map("cron_locks")
+}
+
+/// Outbox transactionnelle — le pont entre le métier et la diffusion.
+///
+/// Écrite DANS la transaction métier (une commande confirmée et son événement
+/// existent ensemble ou pas du tout), elle est consommée après coup par le
+/// dispatcher de notifications. Sur Passenger, le processus peut être recyclé
+/// entre l'écriture et la consommation : l'événement est en base, il ne se
+/// perd pas, il arrive en retard — le cron `outbox-drain` rattrape.
+///
+/// Nom délibérément `outbox_events` (et non `notifications_queue`) : la table
+/// porte des événements MÉTIER, dont les notifications ne sont qu'un
+/// consommateur. Le jour où l'analytics ou la facturation y souscrit, le nom
+/// restera vrai.
+model OutboxEvent {
+  id      String @id @default(uuid()) @db.Uuid
+  /// Type d'événement (`ORDER_CONFIRMED`, `PAYMENT_SUCCEEDED`, …).
+  type    String @db.VarChar(60)
+  payload Json
+
+  status      String   @default("PENDING") @db.VarChar(20) // PENDING|PROCESSING|DONE|FAILED
+  attempts    Int      @default(0)
+  /// Disponible à partir de — sert le back-off des reprises.
+  availableAt DateTime @default(now())
+  processedAt DateTime?
+  lastError   String?  @db.VarChar(500)
+
+  createdAt DateTime @default(now())
+
+  @@index([status, availableAt])
+  @@index([type, createdAt])
+  @@map("outbox_events")
+}
+
+/// Webhook entrant des agrégateurs de paiement — dédoublonné.
+///
+/// L'index unique (provider, externalId) est L'idempotence du webhook : un
+/// appel rejoué par CinetPay est reconnu, journalisé, sans effet. Le payload
+/// brut est conservé douze mois : un litige se règle sur les octets reçus,
+/// pas sur notre reconstruction.
+model WebhookEvent {
+  id         String  @id @default(uuid()) @db.Uuid
+  /// `cinetpay`, `paydunya`…
+  provider   String  @db.VarChar(20)
+  /// Identifiant de transaction chez le fournisseur (`cpm_trans_id`).
+  externalId String  @db.VarChar(120)
+  signatureValid Boolean
+  /// RECEIVED|PROCESSED|IGNORED|REJECTED
+  status     String  @default("RECEIVED") @db.VarChar(20)
+  payload    Json
+
+  receivedAt  DateTime  @default(now())
+  processedAt DateTime?
+
+  @@unique([provider, externalId])
+  @@index([provider, receivedAt])
+}
+
+/// Idempotence générique des opérations sensibles (paiements, jobs).
+///
+/// Une clé = une empreinte de requête = une réponse figée. Les commandes,
+/// elles, portent leur clé directement (`Order.idempotencyKey`) ; cette table
+/// sert aux opérations qui n'ont pas de table naturellement unique.
+model IdempotencyRecord {
+  scope       String @db.VarChar(60)
+  key         String @db.VarChar(120)
+
+  requestHash    String  @db.VarChar(64)
+  responseStatus Int?
+  responseBody   Json?
+  createdAt      DateTime @default(now())
+  expiresAt      DateTime
+
+  @@id([scope, key])
+  @@index([expiresAt])
+}
+
+/// Journal unifié des envois sortants : push FCM, WhatsApp, SMS, e-mail.
+///
+/// Un seul endroit répond à « ce client a-t-il été prévenu ? » — quel que soit
+/// le canal. Une panne d'agrégateur y laisse une ligne FAILED consultable et
+/// rejouable, jamais un silence.
+model MessageLog {
+  id       String @id @default(uuid()) @db.Uuid
+  /// PUSH|WHATSAPP|SMS|EMAIL
+  channel  String @db.VarChar(20)
+  template String? @db.VarChar(60)
+  toAddress String @db.VarChar(200)
+
+  /// Références informatives, SANS clé étrangère : un journal doit survivre
+  /// à la purge de ce qu'il décrit.
+  userId        String? @db.Uuid
+  orderId       String? @db.Uuid
+  outboxEventId String? @db.Uuid
+
+  providerMessageId String? @db.VarChar(160)
+  /// QUEUED|SENT|FAILED
+  status            String  @default("QUEUED") @db.VarChar(20)
+  error             String? @db.VarChar(500)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([outboxEventId])
+  @@index([userId, createdAt])
 }

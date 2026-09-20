@@ -17,6 +17,51 @@ const envSchema = z.object({
   JWT_REFRESH_SECRET: z.string().min(16),
   JWT_REFRESH_TTL: z.string().default('30d'),
 
+  /**
+   * Secret des appels de Cron cPanel vers /jobs/* (en-tête X-Cron-Secret).
+   * Vide = tous les jobs refusés, fail-closed : un endpoint de jobs ouvert
+   * par oubli de configuration serait une administration anonyme.
+   * Générer : `openssl rand -hex 32`.
+   */
+  CRON_SECRET: z.string().default(''),
+
+  /**
+   * Pool PostgreSQL. Avec l'adaptateur PrismaPg, ces réglages pilotent le
+   * Pool node-postgres (les paramètres `connection_limit` de l'URL ne
+   * s'appliquent pas). Arithmétique mutualisé : connexions totales ≈
+   * processus Passenger × PG_POOL_MAX. Ne pas monter sans connaître le
+   * max_connections de l'hébergeur (docs/refonte/10 § 1).
+   */
+  PG_POOL_MAX: z.coerce.number().int().positive().default(10),
+  PG_CONNECT_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
+  PG_IDLE_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
+  PG_STATEMENT_TIMEOUT_MS: z.coerce.number().int().positive().default(20_000),
+
+  /**
+   * Propriété du stock. `site` (défaut) : chaque commande réserve le stock
+   * chez le site (architecture de transition). `local` : cette base possède
+   * le stock, avec verrouillage transactionnel — à ne basculer QUE quand le
+   * site lit cette base (docs/refonte/08, phase 4) : basculer trop tôt,
+   * c'est deux compteurs pour un même entrepôt, donc de la double vente
+   * réelle. Voir `config/stock-mode.ts`.
+   */
+  STOCK_MODE: z.enum(['site', 'local']).default('site'),
+
+  /**
+   * Diffusion WhatsApp (agrégateur REST générique : Cloud API Meta, WATI…).
+   * URL + jeton absents ⇒ pilote inerte : canal sauté sans erreur (un canal
+   * non configuré n'est pas une panne — docs/refonte/02 § 3.5).
+   */
+  WHATSAPP_API_URL: z.string().default(''),
+  WHATSAPP_API_TOKEN: z.string().default(''),
+
+  /** Diffusion e-mail transactionnelle — SMTP du compte LWS (cPanel). */
+  SMTP_HOST: z.string().default(''),
+  SMTP_PORT: z.coerce.number().int().positive().default(587),
+  SMTP_USER: z.string().default(''),
+  SMTP_PASSWORD: z.string().default(''),
+  SMTP_FROM: z.string().default(''),
+
   // Stockage de fichiers. Le pilote local convient au développement et à un
   // déploiement mono-serveur ; un pilote S3-compatible viendra derrière la
   // même interface sans changer ces réglages métier.

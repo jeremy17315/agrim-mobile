@@ -106,7 +106,7 @@ export function fakeStockTx(options: FakeStockTxOptions = {}) {
       updateMany: jest.fn(
         async (args: {
           where: { id: string; stock?: { gte?: number } };
-          data: { stock: { increment: number } };
+          data: { stock: { increment?: number; decrement?: number } };
         }) => {
           const courant = etat.stocks[args.where.id];
           if (courant === undefined) return { count: 0 };
@@ -114,7 +114,9 @@ export function fakeStockTx(options: FakeStockTxOptions = {}) {
           // La clause du WHERE, évaluée pour de vrai : c'est elle qui empêche
           // un stock négatif, et c'est donc elle qu'il faut simuler.
           if (plancher !== undefined && courant < plancher) return { count: 0 };
-          etat.stocks[args.where.id] = courant + args.data.stock.increment;
+          const delta = (args.data.stock.increment ?? 0) -
+            (args.data.stock.decrement ?? 0);
+          etat.stocks[args.where.id] = courant + delta;
           return { count: 1 };
         },
       ),

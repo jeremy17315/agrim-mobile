@@ -1,5 +1,7 @@
 import { Prisma } from '../../../generated/prisma/client';
+import { currentStockMode } from '../../config/stock-mode';
 import { recordStockMovement } from './stock-movement';
+import { releaseStockForOrder } from './reserve-stock';
 
 /**
  * Annulation d'une commande — POINT DE PASSAGE UNIQUE.
@@ -121,6 +123,24 @@ export async function cancelOrderAndReleaseStock(
       item.variantId,
       (parVariante.get(item.variantId) ?? 0) + item.quantity,
     );
+  }
+
+  // Mode `local` : CETTE base possède le stock — la restitution est réelle
+  // et immédiate (incrément conditionnel + journal véridique), dans CETTE
+  // transaction. Aucune réservation distante n'existe à libérer.
+  // Voir `config/stock-mode.ts` : ce mode ne s'active qu'après la bascule
+  // de la migration (docs/refonte/08, phase 4).
+  if (currentStockMode() === 'local') {
+    const lignes = [...parVariante.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([variantId, quantity]) => ({ variantId, quantity }));
+    await releaseStockForOrder(
+      tx,
+      lignes,
+      commande?.reference ?? null,
+      actorId,
+    );
+    return { released: true, reservationRef: null };
   }
 
   // Le stock n'est PAS recrédité ici : il est retenu par le site, qui en est

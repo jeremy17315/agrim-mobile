@@ -6,6 +6,7 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AddressesModule } from './addresses/addresses.module';
 import { AuthModule } from './auth/auth.module';
 import { CatalogSyncModule } from './catalog-sync/catalog-sync.module';
+import { CatalogModule } from './catalog/catalog.module';
 import { CategoriesModule } from './categories/categories.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
@@ -25,6 +26,7 @@ import { PaymentsModule } from './payments/payments.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProductsModule } from './products/products.module';
 import { ReconciliationModule } from './reconciliation/reconciliation.module';
+import { JobsModule } from './jobs/jobs.module';
 import { ReviewsModule } from './reviews/reviews.module';
 
 @Module({
@@ -45,6 +47,9 @@ import { ReviewsModule } from './reviews/reviews.module';
     // Le catalogue vient du site : cette API en tient une copie, elle ne
     // l'invente plus (voir catalog-sync.service).
     CatalogSyncModule,
+    // Administration du catalogue (back-office) : écritures verrouillées
+    // jusqu'à la bascule STOCK_MODE=local — voir catalog/catalog.service.
+    CatalogModule,
     AddressesModule,
     OrdersModule,
     PaymentsModule,
@@ -59,6 +64,9 @@ import { ReviewsModule } from './reviews/reviews.module';
     // réglés, stock rendu, données de rétention purgées. Sans lui, seule la
     // réouverture de l'écran par le client déclenchait ces traitements.
     ReconciliationModule,
+    // Endpoints des tâches planifiées pour les Cron Jobs cPanel : le crontab
+    // ne contient aucune logique, il réveille l'API (docs/refonte/07 § 4).
+    JobsModule,
     HealthModule,
     LegalModule,
   ],

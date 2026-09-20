@@ -26,9 +26,10 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
+import type { Prisma } from '../../generated/prisma/client';
 import { CatalogSyncService } from '../catalog-sync/catalog-sync.service';
 import { cancelOrderAndReleaseStock } from '../common/stock/order-stock';
-import { NotificationsService } from '../notifications/notifications.service';
+import { kickOutboxDrain } from '../jobs/outbox-drain';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   PAYMENT_PROVIDER,
@@ -87,13 +88,25 @@ export interface PaymentStatusView {
   failureReason: string | null;
 }
 
+/** Meilleure extraction de l'identifiant de transaction d'un appel entrant —
+ * y compris quand sa signature n'a PAS passé : la trace de sécurité vaut ce
+ * qu'elle peut. Borné à 120, comme la colonne qui le porte. */
+function externalIdDe(body: Record<string, unknown>): string | null {
+  for (const champ of ['cpm_trans_id', 'transaction_id', 'providerReference']) {
+    const value = body[champ];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim().slice(0, 120);
+    }
+  }
+  return null;
+}
+
 @Injectable()
 export class PaymentsService {
   private readonly logger = new Logger(PaymentsService.name);
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly notifications: NotificationsService,
     private readonly config: ConfigService,
     private readonly catalog: CatalogSyncService,
     @Inject(PAYMENT_PROVIDER) private readonly gateway: PaymentProvider,
@@ -381,6 +394,29 @@ export class PaymentsService {
           error instanceof Error ? error.message : 'erreur inconnue'
         }`,
       );
+      // Trace de sécurité : un rejet de signature se garde (payload brut,
+      // transaction si lisible). Un doublon de rejet ne réécrit pas la
+      // première trace — elle fait foi.
+      const rejete = await this.recordWebhook(externalIdDe(body), false, body);
+      if (rejete.id) await this.markWebhook(rejete.id, 'REJECTED');
+      return { received: true };
+    }
+
+    // ── Dédoublonnage : LA porte d'idempotence du webhook ──────────────
+    // L'index unique (provider, externalId) tranche : un appel rejoué par
+    // l'opérateur est reconnu, journalisé, et SANS EFFET — peu importe la
+    // fréquence. La bascule conditionnelle du règlement reste la garantie
+    // de fond ; la porte lui évite du travail et garde l'octet brut reçu
+    // pour tout litige (docs/refonte/05, § 4.2).
+    const trace = await this.recordWebhook(
+      reading.providerReference || null,
+      true,
+      body,
+    );
+    if (trace.duplicate) {
+      this.logger.log(
+        `Webhook rejoué reconnu (transaction « ${reading.providerReference} ») : acquitté sans effet.`,
+      );
       return { received: true };
     }
 
@@ -395,6 +431,7 @@ export class PaymentsService {
       this.logger.warn(
         `Callback sans paiement correspondant (transaction « ${reading.providerReference} », commande « ${reading.orderReference} »).`,
       );
+      await this.markWebhook(trace.id, 'IGNORED');
       return { received: true };
     }
 
@@ -412,10 +449,12 @@ export class PaymentsService {
             `« ${reading.orderReference} »). La commande est annulée et le ` +
             `stock rendu : le client a payé sans contrepartie.`,
         );
+        await this.markWebhook(trace.id, 'IGNORED');
         return { received: true };
       }
 
       // Rejeu d'un webhook déjà traité : acquitter sans rien refaire.
+      await this.markWebhook(trace.id, 'IGNORED');
       return { received: true };
     }
 
@@ -431,10 +470,73 @@ export class PaymentsService {
       message = check.message;
     }
 
-    if (outcome === 'PENDING') return { received: true };
+    if (outcome === 'PENDING') {
+      // Rien à trancher encore : le balayage de réconciliation repassera.
+      await this.markWebhook(trace.id, 'IGNORED');
+      return { received: true };
+    }
 
     await this.settle(payment.id, outcome, message);
+    await this.markWebhook(trace.id, 'PROCESSED');
     return { received: true };
+  }
+
+  /**
+   * Inscrit l'appel entrant dans le registre dédoublonné des webhooks.
+   *
+   * L'index unique `(provider, externalId)` est la porte : une ligne existe
+   * déjà ⇒ `duplicate: true`, l'appelant acquitte et n'en fait rien. Une
+   * panne d'écriture du registre n'empêche JAMAIS l'acquittement — le
+   * règlement reste idempotent par sa bascule conditionnelle ; on perd une
+   * trace, pas une garantie.
+   */
+  private async recordWebhook(
+    externalId: string | null,
+    signatureValid: boolean,
+    body: Record<string, unknown>,
+  ): Promise<{ duplicate: boolean; id: string | null }> {
+    if (!externalId) return { duplicate: false, id: null };
+    try {
+      const row = await this.prisma.db.webhookEvent.create({
+        data: {
+          provider: this.gateway.name,
+          externalId,
+          signatureValid,
+          payload: body as unknown as Prisma.InputJsonValue,
+        },
+        select: { id: true },
+      });
+      return { duplicate: false, id: row.id };
+    } catch (error) {
+      // `P2002` sans importer le client généré au chargement du module :
+      // l'erreur Prisma porte son code en propriété — suffisant, et les
+      // suites de test restent exécutables sans le client.
+      if ((error as { code?: string }).code === 'P2002') {
+        return { duplicate: true, id: null };
+      }
+      this.logger.error(
+        `Registre des webhooks indisponible : ${(error as Error).message}`,
+      );
+      return { duplicate: false, id: null };
+    }
+  }
+
+  /** Pose le statut de traitement d'une trace. Ne lève jamais : le
+   * traceur ne doit pas faire échouer le traitement qu'il décrit. */
+  private async markWebhook(
+    id: string | null,
+    status: 'PROCESSED' | 'IGNORED' | 'REJECTED',
+  ): Promise<void> {
+    if (!id) return;
+    try {
+      await this.prisma.db.webhookEvent.update({
+        where: { id },
+        data: { status, processedAt: new Date() },
+      });
+    } catch {
+      // volontairement muet : une trace non mise à jour ne change rien au
+      // règlement, et le payload brut reste la vérité.
+    }
   }
 
   /**
@@ -461,6 +563,7 @@ export class PaymentsService {
               reference: true,
               userId: true,
               status: true,
+              total: true,
               items: { select: { variantId: true, quantity: true } },
             },
           },
@@ -514,6 +617,24 @@ export class PaymentsService {
             comment: 'Paiement confirmé.',
           },
         });
+        // Les événements naissent DANS la transaction du règlement : un
+        // paiement confirmé sans son événement n'existe pas, et la diffusion
+        // ne peut plus être perdue par un process recyclé (docs/refonte/03).
+        // PAYMENT_SUCCEEDED est l'angle système (audit) ; ORDER_CONFIRMED
+        // porte la diffusion client (routage : push + WhatsApp + e-mail).
+        for (const type of ['PAYMENT_SUCCEEDED', 'ORDER_CONFIRMED'] as const) {
+          await tx.outboxEvent.create({
+            data: {
+              type,
+              payload: {
+                userId: order.userId,
+                orderId: order.id,
+                reference: order.reference,
+                total: order.total,
+              },
+            },
+          });
+        }
         return { order, outcome, reservationRef: null };
       }
 
@@ -541,6 +662,36 @@ export class PaymentsService {
             comment: message.slice(0, 500) || 'Paiement refusé.',
           },
         });
+        // Le client doit savoir POUR REESSAYER : l'annulation porte la
+        // diffusion (push + WhatsApp + e-mail) ; PAYMENT_FAILED reste l'audit.
+        for (const type of ['PAYMENT_FAILED', 'ORDER_CANCELLED'] as const) {
+          await tx.outboxEvent.create({
+            data: {
+              type,
+              payload: {
+                userId: order.userId,
+                orderId: order.id,
+                reference: order.reference,
+                total: order.total,
+              },
+            },
+          });
+        }
+      } else {
+        // La commande était déjà annulée (client, bureau) : celui qui l'a
+        // fait a déjà prévenu. L'issue du paiement reste un événement
+        // d'audit — pas un second courrier.
+        await tx.outboxEvent.create({
+          data: {
+            type: 'PAYMENT_FAILED',
+            payload: {
+              userId: order.userId,
+              orderId: order.id,
+              reference: order.reference,
+              total: order.total,
+            },
+          },
+        });
       }
 
       return { order, outcome, reservationRef: released ? reservationRef : null };
@@ -559,20 +710,11 @@ export class PaymentsService {
       }
     }
 
-    // Hors transaction : un service de notification lent ne doit pas maintenir
-    // un verrou sur les lignes de stock.
-    await this.notifications.notify({
-      userId: settled.order.userId,
-      type: outcome === 'PAID' ? 'PAYMENT_SUCCEEDED' : 'PAYMENT_FAILED',
-      reference: settled.order.reference,
-      orderId: settled.order.id,
-    });
-    await this.notifications.notifyOrderStatus({
-      userId: settled.order.userId,
-      status: outcome === 'PAID' ? 'CONFIRMED' : 'CANCELLED',
-      reference: settled.order.reference,
-      orderId: settled.order.id,
-    });
+    // Diffusion AU PLUS TÔT, hors transaction (les verrous sont rendus) :
+    // les événements sont déjà durablement en base — le kick tente de les
+    // diffuser immédiatement, sans jamais bloquer la réponse, et le cron
+    // `outbox-drain` reste le filet de rattrapage (docs/refonte/03 § 3.7).
+    kickOutboxDrain();
   }
 
   /**

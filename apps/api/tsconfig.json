@@ -12,7 +12,11 @@
     "esModuleInterop": true,
     "sourceMap": true,
     "outDir": "./dist",
-    "rootDir": "./src",
+    // rootDir à la racine de l'app : le client Prisma généré (generated/,
+    // sources TypeScript depuis le générateur « prisma-client » v7) est
+    // compilé AVEC src/ — dist/ reflète les deux arbres (dist/src, dist/generated).
+
+    "rootDir": "./",
     "baseUrl": "./",
     "incremental": true,
     "skipLibCheck": true,

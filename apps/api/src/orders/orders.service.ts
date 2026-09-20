@@ -13,6 +13,8 @@ import {
   resolveDeliveryZone,
 } from '@agrim/contracts';
 
+import { currentStockMode } from '../config/stock-mode';
+import { estP2002 } from '../common/prisma/prisma-erreur';
 import { cancelOrderAndReleaseStock } from '../common/stock/order-stock';
 import { recordStockMovement } from '../common/stock/stock-movement';
 import { CatalogSyncService } from '../catalog-sync/catalog-sync.service';
@@ -20,6 +22,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CreateOrderDto } from './dto/create-order.dto';
 import { formatOrderReference } from './order-reference';
+import { CheckoutService } from './checkout.service';
 
 /** Projection commune : l'historique doit être lisible sans jointure côté client. */
 const orderSelect = {
@@ -72,6 +75,7 @@ export class OrdersService {
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
     private readonly catalog: CatalogSyncService,
+    private readonly checkout: CheckoutService,
   ) {}
 
   /**
@@ -84,6 +88,14 @@ export class OrdersService {
    *  3. `idempotencyKey` rend l'opération rejouable sans doublon.
    */
   async create(userId: string, dto: CreateOrderDto) {
+    // Bascule SSOT (docs/refonte/08, phase 4) : quand cette base possède le
+    // stock, la création passe par le checkout transactionnel local — plus
+    // aucune réservation distante. Défaut `site` : le comportement établi
+    // ci-dessous reste seul en production jusqu'à la bascule assumée.
+    if (currentStockMode() === 'local') {
+      return this.checkout.create(userId, dto);
+    }
+
     // Rejouer une requête perdue ne doit jamais créer une seconde commande.
     const replayed = await this.prisma.db.order.findUnique({
       where: { idempotencyKey: dto.idempotencyKey },
@@ -407,6 +419,27 @@ export class OrdersService {
         return order;
       });
     } catch (erreur) {
+      if (estP2002(erreur)) {
+        // Double-clic concurrent : les deux requêtes ont lu « absente » avant
+        // qu'aucune n'écrive ; l'index unique tranche, le perdant relit et
+        // renvoie la commande du GAGNANT. Surtout PAS de compensation ici :
+        // la réservation porte la MÊME clé idempotente que la commande
+        // gagnante — la libérer rendrait au rayon le stock d'une vente réelle.
+        const gagnante = await this.prisma.db.order.findUnique({
+          where: { idempotencyKey: dto.idempotencyKey },
+          select: { id: true, userId: true },
+        });
+        if (gagnante && gagnante.userId === userId) {
+          return this.prisma.db.order.findUniqueOrThrow({
+            where: { id: gagnante.id },
+            select: orderSelect,
+          });
+        }
+        throw new ConflictException({
+          code: 'IDEMPOTENCY_KEY_CONFLICT',
+          message: 'Cette commande ne peut pas être rejouée.',
+        });
+      }
       // Compensation : la réservation est prise mais la commande n'existe pas.
       // Sans ce rattrapage, le stock resterait immobilisé jusqu'à l'expiration
       // — trente minutes de rayon fermé pour rien.
