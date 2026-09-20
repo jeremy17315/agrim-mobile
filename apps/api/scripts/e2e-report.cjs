@@ -39,6 +39,21 @@ try {
 }
 
 const escape = (l) => l.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+// Ce que le runner voit RÉELLEMENT (diagnostic résolution fantôme).
+try {
+  const ws = process.env.GITHUB_WORKSPACE || '.';
+  const base = ws + '/apps/api/src/common';
+  const fs2 = require('fs');
+  const contenu = fs2.existsSync(base) ? fs2.readdirSync(base).sort().join(',') : 'ABSENT';
+  const cible = base + '/prisma/prisma-erreur.ts';
+  const etatFichier = fs2.existsSync(cible)
+    ? `présent (${fs2.statSync(cible).size} o)`
+    : 'ABSENT';
+  const tete = require('child_process').execSync(`git -C ${ws} rev-parse --short HEAD`).toString().trim();
+  console.log('::error::' + escape(`DIAG runner: head=${tete} src/common=[${contenu}] helper=${etatFichier}`));
+} catch (e) {
+  console.log('::error::' + escape(`DIAG runner en échec: ${e.message}`));
+}
 console.log('::error::' + escape(`RESUME e2e: ${JSON.stringify(resume)}`));
 for (const t of tests.slice(0, 8)) {
   console.log('::error::' + escape(`TEST ${t.fichier} :: ${t.nom} :: ${t.msg}`));
