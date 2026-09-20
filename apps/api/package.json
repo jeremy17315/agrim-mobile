@@ -13,7 +13,7 @@
     "db:migrate:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
     "db:update-catalog": "tsx prisma/update-catalog.ts",
-    "test": "jest --runInBand --json --outputFile=/tmp/jest-e2e.json; code=$?; if [ -n \"$CI\" ]; then node scripts/e2e-report.cjs /tmp/jest-e2e.json; fi; exit $code",
+    "test": "jest --runInBand",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "lint": "eslint src prisma --max-warnings 0",
     "format": "prettier --write \"src/**/*.ts\" \"prisma/**/*.ts\""
@@ -46,7 +46,6 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@actions/artifact": "^6.2.1",
     "@eslint/js": "^10.0.1",
     "@nestjs/cli": "^11.0.24",
     "@nestjs/schematics": "^11.1.0",

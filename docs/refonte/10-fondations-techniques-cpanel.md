@@ -323,30 +323,52 @@ même instant, suivies des smoke tests catalogue.
 
 ---
 
-## 7. CI — historique du correctif « Générer le client Prisma » (RÉSOLU côté dépôt)
+## 7. CI — P0 RÉSOLU : les DEUX jobs sont verts (première fois du dépôt)
 
-**Constat** : la CI était rouge sur `main` depuis la migration Prisma 7
-(job « Lint · typecheck · tests unitaires » échouait à « Générer le client
-Prisma »). Cause : Prisma 7 charge `prisma.config.ts` à **tout** appel CLI —
-y compris `generate`, qui n'ouvre pourtant aucune connexion — et exige
-`DATABASE_URL` à ce chargement. Le job e2e passe parce qu'il définit la
-variable ; le job de vérification, non.
+La CI était doublement rouge depuis AVANT toutes les itérations, et chaque
+couche cachait la suivante. Diagnostic posé sans JAMAIS lire les logs
+bloqués du sandbox, par le canal « commandes `::error::` » — GitHub les
+convertit en annotations du check-run, lisibles via l'API (`gh api
+repos/:owner/:repo/check-runs/<jobId>/annotations`). À réutiliser.
 
-**Correctif appliqué (itération « paiements »)** : repli explicite dans
-`apps/api/prisma.config.ts` — la config charge une URL nommée
-`generate-only` quand `DATABASE_URL` est absente. `generate` n'ouvre aucune
-connexion : le job de vérification passe. Toute commande qui touche
-réellement la base (`migrate deploy`, `seed`) reçoit une vraie
-`DATABASE_URL` (job e2e, production) et ne voit jamais le repli ; un
-`migrate` lancé sans variable échoue à la connexion, immédiatement et sans
-ambiguïté. La variante « ajouter un env factice dans `ci.yml` » reste
-possible mais devient inutile.
+**Couche 1 — job `verification` ne tournait pas du tout** : Prisma 7 charge
+`prisma.config.ts` à tout appel CLI, y compris `generate` (aucune
+connexion), et exigeait `DATABASE_URL` que ce job ne définit pas.
+Correctif : repli explicite dans `apps/api/prisma.config.ts` (URL
+`generate-only` non connectable — `migrate`/`seed` reçoivent toujours une
+vraie URL et ne la voient jamais).
 
-**Reste rouge (signature d'origine, antérieure à toutes les itérations)** :
-le job e2e-api échoue au step « Tests d'intégration » — diagnostic bloqué
-sur l'illisibilité des logs depuis le sandbox (voir 00, § journal). Tant que
-ce step est rouge, le job e2e reste le point à éclaircir AVEC les logs d'un
-run vu depuis le navigateur du mainteneur.
+**Couche 2 — le lint n'avait JAMAIS tourné** : 4 erreurs mortes
+(constantes/imports inutilisés) corrigées.
+
+**Couche 3 — le typecheck n'avait JAMAIS tourné** : 18 erreurs réelles,
+dont une de taille — `cron-locks.service.ts` importait
+`'../prisma/prisma.client'` depuis `src/common/cron/` (chemin sans
+existence) : toute suite chargeant le verrou cron crashait au démarrage.
+Leçon de méthode : un `tsc` ad hoc mono-fichier qui filtre les TS2307 ne
+remplace pas `tsc -p tsconfig.typecheck.json` — c'est `--traceResolution`
+qui a révélé un import `estP2002` avec un `../` de trop (résolution vers
+`apps/api/common`, hors `src`). Chemins corrects vérifiés par la résolution
+réelle, jamais à l'œil.
+
+**Couche 4 — le job e2e rouge depuis l'origine** : DEUX causes, toutes
+deux réelles :
+1. **Interférence inter-suites** : jest exécutait les suites EN PARALLÈLE
+   sur LA MÊME base ; les assertions de delta des tableaux de bord
+   (analytics, flows) coupaient leurs deux relevés par les commandes d'une
+   AUTRE suite — rouge déterministe mais illusoire. Correctif :
+   `jest --runInBand` dans le script `test` de l'API (permanent — les
+   suites partagent une base, elles doivent tourner en série).
+2. **`instanceof PrismaClientKnownRequestError` ne survit pas aux copies
+   du client généré** (mock de test, mono-répo) : en CI, les tests P2002 du
+   catalogue voyaient l'erreur relancée brute au lieu du 409 métier.
+   Correctif : `estP2002()` (reconnaissance structurelle par `.code`, la
+   marque stable) dans `src/common/prisma/prisma-erreur.ts`, appliquée aux
+   trois sites (catalog, promotions, checkout).
+
+Résultat : `Lint · typecheck · tests unitaires` ✓ et `Tests d'intégration
+API` ✓ — 364 tests. Le T-CONC-01 et la suite e2e complète sont désormais
+la porte de validation effective de chaque push.
 
 ---
 
