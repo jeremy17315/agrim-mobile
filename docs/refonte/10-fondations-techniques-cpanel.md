@@ -347,3 +347,44 @@ le job e2e-api échoue au step « Tests d'intégration » — diagnostic bloqué
 sur l'illisibilité des logs depuis le sandbox (voir 00, § journal). Tant que
 ce step est rouge, le job e2e reste le point à éclaircir AVEC les logs d'un
 run vu depuis le navigateur du mainteneur.
+
+---
+
+## 11. Itération « paiements » — webhook dédoublonné, outbox dans la transaction
+
+Livrée en `80bfcbc` + correctifs CI (`bd15fba`, `342d912`, `574c1d5`, `5975f25`).
+
+**Règle d'idempotence du webhook** : chaque callback inscrit une ligne
+`WebhookEvent` (index unique `provider + externalId`) AVANT tout traitement.
+`P2002` ⇒ rejeu déjà traité ⇒ acquitté **sans effet** (pas de recherche de
+paiement, pas de transaction). Signature invalide ⇒ trace `REJECTED`
+conservée (payload brut, transaction si lisible). Une panne d'écriture du
+registre n'empêche jamais l'acquittement : la bascule conditionnelle de
+`settle()` reste la garantie de fond, la porte lui évite juste du travail.
+
+**Émission d'outbox DANS la transaction du règlement** : `PAID` ⇒
+`PAYMENT_SUCCEEDED` + `ORDER_CONFIRMED` ; échec avec rendu de stock ⇒
+`PAYMENT_FAILED` + `ORDER_CANCELLED` ; commande déjà annulée ⇒ audit seul
+(pas de second courrier). Les notifications directes du service sont
+SUPPRIMÉES : la diffusion part du drain (`kickOutboxDrain` post-commit, cron
+`outbox-drain` en filet) — voir docs/refonte/03 § 3.7.
+
+**Corrections au passage (première exécution réelle de lint/typecheck en
+CI — le job `verification` était court-circuité depuis la migration Prisma
+7)** :
+- `cron-locks.service.ts` importait `'../prisma/prisma.client'` depuis
+  `src/common/cron/` — chemin qui ne résolvait vers RIEN. Toute suite
+  chargeant le verrou cron crashait au démarrage. **Candidate n°1 à la
+  rouge e2e historique** — le fix est poussé, le job e2e reste néanmoins
+  rouge : logs requis (voir § 7).
+- `messaging.dispatcher` : `email` déclaré non-nullable alors que le schéma
+  le rend nullable (les voies SKIPPED géraient déjà l'absence).
+- `catalog.spec` : ordre spread/identifiant dans les fakes + signature
+  réelle de `PrismaClientKnownRequestError` (`clientVersion` requis).
+- lint : constantes/imports morts (`IsISO8601`, `prisma`, `actorId`).
+
+**État CI** : job `Lint · typecheck · tests unitaires` — **VERT pour la
+première fois** (generate, lint, typecheck strict des 3 workspaces, tests
+contrats + mobile). Job e2e : rouge au step « Tests d'intégration »,
+signature antérieure à toutes les itérations, diagnostic bloqué sur
+l'illisibilité des logs depuis le sandbox.
