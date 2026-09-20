@@ -38,7 +38,7 @@
 | 9 | Stratégie de migration des données | `08-migration-donnees.md` | ✅ |
 | 10 | Plan de tests complet | `09-plan-de-tests.md` | ✅ |
 | 11 | Fondations techniques cPanel (code : Prisma/pool, stock, crons) | `10-fondations-techniques-cpanel.md` | ✅ |
-12. [Consommation de l'API centrale par le site](12-site-consommation-api.md)
+13. [Consommation de l'API centrale par le site](12-site-consommation-api.md)
 | 12 | Checklist GO / NO-GO avant développement | `11-checklist-go-nogo.md` | ✅ |
 
 ## Rapport avec la documentation historique

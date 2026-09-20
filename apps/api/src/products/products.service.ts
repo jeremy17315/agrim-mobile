@@ -62,7 +62,14 @@ const productSelect = {
  * promotionnel. */
 function projetteVariante<
   V extends {
+    id: string;
+    sku: string;
+    label: string;
+    weightGrams: number;
     price: number;
+    originalPrice: number | null;
+    stock: number;
+    isAvailable: boolean;
     promotions: {
       isActive: boolean;
       priceXof: number;
@@ -72,10 +79,18 @@ function projetteVariante<
     }[];
   },
 >(variante: V) {
+  // Projection EXPLICITE : le payload public est un contrat, pas un
+  // reflet de la base (même esprit que « jamais de SELECT * »).
   const promo = promosActives(variante.promotions)[0] ?? null;
-  const { promotions, ...reste } = variante;
   return {
-    ...reste,
+    id: variante.id,
+    sku: variante.sku,
+    label: variante.label,
+    weightGrams: variante.weightGrams,
+    price: variante.price,
+    originalPrice: variante.originalPrice,
+    stock: variante.stock,
+    isAvailable: variante.isAvailable,
     effectivePrice: prixEffectif(variante.price, promo),
     promotion: promo
       ? { label: promo.label, priceXof: promo.priceXof, endsAt: promo.endsAt }
