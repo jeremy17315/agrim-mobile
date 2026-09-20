@@ -14,6 +14,7 @@ import {
 } from '@agrim/contracts';
 
 import { currentStockMode } from '../config/stock-mode';
+import { estP2002 } from '../common/prisma/prisma-erreur';
 import { cancelOrderAndReleaseStock } from '../common/stock/order-stock';
 import { recordStockMovement } from '../common/stock/stock-movement';
 import { CatalogSyncService } from '../catalog-sync/catalog-sync.service';
@@ -418,6 +419,27 @@ export class OrdersService {
         return order;
       });
     } catch (erreur) {
+      if (estP2002(erreur)) {
+        // Double-clic concurrent : les deux requêtes ont lu « absente » avant
+        // qu'aucune n'écrive ; l'index unique tranche, le perdant relit et
+        // renvoie la commande du GAGNANT. Surtout PAS de compensation ici :
+        // la réservation porte la MÊME clé idempotente que la commande
+        // gagnante — la libérer rendrait au rayon le stock d'une vente réelle.
+        const gagnante = await this.prisma.db.order.findUnique({
+          where: { idempotencyKey: dto.idempotencyKey },
+          select: { id: true, userId: true },
+        });
+        if (gagnante && gagnante.userId === userId) {
+          return this.prisma.db.order.findUniqueOrThrow({
+            where: { id: gagnante.id },
+            select: orderSelect,
+          });
+        }
+        throw new ConflictException({
+          code: 'IDEMPOTENCY_KEY_CONFLICT',
+          message: 'Cette commande ne peut pas être rejouée.',
+        });
+      }
       // Compensation : la réservation est prise mais la commande n'existe pas.
       // Sans ce rattrapage, le stock resterait immobilisé jusqu'à l'expiration
       // — trente minutes de rayon fermé pour rien.

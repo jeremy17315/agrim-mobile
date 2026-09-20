@@ -67,7 +67,31 @@ Le front n'envoie QUE des identifiants, des quantités et une ville
    frais. `POST /cart/quote` est né (public, throttlé, idempotent par
    construction).
 
-## 4. Ce qui reste côté site (trajectoire)
+## 4. Commander et payer depuis le site (P2 bis — prouvé par e2e `web-checkout.e2e.spec.ts`)
+
+Le parcours complet, joué de bout en bout en CI par un faux navigateur :
+
+| Étape | Requête | Ce qu'il faut savoir |
+| --- | --- | --- |
+| 1. Compte | `POST /auth/register` puis `POST /auth/login` | Le compte central est LA identité (phase 2 de la migration) ; le JWT porte tout |
+| 2. Adresse | `POST /addresses` | La ville résout la zone de livraison CÔTÉ SERVEUR |
+| 3. Devis | `POST /cart/quote` | Affichage : le montant écran = montant facture (e2e dédié) |
+| 4. Commande | `POST /orders` | `idempotencyKey` (UUID généré AVANT l'envoi) : double-clic, réseau qui coupe, requête rejouée ⇒ UNE commande. Concurrent compris : le perdant est servi avec la commande du gagnant (index unique), jamais un 500 |
+| 5. Paiement | `POST /payments/orders/:reference/initiate` | Ouvre la transaction Mobile Money. Réponse `PENDING` (async réel) ou tranchée immédiate selon l'opérateur |
+| 6. Confirmation | webhook opérateur → `settle()` | La commande passe CONFIRMED seule ; le client voit l'état via `GET /orders/:reference` |
+| 7. Rejeu webhook | — | Acquitté **sans second effet** (index `provider+externalId`) — l'e2e rejoue et compte les événements |
+
+Sécurité éprouvée en e2e : un autre compte reçoit **404** (pas 403 — ne pas
+révéler l'existence) sur la lecture ET l'initiation du paiement d'autrui.
+
+Correction portée par l'itération : le chemin `site` de `POST /orders` ne
+rattrapait pas la course concurrente — le perdant d'un double-clic recevait
+un 500 brut, et pire, la compensation aurait **libéré le stock de la
+commande gagnante** (même clé idempotente = même réservation). Désormais :
+P2002 ⇒ relecture ⇒ commande du gagnant, compensation uniquement sur les
+vrais échecs.
+
+## 5. Ce qui reste côté site (trajectoire)
 
 - **Transition (actuel)** : le site garde son checkout et CinetPay en
   production ; son front remplace progressivement ses propres lectures par
