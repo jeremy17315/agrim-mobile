@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '../../generated/prisma/client';
+import { estP2002 } from '../../common/prisma/prisma-erreur';
 
 import { prisma } from '../prisma/prisma.client';
 import { CatalogService, assertPromotionDates } from './catalog.service';
@@ -88,10 +88,7 @@ export class PromotionsService {
     } catch (error) {
       // Course entre deux créations : l'index partiel tranche. La perdante
       // sait qu'une autre promo vient d'être posée — à elle de relire.
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2002'
-      ) {
+      if (estP2002(error)) {
         throw new ConflictException({
           code: 'PROMOTION_ALREADY_ACTIVE',
           message: 'Une promotion active existe déjà pour cette variante (création concurrente).',

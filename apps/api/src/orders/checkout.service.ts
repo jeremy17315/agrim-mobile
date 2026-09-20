@@ -14,6 +14,7 @@ import {
   type DeliveryGrid,
 } from '@agrim/contracts';
 import { Prisma } from '../../generated/prisma/client';
+import { estP2002 } from '../../common/prisma/prisma-erreur';
 
 import {
   lockVariantsForOrder,
@@ -259,8 +260,7 @@ export class CheckoutService {
         });
       } catch (erreur) {
         if (
-          erreur instanceof Prisma.PrismaClientKnownRequestError &&
-          erreur.code === 'P2002'
+          estP2002(erreur)
         ) {
           isReplay = true;
           return this.replay(tx, dto.idempotencyKey, userId);

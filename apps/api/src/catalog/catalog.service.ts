@@ -5,7 +5,7 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { Prisma } from '../../generated/prisma/client';
+import { estP2002 } from '../../common/prisma/prisma-erreur';
 
 import { currentStockMode } from '../config/stock-mode';
 import { prisma } from '../prisma/prisma.client';
@@ -57,10 +57,7 @@ export class CatalogService {
 
   /** Traduit les violations d'unicité en erreurs métier lisibles. */
   private mapUniqueness(error: unknown, code: string, message: string): never | void {
-    if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === 'P2002'
-    ) {
+    if (estP2002(error)) {
       throw new ConflictException({ code, message });
     }
   }
