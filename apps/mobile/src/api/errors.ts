@@ -58,6 +58,13 @@ const MESSAGES: Record<string, string> = {
   FORBIDDEN_ROLE: "Vous n'avez pas accès à cette fonctionnalité.",
   PRODUCT_NOT_FOUND: 'Ce produit n’est plus disponible.',
   INSUFFICIENT_STOCK: 'Stock insuffisant pour cette quantité.',
+  VARIANT_UNAVAILABLE: 'Un article de votre panier n’est plus disponible.',
+  VARIANT_NOT_FOUND: 'Un article de votre panier n’existe plus.',
+  VARIANT_NOT_SYNCED: 'Un article est momentanément indisponible. Réessayez.',
+  STOCK_SERVICE_UNAVAILABLE: 'La disponibilité est momentanément indisponible. Réessayez.',
+  PICKUP_POINT_REQUIRED: 'Choisissez un point de vente.',
+  PICKUP_POINT_CITY_MISMATCH: 'Ce point de vente ne correspond pas à la ville choisie.',
+  PICKUP_DELIVERY_FEE_INVALID: 'Un retrait en point de vente ne peut pas avoir de frais de livraison.',
   INVALID_RESPONSE: 'Réponse inattendue du serveur.',
 };
 

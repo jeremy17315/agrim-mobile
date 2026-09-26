@@ -9,11 +9,13 @@ import { z } from 'zod';
 
 import {
   DELIVERY_STATUSES,
+  DELIVERY_FEE_STATUSES,
   MOBILE_MONEY_PROVIDERS,
   NOTIFICATION_TYPES,
   ORDER_STATUSES,
   PAYMENT_METHODS,
   PAYMENT_STATUSES,
+  RECEPTION_MODES,
   ROLES,
   STOCK_MOVEMENT_TYPES,
 } from './enums';
@@ -112,6 +114,17 @@ export const createAddressSchema = z.object({
   isDefault: z.boolean().optional(),
 });
 export type CreateAddressInput = z.infer<typeof createAddressSchema>;
+
+/** Point de vente proposé pour un retrait. La ville est la clé de filtrage. */
+export const pickupPointSchema = z.object({
+  id: idSchema,
+  name: z.string().min(1).max(120),
+  city: z.string().min(1).max(80),
+  address: z.string().max(255).nullable(),
+  phone: phoneSchema.nullable(),
+  isActive: z.boolean(),
+});
+export type PickupPoint = z.infer<typeof pickupPointSchema>;
 
 /* ───────────────────────── Catalogue / Produits ────────────────────────── */
 
@@ -238,6 +251,8 @@ export const orderSchema = z.object({
   subtotal: moneySchema,
   deliveryFee: moneySchema,
   total: moneySchema,
+  deliveryFeeStatus: z.enum(DELIVERY_FEE_STATUSES).optional(),
+  receptionMode: z.enum(RECEPTION_MODES).optional(),
   address: addressSchema.omit({ isDefault: true }),
   paymentMethod: z.enum(PAYMENT_METHODS),
   paymentStatus: z.enum(PAYMENT_STATUSES),
@@ -273,6 +288,20 @@ export const createOrderSchema = z.object({
   note: z.string().max(500).optional(),
 });
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;
+
+/** Commande mobile sans compte : le téléphone est le seul contact requis. */
+export const createGuestOrderSchema = z.object({
+  customerName: z.string().trim().min(2).max(160),
+  customerPhone: phoneSchema,
+  items: z.array(createOrderItemSchema).min(1).max(50),
+  receptionMode: z.enum(RECEPTION_MODES),
+  city: z.string().trim().min(1).max(80),
+  district: z.string().trim().max(120).optional(),
+  landmark: z.string().trim().max(255).optional(),
+  pickupPointId: idSchema.optional(),
+  idempotencyKey: z.uuid(),
+});
+export type CreateGuestOrderInput = z.infer<typeof createGuestOrderSchema>;
 
 /* ──────────────────────────────── Paiement ─────────────────────────────── */
 
@@ -373,12 +402,19 @@ export const managedOrderSchema = z.object({
   id: idSchema,
   reference: z.string(),
   status: z.enum(ORDER_STATUSES),
+  subtotal: moneySchema.optional(),
   total: z.number().int(),
+  deliveryFee: moneySchema.optional(),
+  deliveryFeeStatus: z.enum(DELIVERY_FEE_STATUSES).optional(),
+  receptionMode: z.enum(RECEPTION_MODES).optional(),
   itemCount: z.number().int(),
   createdAt: z.iso.datetime(),
   customerName: z.string(),
   customerPhone: z.string(),
   city: z.string().nullable(),
+  locality: z.string().nullable().optional(),
+  deliveryLandmark: z.string().nullable().optional(),
+  pickupPoint: pickupPointSchema.nullable().optional(),
   /**
    * Présence d'une course déjà affectée : évite une double assignation.
    *

@@ -8,6 +8,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { usePushRegistration } from '@/lib/usePushRegistration';
 import { useAuthStore } from '@/store/auth';
+import { useOnboardingStore } from '@/store/onboarding';
 import { palette } from '@/theme/tokens';
 
 /**
@@ -32,7 +33,10 @@ export default function RootLayout() {
       }),
   );
 
-  const hydrated = useAuthStore((s) => s.hydrated);
+  const authHydrated = useAuthStore((s) => s.hydrated);
+  const onboardingHydrated = useOnboardingStore((s) => s.hydrated);
+  const hasStarted = useOnboardingStore((s) => s.hasStarted);
+  const hydrated = authHydrated && onboardingHydrated;
   const isAuthenticated = useAuthStore((s) => s.accessToken !== null);
   // L'espace livreur n'a de sens que pour un livreur. Ce guard masque l'onglet
   // et la route ; le serveur reste seul juge des droits réels.
@@ -51,10 +55,12 @@ export default function RootLayout() {
     (s) => s.user?.role === 'DG' || s.user?.role === 'ADMIN',
   );
   const restore = useAuthStore((s) => s.restore);
+  const restoreOnboarding = useOnboardingStore((s) => s.restore);
 
   useEffect(() => {
     void restore();
-  }, [restore]);
+    void restoreOnboarding();
+  }, [restore, restoreOnboarding]);
 
   // Jeton de notification : lié à la session, pas à un écran.
   usePushRegistration();
@@ -71,38 +77,40 @@ export default function RootLayout() {
                 contentStyle: { backgroundColor: palette.bg },
               }}
             >
-              {/*
-                Le catalogue reste consultable sans compte : obliger à s'inscrire
-                avant même de voir les produits ferait fuir des clients.
-                Seul le tunnel de commande exige une session.
-              */}
-              <Stack.Screen name="(tabs)" />
-              <Stack.Screen name="produit/[slug]" />
+              <Stack.Protected guard={!hasStarted}>
+                <Stack.Screen name="bienvenue" />
+              </Stack.Protected>
 
-              <Stack.Protected guard={!isAuthenticated}>
+              {/* Catalogue, panier et checkout restent accessibles sans compte. */}
+              <Stack.Protected guard={hasStarted}>
+                <Stack.Screen name="(tabs)" />
+                <Stack.Screen name="produit/[slug]" />
+                <Stack.Screen name="commande" />
+              </Stack.Protected>
+
+              <Stack.Protected guard={hasStarted && !isAuthenticated}>
                 <Stack.Screen name="(auth)" />
               </Stack.Protected>
 
-              <Stack.Protected guard={isAuthenticated}>
-                <Stack.Screen name="commande" />
+              <Stack.Protected guard={hasStarted && isAuthenticated}>
                 <Stack.Screen name="commandes" />
                 <Stack.Screen name="notifications" />
                 <Stack.Screen name="parrainage" />
               </Stack.Protected>
 
-              <Stack.Protected guard={isAuthenticated && isCourier}>
+              <Stack.Protected guard={hasStarted && isAuthenticated && isCourier}>
                 <Stack.Screen name="tournee" />
               </Stack.Protected>
 
-              <Stack.Protected guard={isAuthenticated && isProducer}>
+              <Stack.Protected guard={hasStarted && isAuthenticated && isProducer}>
                 <Stack.Screen name="exploitation" />
               </Stack.Protected>
 
-              <Stack.Protected guard={isAuthenticated && isExecutive}>
+              <Stack.Protected guard={hasStarted && isAuthenticated && isExecutive}>
                 <Stack.Screen name="direction" />
               </Stack.Protected>
 
-              <Stack.Protected guard={isAuthenticated && isManager}>
+              <Stack.Protected guard={hasStarted && isAuthenticated && isManager}>
                 <Stack.Screen name="gestion" />
               </Stack.Protected>
             </Stack>

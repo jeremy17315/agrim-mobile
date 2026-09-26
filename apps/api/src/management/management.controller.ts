@@ -29,6 +29,7 @@ import {
 } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { AdjustStockDto } from './dto/adjust-stock.dto';
+import { UpdateDeliveryFeeDto } from './dto/update-delivery-fee.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 import { ManagementService } from './management.service';
 
@@ -67,6 +68,16 @@ export class ManagementController {
   @ApiOperation({ summary: 'Détail complet d’une commande' })
   getOrder(@Param('reference') reference: string) {
     return this.management.getOrder(reference);
+  }
+
+  @Patch('orders/:reference/delivery-fee')
+  @ApiOperation({ summary: 'Confirmer les frais de livraison d’une commande' })
+  updateDeliveryFee(
+    @Param('reference') reference: string,
+    @Body() dto: UpdateDeliveryFeeDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.management.updateDeliveryFee(user.id, reference, dto);
   }
 
   @Patch('orders/:reference/status')

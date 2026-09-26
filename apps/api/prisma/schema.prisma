@@ -55,6 +55,16 @@ enum PaymentMethod {
   CASH_ON_DELIVERY
 }
 
+enum ReceptionMode {
+  HOME_DELIVERY
+  PICKUP_POINT
+}
+
+enum DeliveryFeeStatus {
+  TO_CONFIRM
+  CONFIRMED
+}
+
 enum MobileMoneyProvider {
   ORANGE_MONEY
   MTN_MOMO
@@ -150,6 +160,8 @@ model User {
   passwordHash String
   role         Role    @default(CLIENT)
   isActive     Boolean @default(true)
+  /// Compte technique créé pour une commande invitée, jamais demandé au client.
+  isGuest      Boolean @default(false)
 
   // Parrainage (section 33). `referralCode` est attribué à l'inscription de
   // TOUS les comptes (pas seulement CLIENT), pour rester simple. Le crédit
@@ -179,6 +191,7 @@ model User {
   updatedAt DateTime @updatedAt
 
   @@index([role])
+  @@index([isGuest])
   @@index([referredById])
 }
 
@@ -418,6 +431,23 @@ model CartItem {
   @@index([cartId])
 }
 
+/* ────────────────────────────── Points de vente ───────────────────── */
+
+/// Points de retrait publiés par AGRIM, filtrés par ville au checkout.
+model PickupPoint {
+  id        String  @id @default(uuid()) @db.Uuid
+  name      String  @db.VarChar(120)
+  city      String  @db.VarChar(80)
+  address   String? @db.VarChar(255)
+  phone     String? @db.VarChar(20)
+  isActive  Boolean @default(true)
+  orders    Order[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([city, isActive])
+}
+
 /* ────────────────────────────── Commandes ──────────────────────────── */
 
 model Order {
@@ -431,9 +461,20 @@ model Order {
   subtotal    Int
   deliveryFee Int
   total       Int
+  deliveryFeeStatus DeliveryFeeStatus @default(CONFIRMED)
+
+  /// Instantané du client : utile pour les commandes invitées et l'historique.
+  customerName  String? @db.VarChar(160)
+  customerPhone String? @db.VarChar(20)
+  receptionMode ReceptionMode @default(HOME_DELIVERY)
+  city          String? @db.VarChar(80)
+  district      String? @db.VarChar(120)
+  landmark      String? @db.VarChar(255)
 
   addressId String  @db.Uuid
   address   Address @relation(fields: [addressId], references: [id])
+  pickupPointId String? @db.Uuid
+  pickupPoint   PickupPoint? @relation(fields: [pickupPointId], references: [id])
   note      String? @db.VarChar(500)
 
   /// Empêche les doublons quand le réseau coupe et que le mobile rejoue.

@@ -4,6 +4,7 @@ import { Image, Pressable, StyleSheet, View } from 'react-native';
 
 import { Icon, Pill, Text } from '@/components/ui';
 import { formatXof } from '@/lib/format';
+import { useCartStore } from '@/store/cart';
 import { palette, radius, shadow, spacing } from '@/theme/tokens';
 
 export type ProductCardProps = {
@@ -19,6 +20,7 @@ export type ProductCardProps = {
  * mention induirait en erreur au moment du panier.
  */
 export function ProductCard({ product, onPress }: ProductCardProps) {
+  const addItem = useCartStore((state) => state.addItem);
   const available = product.variants.filter(
     (v) => v.isAvailable && v.stock > 0,
   );
@@ -105,6 +107,19 @@ export function ProductCard({ product, onPress }: ProductCardProps) {
             </Text>
           </View>
         </View>
+        <Pressable
+          disabled={outOfStock}
+          onPress={() => {
+            if (cheapestVariant) addItem(product, cheapestVariant);
+          }}
+          accessibilityLabel="Ajouter au panier"
+          style={({ pressed }) => [styles.addButton, outOfStock && styles.addDisabled, pressed && styles.pressed]}
+        >
+          <Icon name="shopping-cart" size={14} color={outOfStock ? 'muted' : 'white'} />
+          <Text variant="micro" style={{ color: outOfStock ? palette.muted : palette.white }}>
+            AJOUTER AU PANIER
+          </Text>
+        </Pressable>
       </View>
     </Pressable>
   );
@@ -148,6 +163,18 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     gap: spacing.xs,
   },
+  addButton: {
+    minHeight: 40,
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: palette.green,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+  },
+  addDisabled: { backgroundColor: palette.line },
   footer: {
     flexDirection: 'row',
     alignItems: 'flex-end',

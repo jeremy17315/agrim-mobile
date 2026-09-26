@@ -284,7 +284,10 @@ function OrderRow({
   onOpen: () => void;
 }) {
   const action = managerActionFor(order.status);
-  const needsCourier = awaitsCourierAssignment(order.status);
+  const needsCourier =
+    awaitsCourierAssignment(order.status) && order.receptionMode !== 'PICKUP_POINT';
+  const canCompletePickup =
+    order.receptionMode === 'PICKUP_POINT' && order.status === 'READY';
 
   return (
     <Card style={styles.card}>
@@ -304,7 +307,11 @@ function OrderRow({
           {order.customerName} · {order.itemCount}{' '}
           {order.itemCount > 1 ? 'articles' : 'article'}
           {order.city ? ` · ${order.city}` : ''}
+          {order.receptionMode === 'PICKUP_POINT' ? ' · Retrait' : ' · Livraison'}
         </Text>
+        {order.deliveryFeeStatus === 'TO_CONFIRM' ? (
+          <Text variant="micro" color="warn">FRAIS DE LIVRAISON À CONFIRMER</Text>
+        ) : null}
 
         {/*
           Sans ce bandeau, une commande revenue d'une tentative ratée serait
@@ -331,11 +338,23 @@ function OrderRow({
           <Text variant="caption" color="muted">
             {formatRelativeTime(order.createdAt)}
           </Text>
-          <Text variant="bodyStrong">{formatXof(order.total)}</Text>
+          <Text variant="micro" color="muted">
+            {order.deliveryFeeStatus === 'TO_CONFIRM' ? 'TOTAL PRODUITS' : 'TOTAL'}
+          </Text>
+          <Text variant="bodyStrong">
+            {formatXof(order.deliveryFeeStatus === 'TO_CONFIRM' ? order.subtotal ?? order.total : order.total)}
+          </Text>
         </View>
 
-        {/* Une commande prête attend un livreur, pas un changement d'état. */}
-        {needsCourier ? (
+        {/* Un retrait prêt est remis au client par la gestion ; une livraison attend un livreur. */}
+        {canCompletePickup ? (
+          <Button
+            label="Marquer le retrait remis"
+            size="sm"
+            onPress={() => onAdvance('DELIVERED')}
+            disabled={busy}
+          />
+        ) : needsCourier ? (
           order.hasCourier ? (
             <View style={styles.assigned}>
               <Icon name="check" size={13} color="green" />

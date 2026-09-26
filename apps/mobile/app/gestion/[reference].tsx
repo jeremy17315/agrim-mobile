@@ -21,12 +21,13 @@ import {
   useCouriers,
   useManagedOrders,
   useUpdateOrderStatus,
+  useUpdateDeliveryFee,
   useAssignCourier,
 } from '@/api/management';
 import { ManualClosureSheet } from '@/components/ManualClosureSheet';
 import { OrderStatusPill } from '@/components/OrderStatusPill';
 import { EmptyState, ErrorState, Skeleton } from '@/components/states';
-import { Banner, Button, Card, Icon, Text } from '@/components/ui';
+import { Banner, Button, Card, Icon, Input, Text } from '@/components/ui';
 import { formatPhone, formatRelativeTime, formatXof } from '@/lib/format';
 import { palette, radius, spacing } from '@/theme/tokens';
 
@@ -48,11 +49,16 @@ export default function GestionCommandeScreen() {
   const orders = useManagedOrders({ search: reference });
   const couriers = useCouriers();
   const updateStatus = useUpdateOrderStatus();
+  const updateDeliveryFee = useUpdateDeliveryFee();
   const assignCourier = useAssignCourier();
+  const [feeInput, setFeeInput] = useState('');
 
   const order = orders.data?.find((o) => o.reference === reference);
   const action = order ? managerActionFor(order.status) : null;
-  const needsCourier = order ? awaitsCourierAssignment(order.status) : false;
+  const needsCourier =
+    order ? awaitsCourierAssignment(order.status) && order.receptionMode !== 'PICKUP_POINT' : false;
+  const canCompletePickup =
+    order?.receptionMode === 'PICKUP_POINT' && order.status === 'READY';
   const canCancel = order ? isCancellableByManager(order.status) : false;
   // La clôture d'exception n'a de sens qu'une fois le colis parti : avant, il
   // n'y a rien à attester.
@@ -131,6 +137,25 @@ export default function GestionCommandeScreen() {
   const callCustomer = () => {
     if (!order) return;
     void Linking.openURL(`tel:${order.customerPhone}`);
+  };
+
+  const confirmDeliveryFee = () => {
+    if (!order) return;
+    const value = Number(feeInput.trim());
+    if (!Number.isInteger(value) || value < 0) {
+      Alert.alert('Montant invalide', 'Saisissez un montant en FCFA, sans décimales.');
+      return;
+    }
+    updateDeliveryFee.mutate(
+      { reference: order.reference, deliveryFee: value },
+      {
+        onSuccess: () => {
+          setFeeInput('');
+          void orders.refetch();
+        },
+        onError: () => Alert.alert('Mise à jour impossible', 'Réessayez dans un instant.'),
+      },
+    );
   };
 
   return (
@@ -217,6 +242,25 @@ export default function GestionCommandeScreen() {
           </Card>
 
           <Card style={styles.card}>
+            <Text variant="h3">Réception</Text>
+            <Text variant="bodyStrong">
+              {order.receptionMode === 'PICKUP_POINT' ? 'Retrait en point de vente' : 'Livraison à domicile'}
+            </Text>
+            {order.locality ? <Text variant="caption" color="body">Quartier / localité : {order.locality}</Text> : null}
+            {order.deliveryLandmark ? <Text variant="caption" color="muted">Indication : {order.deliveryLandmark}</Text> : null}
+            {order.pickupPoint ? <Text variant="caption" color="body">Point : {order.pickupPoint.name} · {order.pickupPoint.city}</Text> : null}
+            {order.receptionMode !== 'PICKUP_POINT' && order.deliveryFeeStatus === 'TO_CONFIRM' ? (
+              <View style={styles.feeBox}>
+                <Text variant="caption" color="muted">Frais de livraison : À CONFIRMER</Text>
+                <Input label="Montant confirmé (FCFA)" placeholder="3500" keyboardType="number-pad" value={feeInput} onChangeText={setFeeInput} />
+                <Button label="Enregistrer les frais" size="sm" onPress={confirmDeliveryFee} loading={updateDeliveryFee.isPending} />
+              </View>
+            ) : (
+              <Text variant="caption" color="green">Frais de livraison : {formatXof(order.deliveryFee ?? 0)}</Text>
+            )}
+          </Card>
+
+          <Card style={styles.card}>
             <View style={styles.rowBetween}>
               <Text variant="h3">Contenu</Text>
               <Text variant="caption" color="muted">
@@ -225,10 +269,10 @@ export default function GestionCommandeScreen() {
             </View>
             <View style={styles.total}>
               <Text variant="body" style={styles.flex}>
-                Total
+                {order.deliveryFeeStatus === 'TO_CONFIRM' ? 'Total produits' : 'Total'}
               </Text>
               <Text variant="h2" color="green">
-                {formatXof(order.total)}
+                {formatXof(order.deliveryFeeStatus === 'TO_CONFIRM' ? order.subtotal ?? order.total : order.total)}
               </Text>
             </View>
           </Card>
@@ -260,7 +304,13 @@ export default function GestionCommandeScreen() {
           ) : null}
 
           <View style={styles.actions}>
-            {needsCourier && !order.hasCourier ? (
+            {canCompletePickup ? (
+              <Button
+                label="Marquer le retrait remis"
+                onPress={() => advance('DELIVERED')}
+                loading={busy}
+              />
+            ) : needsCourier && !order.hasCourier ? (
               <Button
                 label={
                   order.awaitingRetry
@@ -366,6 +416,7 @@ const styles = StyleSheet.create({
     padding: spacing.md,
   },
   actions: { gap: spacing.sm },
+  feeBox: { gap: spacing.sm, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: palette.line },
   override: {
     alignItems: 'center',
     gap: spacing.xs,

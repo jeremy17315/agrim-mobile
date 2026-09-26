@@ -2,6 +2,7 @@ import {
   addressSchema,
   orderSchema,
   paginated,
+  pickupPointSchema,
   type Address,
   type CreateAddressInput,
   type MobileMoneyProvider,
@@ -45,6 +46,14 @@ const orderDetailSchema = z.object({
   subtotal: z.number().int(),
   deliveryFee: z.number().int(),
   total: z.number().int(),
+  deliveryFeeStatus: z.enum(['TO_CONFIRM', 'CONFIRMED']).optional(),
+  receptionMode: z.enum(['HOME_DELIVERY', 'PICKUP_POINT']).optional(),
+  customerName: z.string().nullable().optional(),
+  customerPhone: z.string().nullable().optional(),
+  city: z.string().nullable().optional(),
+  district: z.string().nullable().optional(),
+  landmark: z.string().nullable().optional(),
+  pickupPoint: pickupPointSchema.nullable().optional(),
   note: z.string().nullable(),
   createdAt: z.iso.datetime(),
   items: z.array(
@@ -89,6 +98,28 @@ export const addressKeys = {
   all: ['addresses'] as const,
   list: () => [...addressKeys.all, 'list'] as const,
 };
+
+/* -------------------------- Points de retrait -------------------------- */
+
+const pickupPointsSchema = z.array(pickupPointSchema);
+
+export function fetchPickupPoints(city?: string, signal?: AbortSignal) {
+  return apiRequest({
+    path: '/orders/pickup-points',
+    query: { city },
+    schema: pickupPointsSchema,
+    isPublic: true,
+    signal,
+  });
+}
+
+export function usePickupPoints(city?: string) {
+  return useQuery({
+    queryKey: ['pickup-points', city ?? 'all'],
+    queryFn: ({ signal }) => fetchPickupPoints(city, signal),
+    staleTime: 10 * 60 * 1000,
+  });
+}
 
 /* -------------------------------- Adresses ------------------------------ */
 
@@ -140,6 +171,41 @@ export function createOrder(payload: CreateOrderPayload): Promise<OrderDetail> {
     path: '/orders',
     body: payload,
     schema: orderDetailSchema,
+  });
+}
+
+export type CreateGuestOrderPayload = {
+  customerName: string;
+  customerPhone: string;
+  items: { variantId: string; quantity: number }[];
+  receptionMode: 'HOME_DELIVERY' | 'PICKUP_POINT';
+  city: string;
+  district?: string;
+  landmark?: string;
+  pickupPointId?: string;
+  idempotencyKey: string;
+};
+
+export function createGuestOrder(
+  payload: CreateGuestOrderPayload,
+): Promise<OrderDetail> {
+  return apiRequest({
+    method: 'POST',
+    path: '/orders/guest',
+    body: payload,
+    schema: orderDetailSchema,
+    isPublic: true,
+  });
+}
+
+export function useCreateGuestOrder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: createGuestOrder,
+    onSuccess: (order) => {
+      queryClient.setQueryData(orderKeys.detail(order.reference), order);
+    },
+    retry: false,
   });
 }
 

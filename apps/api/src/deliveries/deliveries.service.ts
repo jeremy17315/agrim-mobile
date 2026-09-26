@@ -709,6 +709,7 @@ export class DeliveriesService {
         id: true,
         addressId: true,
         status: true,
+        receptionMode: true,
         delivery: { select: { id: true } },
       },
     });
@@ -722,6 +723,12 @@ export class DeliveriesService {
       throw new ConflictException({
         code: 'ORDER_CANCELLED',
         message: 'Cette commande est annulée.',
+      });
+    }
+    if (order.receptionMode === 'PICKUP_POINT') {
+      throw new ConflictException({
+        code: 'PICKUP_ORDER_NO_DELIVERY',
+        message: 'Cette commande doit être préparée pour un retrait en point de vente.',
       });
     }
 

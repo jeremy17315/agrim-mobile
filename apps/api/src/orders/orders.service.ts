@@ -1,3 +1,7 @@
+import { randomUUID } from 'node:crypto';
+
+import * as argon2 from 'argon2';
+
 import {
   BadRequestException,
   ConflictException,
@@ -20,7 +24,9 @@ import { recordStockMovement } from '../common/stock/stock-movement';
 import { CatalogSyncService } from '../catalog-sync/catalog-sync.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { generateReferralCode } from '../referrals/referrals.service';
 import type { CreateOrderDto } from './dto/create-order.dto';
+import type { CreateGuestOrderDto } from './dto/create-guest-order.dto';
 import { formatOrderReference } from './order-reference';
 import { CheckoutService } from './checkout.service';
 
@@ -32,6 +38,14 @@ const orderSelect = {
   subtotal: true,
   deliveryFee: true,
   total: true,
+  deliveryFeeStatus: true,
+  receptionMode: true,
+  customerName: true,
+  customerPhone: true,
+  city: true,
+  district: true,
+  landmark: true,
+  pickupPoint: { select: { id: true, name: true, city: true, address: true, phone: true, isActive: true } },
   note: true,
   createdAt: true,
   items: {
@@ -137,7 +151,7 @@ export class OrdersService {
       where: { id: dto.addressId, userId },
       // La VILLE sert au tarif de livraison : c'est elle qui décide de la
       // zone, donc du montant facturé. Voir `@agrim/contracts/delivery`.
-      select: { id: true, city: true },
+      select: { id: true, city: true, district: true, landmark: true },
     });
     if (!address) {
       throw new NotFoundException({
@@ -264,31 +278,32 @@ export class OrdersService {
     // Rien n'est calculé ici : la zone, le tarif et le seuil de gratuité
     // viennent tous du site. C'est le seul moyen qu'un changement de tarif
     // n'ait qu'un endroit où se faire.
-    const grid = await this.catalog.deliveryGrid();
-    if (!grid) {
-      // On ne devine pas un montant. Facturer un tarif inventé serait pire
-      // qu'un refus : le client paierait un prix qui n'est celui de personne.
-      throw new ServiceUnavailableException({
-        code: 'DELIVERY_GRID_UNAVAILABLE',
-        message:
-          'Les frais de livraison sont momentanément indisponibles. Réessayez dans un instant.',
-      });
+    // Le parcours invité ne promet jamais un tarif avant confirmation humaine.
+    // Les commandes historiques conservent le calcul officiel existant.
+    const needsDeliveryConfirmation =
+      dto.deliveryFeeStatus === 'TO_CONFIRM' || dto.receptionMode === 'PICKUP_POINT';
+    let deliveryFee = 0;
+    if (!needsDeliveryConfirmation) {
+      const grid = await this.catalog.deliveryGrid();
+      if (!grid) {
+        throw new ServiceUnavailableException({
+          code: 'DELIVERY_GRID_UNAVAILABLE',
+          message:
+            'Les frais de livraison sont momentanément indisponibles. Réessayez dans un instant.',
+        });
+      }
+
+      const weightKg =
+        lines.reduce((sum, l) => sum + l.weightGrams * l.quantity, 0) / 1000;
+      deliveryFee = computeDeliveryFee(
+        {
+          zone: resolveDeliveryZone(address.city, grid),
+          mode: 'domicile',
+          weightKg,
+        },
+        grid,
+      );
     }
-
-    const weightKg =
-      lines.reduce((sum, l) => sum + l.weightGrams * l.quantity, 0) / 1000;
-
-    const deliveryFee = computeDeliveryFee(
-      {
-        zone: resolveDeliveryZone(address.city, grid),
-        // Le retrait sur place n'est pas encore proposé par l'application :
-        // toute commande mobile est une livraison à domicile. Le jour où il
-        // le sera, c'est ce paramètre qui changera, pas le calcul.
-        mode: 'domicile',
-        weightKg,
-      },
-      grid,
-    );
 
     const totals = computeCartTotals(
       lines.map((l) => ({ unitPrice: l.unitPrice, quantity: l.quantity })),
@@ -387,6 +402,14 @@ export class OrdersService {
           subtotal: totals.subtotal,
           deliveryFee: totals.deliveryFee,
           total: totals.total,
+          deliveryFeeStatus: dto.deliveryFeeStatus ?? 'CONFIRMED',
+          receptionMode: dto.receptionMode ?? 'HOME_DELIVERY',
+          customerName: dto.customerName ?? null,
+          customerPhone: dto.customerPhone ?? null,
+          city: address.city,
+          district: address.district,
+          landmark: address.landmark,
+          pickupPointId: dto.pickupPointId ?? null,
           note: dto.note ?? null,
           idempotencyKey: dto.idempotencyKey,
           items: {
@@ -471,6 +494,110 @@ export class OrdersService {
     });
 
     return created;
+  }
+
+  /**
+   * Façade publique du checkout invité.
+   *
+   * Les relations historiques de l'application exigent encore un User et une
+   * Address. On crée donc un compte technique marqué `isGuest`, sans mot de
+   * passe utilisable ni session : le client ne crée jamais de compte à l'écran.
+   * Les coordonnées sont copiées sur la commande pour rester lisibles côté
+   * administration même si le client est ensuite rapproché d'un compte.
+   */
+  async createGuest(dto: CreateGuestOrderDto) {
+    const replayed = await this.prisma.db.order.findUnique({
+      where: { idempotencyKey: dto.idempotencyKey },
+      select: { userId: true, reference: true },
+    });
+    if (replayed) return this.findOne(replayed.userId, replayed.reference);
+
+    let pickupPoint: { id: string; name: string; city: string; address: string | null } | null = null;
+    if (dto.receptionMode === 'PICKUP_POINT') {
+      if (!dto.pickupPointId) {
+        throw new BadRequestException({
+          code: 'PICKUP_POINT_REQUIRED',
+          message: 'Choisissez un point de vente.',
+        });
+      }
+      pickupPoint = await this.prisma.db.pickupPoint.findFirst({
+        where: { id: dto.pickupPointId, isActive: true },
+        select: { id: true, name: true, city: true, address: true },
+      });
+      if (!pickupPoint || pickupPoint.city.trim().toLocaleLowerCase() !== dto.city.trim().toLocaleLowerCase()) {
+        throw new BadRequestException({
+          code: 'PICKUP_POINT_CITY_MISMATCH',
+          message: 'Ce point de vente ne correspond pas à la ville choisie.',
+        });
+      }
+    }
+
+    const existingUser = await this.prisma.db.user.findUnique({
+      where: { phone: dto.customerPhone },
+      select: { id: true },
+    });
+    let user = existingUser;
+    if (!user) {
+      try {
+        user = await this.prisma.db.user.create({
+          data: {
+            firstName: dto.customerName.slice(0, 80),
+            lastName: 'Client invité',
+            phone: dto.customerPhone,
+            passwordHash: await argon2.hash(randomUUID()),
+            referralCode: generateReferralCode(),
+            isGuest: true,
+          },
+          select: { id: true },
+        });
+      } catch (error) {
+        // Deux taps/réseaux concurrents peuvent découvrir le même téléphone
+        // avant l'écriture. L'unicité du téléphone désigne alors le gagnant.
+        if (!estP2002(error)) throw error;
+        user = await this.prisma.db.user.findUniqueOrThrow({
+          where: { phone: dto.customerPhone },
+          select: { id: true },
+        });
+      }
+    }
+
+    const address = await this.prisma.db.address.create({
+      data: {
+        userId: user.id,
+        label: pickupPoint?.name ?? 'Livraison à domicile',
+        city: dto.city,
+        district: dto.district ?? null,
+        landmark: pickupPoint?.address ?? dto.landmark ?? null,
+        instructions: dto.receptionMode === 'PICKUP_POINT' ? 'Retrait en point de vente.' : null,
+        contactPhone: dto.customerPhone,
+        isDefault: false,
+      },
+      select: { id: true },
+    });
+
+    return this.create(user.id, {
+      addressId: address.id,
+      items: dto.items,
+      paymentMethod: 'CASH_ON_DELIVERY',
+      idempotencyKey: dto.idempotencyKey,
+      receptionMode: dto.receptionMode,
+      pickupPointId: pickupPoint?.id,
+      deliveryFeeStatus: dto.receptionMode === 'HOME_DELIVERY' ? 'TO_CONFIRM' : 'CONFIRMED',
+      customerName: dto.customerName.trim(),
+      customerPhone: dto.customerPhone,
+    });
+  }
+
+  /** Points actifs publiés pour le retrait, filtrables par ville. */
+  async listPickupPoints(city?: string) {
+    return this.prisma.db.pickupPoint.findMany({
+      where: {
+        isActive: true,
+        ...(city ? { city: { equals: city.trim(), mode: 'insensitive' as const } } : {}),
+      },
+      orderBy: [{ city: 'asc' }, { name: 'asc' }],
+      select: { id: true, name: true, city: true, address: true, phone: true, isActive: true },
+    });
   }
 
   /** Historique du client : liste allégée, sans les lignes. */

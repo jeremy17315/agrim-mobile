@@ -49,7 +49,19 @@ async function main() {
     prisma.user.deleteMany(),
     prisma.companySetting.deleteMany(),
     prisma.orderCounter.deleteMany(),
+    prisma.pickupPoint.deleteMany(),
   ]);
+
+  // Points de retrait de démonstration. En production, cette table est la
+  // source publiée par l'administration et le mobile la filtre par ville.
+  await prisma.pickupPoint.createMany({
+    data: [
+      { name: 'AGRIM Yamoussoukro Centre', city: 'Yamoussoukro', address: 'Aboukro Extension', phone: '0700000001' },
+      { name: 'AGRIM Yamoussoukro Koko', city: 'Yamoussoukro', address: 'Quartier Koko', phone: '0700000001' },
+      { name: 'AGRIM Abidjan Cocody', city: 'Abidjan', address: 'Cocody, Riviera', phone: '0700000001' },
+      { name: 'AGRIM Abidjan Yopougon', city: 'Abidjan', address: 'Yopougon', phone: '0700000001' },
+    ],
+  });
 
   /* ── Paramètres société ─────────────────────────────────────────────── */
   await prisma.companySetting.createMany({

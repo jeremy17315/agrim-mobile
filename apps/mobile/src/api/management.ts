@@ -164,6 +164,18 @@ export function useCloseDelivery() {
   );
 }
 
+export function useUpdateDeliveryFee() {
+  return useManagementMutation(
+    ({ reference, deliveryFee }: { reference: string; deliveryFee: number }) =>
+      apiRequest({
+        path: `/management/orders/${reference}/delivery-fee`,
+        method: 'PATCH',
+        body: { deliveryFee },
+        schema: managedOrderSchema,
+      }),
+  );
+}
+
 export function useUpdateOrderStatus() {
   return useManagementMutation(
     ({ reference, status }: { reference: string; status: OrderStatus }) =>

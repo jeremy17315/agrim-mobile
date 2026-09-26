@@ -1,6 +1,16 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { MOBILE_MONEY_PROVIDERS, PAYMENT_METHODS } from '@agrim/contracts';
-import type { MobileMoneyProvider, PaymentMethod } from '@agrim/contracts';
+import {
+  DELIVERY_FEE_STATUSES,
+  MOBILE_MONEY_PROVIDERS,
+  PAYMENT_METHODS,
+  RECEPTION_MODES,
+} from '@agrim/contracts';
+import type {
+  DeliveryFeeStatus,
+  MobileMoneyProvider,
+  PaymentMethod,
+  ReceptionMode,
+} from '@agrim/contracts';
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
@@ -72,4 +82,32 @@ export class CreateOrderDto {
   @IsString()
   @MaxLength(500)
   note?: string;
+
+  /** Champs utilisés par la façade invitée ; absents des commandes historiques. */
+  @ApiPropertyOptional({ enum: RECEPTION_MODES })
+  @IsOptional()
+  @IsIn(RECEPTION_MODES)
+  receptionMode?: ReceptionMode;
+
+  @ApiPropertyOptional({ format: 'uuid' })
+  @IsOptional()
+  @IsUUID()
+  pickupPointId?: string;
+
+  @ApiPropertyOptional({ enum: DELIVERY_FEE_STATUSES })
+  @IsOptional()
+  @IsIn(DELIVERY_FEE_STATUSES)
+  deliveryFeeStatus?: DeliveryFeeStatus;
+
+  @ApiPropertyOptional({ example: 'Awa Koné' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  customerName?: string;
+
+  @ApiPropertyOptional({ example: '0700000001' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  customerPhone?: string;
 }

@@ -21,6 +21,7 @@ import { applyStockChange } from '../common/stock/stock-movement';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AdjustStockDto } from './dto/adjust-stock.dto';
+import type { UpdateDeliveryFeeDto } from './dto/update-delivery-fee.dto';
 import type { UpdateOrderStatusDto } from './dto/update-order-status.dto';
 
 /**
@@ -41,7 +42,8 @@ function movementTypeFor(dto: AdjustStockDto): StockMovementType {
  *
  * Périmètre volontairement borné : le gestionnaire pilote la commande jusqu'à
  * la remise au livreur. `OUT_FOR_DELIVERY` et `DELIVERED` restent produits par
- * la course elle-même — les poser à la main ferait mentir le suivi client.
+ * la course elle-même pour une livraison ; un retrait en point de vente peut
+ * être marqué remis par la gestion une fois prêt.
  */
 
 /** Fenêtre au-delà de laquelle une commande non traitée est signalée. */
@@ -51,10 +53,20 @@ const managedOrderSelect = {
   id: true,
   reference: true,
   status: true,
+  subtotal: true,
+  deliveryFee: true,
+  deliveryFeeStatus: true,
   total: true,
+  receptionMode: true,
+  customerName: true,
+  customerPhone: true,
+  city: true,
+  district: true,
+  landmark: true,
   createdAt: true,
   user: { select: { firstName: true, lastName: true, phone: true } },
-  address: { select: { city: true } },
+  address: { select: { city: true, district: true, landmark: true, instructions: true } },
+  pickupPoint: { select: { id: true, name: true, city: true, address: true, phone: true, isActive: true } },
   items: { select: { quantity: true } },
   // `status` et `failureReason` servent à distinguer une commande qui n'est
   // jamais partie d'une commande REVENUE après une tentative infructueuse.
@@ -67,7 +79,13 @@ const managedOrderSelect = {
 
 type ManagedOrderRow = {
   user: { firstName: string; lastName: string; phone: string };
-  address: { city: string | null } | null;
+  customerName: string | null;
+  customerPhone: string | null;
+  city: string | null;
+  district: string | null;
+  landmark: string | null;
+  address: { city: string | null; district: string | null; landmark: string | null; instructions: string | null } | null;
+  pickupPoint: { id: string; name: string; city: string; address: string | null } | null;
   items: { quantity: number }[];
   delivery: {
     courierId: string | null;
@@ -82,9 +100,11 @@ function toManagedOrder(row: ManagedOrderRow) {
   const deliveryFailed = delivery?.status === 'FAILED';
   return {
     ...rest,
-    customerName: `${user.firstName} ${user.lastName}`,
-    customerPhone: user.phone,
-    city: address?.city ?? null,
+    customerName: row.customerName ?? `${user.firstName} ${user.lastName}`,
+    customerPhone: row.customerPhone ?? user.phone,
+    city: row.city ?? address?.city ?? null,
+    locality: row.district ?? address?.district ?? null,
+    deliveryLandmark: row.landmark ?? address?.landmark ?? null,
     itemCount: items.reduce((sum, item) => sum + item.quantity, 0),
     // Une course échouée conserve son `courierId` — c'est la trace de qui a
     // tenté. Mais la commande attend bel et bien une NOUVELLE affectation :
@@ -302,12 +322,53 @@ export class ManagementService {
       ...rest,
       items,
       address,
-      customerName: `${user.firstName} ${user.lastName}`,
-      customerPhone: user.phone,
-      city: address?.city ?? null,
+      customerName: order.customerName ?? `${user.firstName} ${user.lastName}`,
+      customerPhone: order.customerPhone ?? user.phone,
+      city: order.city ?? address?.city ?? null,
+      locality: order.district ?? address?.district ?? null,
+      deliveryLandmark: order.landmark ?? address?.landmark ?? null,
       itemCount: items.reduce((sum, item) => sum + item.quantity, 0),
       hasCourier: Boolean(delivery?.courierId),
     };
+  }
+
+  /** Confirme le montant de livraison sans jamais inventer un tarif. */
+  async updateDeliveryFee(
+    _actorId: string,
+    reference: string,
+    dto: UpdateDeliveryFeeDto,
+  ) {
+    const order = await this.prisma.db.order.findUnique({
+      where: { reference },
+      select: { id: true, subtotal: true, receptionMode: true, payment: { select: { id: true } } },
+    });
+    if (!order) {
+      throw new NotFoundException({
+        code: 'ORDER_NOT_FOUND',
+        message: 'Cette commande est introuvable.',
+      });
+    }
+    if (order.receptionMode === 'PICKUP_POINT' && dto.deliveryFee !== 0) {
+      throw new BadRequestException({
+        code: 'PICKUP_DELIVERY_FEE_INVALID',
+        message: 'Un retrait en point de vente ne possède pas de frais de livraison.',
+      });
+    }
+
+    await this.prisma.db.$transaction(async (tx) => {
+      await tx.order.update({
+        where: { id: order.id },
+        data: {
+          deliveryFee: dto.deliveryFee,
+          total: order.subtotal + dto.deliveryFee,
+          deliveryFeeStatus: 'CONFIRMED',
+          ...(order.payment
+            ? { payment: { update: { amount: order.subtotal + dto.deliveryFee } } }
+            : {}),
+        },
+      });
+    });
+    return this.getOrder(reference);
   }
 
   /**
@@ -324,7 +385,7 @@ export class ManagementService {
   ) {
     const order = await this.prisma.db.order.findUnique({
       where: { reference },
-      select: { id: true, status: true, userId: true, reference: true },
+      select: { id: true, status: true, userId: true, reference: true, receptionMode: true },
     });
     if (!order) {
       throw new NotFoundException({
@@ -333,7 +394,12 @@ export class ManagementService {
       });
     }
 
-    if (!canTransition(order.status, dto.status)) {
+    const pickupCompletion =
+      order.receptionMode === 'PICKUP_POINT' &&
+      order.status === 'READY' &&
+      dto.status === 'DELIVERED';
+
+    if (!pickupCompletion && !canTransition(order.status, dto.status)) {
       throw new ConflictException({
         code: 'INVALID_ORDER_TRANSITION',
         message: 'Cette étape n’est pas possible depuis l’état actuel.',
@@ -352,7 +418,7 @@ export class ManagementService {
     }
 
     const allowed = managerActionFor(order.status);
-    if (!allowed || allowed.next !== dto.status) {
+    if (!pickupCompletion && (!allowed || allowed.next !== dto.status)) {
       throw new ConflictException({
         code: 'MANAGER_ACTION_NOT_ALLOWED',
         message: 'Cette étape dépend de la livraison, pas de la gestion.',

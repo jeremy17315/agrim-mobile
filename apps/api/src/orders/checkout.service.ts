@@ -34,6 +34,14 @@ const orderSelect = {
   subtotal: true,
   deliveryFee: true,
   total: true,
+  deliveryFeeStatus: true,
+  receptionMode: true,
+  customerName: true,
+  customerPhone: true,
+  city: true,
+  district: true,
+  landmark: true,
+  pickupPoint: { select: { id: true, name: true, city: true, address: true, phone: true, isActive: true } },
   note: true,
   createdAt: true,
   items: {
@@ -121,7 +129,7 @@ export class CheckoutService {
       // ── Livraison : l'adresse appartient au client, la grille à la maison ──
       const address = await tx.address.findFirst({
         where: { id: dto.addressId, userId },
-        select: { id: true, city: true },
+        select: { id: true, city: true, district: true, landmark: true },
       });
       if (!address) {
         throw new NotFoundException({
@@ -167,17 +175,22 @@ export class CheckoutService {
         };
       });
 
-      const grid = await readDeliveryGrid(tx);
-      const weightKg =
-        lines.reduce((sum, l) => sum + l.weightGrams * l.quantity, 0) / 1000;
-      const deliveryFee = computeDeliveryFee(
-        {
-          zone: resolveDeliveryZone(address.city, grid),
-          mode: 'domicile',
-          weightKg,
-        },
-        grid,
-      );
+      const needsDeliveryConfirmation =
+        dto.deliveryFeeStatus === 'TO_CONFIRM' || dto.receptionMode === 'PICKUP_POINT';
+      let deliveryFee = 0;
+      if (!needsDeliveryConfirmation) {
+        const grid = await readDeliveryGrid(tx);
+        const weightKg =
+          lines.reduce((sum, l) => sum + l.weightGrams * l.quantity, 0) / 1000;
+        deliveryFee = computeDeliveryFee(
+          {
+            zone: resolveDeliveryZone(address.city, grid),
+            mode: 'domicile',
+            weightKg,
+          },
+          grid,
+        );
+      }
       const totals = computeCartTotals(
         lines.map((l) => ({ unitPrice: l.unitPrice, quantity: l.quantity })),
         { deliveryFee },
@@ -234,6 +247,14 @@ export class CheckoutService {
             subtotal: totals.subtotal,
             deliveryFee: totals.deliveryFee,
             total: totals.total,
+            deliveryFeeStatus: dto.deliveryFeeStatus ?? 'CONFIRMED',
+            receptionMode: dto.receptionMode ?? 'HOME_DELIVERY',
+            customerName: dto.customerName ?? null,
+            customerPhone: dto.customerPhone ?? null,
+            city: address.city,
+            district: address.district,
+            landmark: address.landmark,
+            pickupPointId: dto.pickupPointId ?? null,
             note: dto.note ?? null,
             idempotencyKey: dto.idempotencyKey,
             items: {
@@ -335,6 +356,11 @@ export class CheckoutService {
       addressId: dto.addressId,
       paymentMethod: dto.paymentMethod,
       mobileMoneyProvider: dto.mobileMoneyProvider ?? null,
+      receptionMode: dto.receptionMode ?? 'HOME_DELIVERY',
+      pickupPointId: dto.pickupPointId ?? null,
+      deliveryFeeStatus: dto.deliveryFeeStatus ?? 'CONFIRMED',
+      customerName: dto.customerName ?? null,
+      customerPhone: dto.customerPhone ?? null,
       note: dto.note ?? null,
       items: dto.items
         .map((i) => ({ v: i.variantId, q: i.quantity }))

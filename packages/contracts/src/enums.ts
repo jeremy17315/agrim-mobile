@@ -71,6 +71,14 @@ export const PAYMENT_METHODS = [
 ] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
+/** Mode de réception choisi au checkout invité. */
+export const RECEPTION_MODES = ['HOME_DELIVERY', 'PICKUP_POINT'] as const;
+export type ReceptionMode = (typeof RECEPTION_MODES)[number];
+
+/** État des frais quand AGRIM doit encore confirmer une livraison. */
+export const DELIVERY_FEE_STATUSES = ['TO_CONFIRM', 'CONFIRMED'] as const;
+export type DeliveryFeeStatus = (typeof DELIVERY_FEE_STATUSES)[number];
+
 /** Opérateurs mobile money pertinents en Côte d'Ivoire. */
 export const MOBILE_MONEY_PROVIDERS = [
   'ORANGE_MONEY',

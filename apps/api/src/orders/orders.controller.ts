@@ -19,6 +19,8 @@ import {
   CurrentUser,
   type AuthenticatedUser,
 } from '../common/decorators/current-user.decorator';
+import { Public } from '../common/decorators/public.decorator';
+import { CreateGuestOrderDto } from './dto/create-guest-order.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { TrackingService } from '../deliveries/tracking.service';
 import { OrdersService } from './orders.service';
@@ -37,6 +39,20 @@ export class OrdersController {
     private readonly orders: OrdersService,
     private readonly tracking: TrackingService,
   ) {}
+
+  @Public()
+  @Get('pickup-points')
+  @ApiOperation({ summary: 'Lister les points de retrait publics' })
+  listPickupPoints(@Query('city') city?: string) {
+    return this.orders.listPickupPoints(city);
+  }
+
+  @Public()
+  @Post('guest')
+  @ApiOperation({ summary: 'Créer une commande sans compte client' })
+  createGuest(@Body() dto: CreateGuestOrderDto) {
+    return this.orders.createGuest(dto);
+  }
 
   @Post()
   @ApiOperation({

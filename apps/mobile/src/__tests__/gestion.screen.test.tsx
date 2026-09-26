@@ -164,6 +164,19 @@ it('n’offre aucune transition de statut sur une commande prête', () => {
   expect(screen.getByText('Assigner')).toBeTruthy();
 });
 
+it('propose de marquer un retrait remis quand la commande est prête', () => {
+  mockOrders = queryState([order({ status: 'READY', receptionMode: 'PICKUP_POINT' })]);
+
+  render(<GestionScreen />);
+
+  fireEvent.press(screen.getByText('Marquer le retrait remis'));
+
+  expect(mockUpdateStatus).toHaveBeenCalledWith(
+    { reference: 'AGR-2026-0045', status: 'DELIVERED' },
+    expect.anything(),
+  );
+});
+
 it('ouvre le choix du livreur à l’assignation', () => {
   mockOrders = queryState([order({ status: 'READY' })]);
   const spy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
