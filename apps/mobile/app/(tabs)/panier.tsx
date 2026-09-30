@@ -1,6 +1,14 @@
 import { COMPANY } from '@agrim/contracts';
 import { useRouter } from 'expo-router';
-import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useState } from 'react';
+import {
+  Alert,
+  Image,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { EmptyState, Skeleton } from '@/components/states';
@@ -201,14 +209,7 @@ function CartLine({
 
   return (
     <Card style={styles.line}>
-      <Pressable
-        onPress={onOpen}
-        accessibilityRole="button"
-        accessibilityLabel={`Voir ${item.productName}`}
-        style={styles.thumb}
-      >
-        <Icon name="wheat" size={20} color="gold" />
-      </Pressable>
+      <CartThumbnail item={item} onPress={onOpen} />
 
       <View style={styles.lineBody}>
         <View style={styles.lineHead}>
@@ -267,6 +268,37 @@ function CartLine({
   );
 }
 
+function CartThumbnail({
+  item,
+  onPress,
+}: {
+  item: CartLineItem;
+  onPress: () => void;
+}) {
+  const [imageBroken, setImageBroken] = useState(false);
+  const photo = item.productImageUrl && !imageBroken;
+
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`Voir ${item.productName}`}
+      style={styles.thumb}
+    >
+      {photo ? (
+        <Image
+          source={{ uri: item.productImageUrl ?? undefined }}
+          style={styles.thumbImage}
+          resizeMode="cover"
+          onError={() => setImageBroken(true)}
+        />
+      ) : (
+        <Icon name="wheat" size={20} color="gold" />
+      )}
+    </Pressable>
+  );
+}
+
 function SummaryRow({
   label,
   value,
@@ -317,13 +349,15 @@ const styles = StyleSheet.create({
 
   line: { flexDirection: 'row', gap: spacing.md },
   thumb: {
-    width: 58,
-    height: 58,
+    width: 66,
+    height: 66,
+    overflow: 'hidden',
     borderRadius: radius.md,
     backgroundColor: palette.goldSoft,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  thumbImage: { width: '100%', height: '100%' },
   lineBody: { flex: 1, gap: 3 },
   lineHead: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
   lineFoot: {

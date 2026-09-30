@@ -1,53 +1,74 @@
 import { COMPANY } from '@agrim/contracts';
 import { useRouter } from 'expo-router';
-import { StyleSheet, View } from 'react-native';
+import { Image, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Button, Icon, Text } from '@/components/ui';
-import { palette, radius, spacing } from '@/theme/tokens';
+import { palette, radius, shadow, spacing } from '@/theme/tokens';
 
 /**
- * Point d'entrée volontairement unique : ouvrir, commencer, acheter.
- * Aucun compte, menu ou choix secondaire ne retarde l'accès aux produits.
+ * Première étape du parcours d'achat.
+ *
+ * Inspiré d'un écran d'accueil éditorial : une identité forte, une seule
+ * promesse et une seule action. Aucun menu ni compte ne coupe l'élan vers le
+ * catalogue.
  */
 export default function WelcomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
   return (
-    <View style={[styles.screen, { paddingTop: insets.top + spacing.xl }]}>
-      <View style={styles.hero}>
-        <View style={styles.grainHalo}>
-          <Icon name="wheat" size={68} color="gold" />
-        </View>
-        <Text variant="micro" style={styles.agrim}>
+    <View style={[styles.screen, { paddingTop: insets.top + spacing.lg }]}>
+      <View style={styles.topLine}>
+        <Text variant="micro" color="green" style={styles.company}>
           AGRIM
         </Text>
-        <Text variant="display" color="white" center>
-          {COMPANY.brandName}
-        </Text>
-        <Text variant="body" style={styles.signature} center>
-          {COMPANY.brandSignature}
+        <Text variant="caption" color="muted">
+          Riz local de Côte d’Ivoire
         </Text>
       </View>
 
-      <View style={styles.body}>
-        <Text variant="h1" center>
-          Votre riz, en quelques clics.
+      <View style={styles.intro}>
+        <Text variant="display">Le bon riz,</Text>
+        <Text variant="display" color="green">
+          simplement.
         </Text>
-        <Text variant="body" color="muted" center>
-          Choisissez vos produits, indiquez votre nom, votre téléphone et votre
-          lieu de livraison. C’est tout.
+        <Text variant="body" color="body" style={styles.copy}>
+          Choisissez votre riz Bélier d’Or et faites-vous livrer en quelques
+          clics.
         </Text>
+      </View>
 
+      <View style={styles.visual}>
+        <View style={styles.logoHalo}>
+          <Image
+            source={require('../../assets/adaptive-icon.png')}
+            style={styles.logo}
+            resizeMode="contain"
+            accessibilityLabel="Logo AGRIM"
+          />
+        </View>
+        <View style={styles.brandStamp}>
+          <Text variant="micro" style={styles.brandName}>
+            {COMPANY.brandName.toUpperCase()}
+          </Text>
+          <Text variant="caption" style={styles.brandSignature}>
+            {COMPANY.brandSignature}
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.bottom}>
+        <View style={styles.dots} accessibilityLabel="Parcours express">
+          <View style={[styles.dot, styles.dotActive]} />
+        </View>
         <Button
           label="COMMENCER"
           onPress={() => router.push('/catalogue')}
           icon={<Icon name="arrow-right" size={19} color="white" />}
         />
-
         <Text variant="micro" color="muted" center>
-          Commande sans compte
+          Commande sans compte · Paiement à la livraison
         </Text>
       </View>
     </View>
@@ -57,31 +78,61 @@ export default function WelcomeScreen() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xxl,
     backgroundColor: palette.bg,
+  },
+  topLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
   },
-  hero: {
-    marginHorizontal: spacing.lg,
-    minHeight: 330,
+  company: { letterSpacing: 2.5 },
+  intro: { marginTop: spacing.xxxl, gap: spacing.xs },
+  copy: { maxWidth: 285, marginTop: spacing.sm, lineHeight: 20 },
+  visual: {
+    flex: 1,
+    minHeight: 260,
+    marginTop: spacing.xl,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: spacing.sm,
-    padding: spacing.xl,
-    backgroundColor: palette.greenDeep,
+    overflow: 'hidden',
     borderRadius: radius.xl,
+    backgroundColor: palette.greenDeep,
+    ...shadow.card,
   },
-  grainHalo: {
-    width: 132,
-    height: 132,
-    borderRadius: 66,
+  logoHalo: {
+    width: 196,
+    height: 196,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
+    borderRadius: 98,
     backgroundColor: 'rgba(255,255,255,0.10)',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.18)',
-    marginBottom: spacing.sm,
   },
-  agrim: { color: 'rgba(255,255,255,0.65)', letterSpacing: 3 },
-  signature: { color: 'rgba(255,255,255,0.86)' },
-  body: { padding: spacing.xl, gap: spacing.lg, paddingBottom: spacing.xxxl },
+  logo: { width: 174, height: 174, borderRadius: 87 },
+  brandStamp: {
+    position: 'absolute',
+    right: spacing.lg,
+    bottom: spacing.lg,
+    alignItems: 'flex-end',
+  },
+  brandName: { color: palette.gold, letterSpacing: 1.4 },
+  brandSignature: { color: 'rgba(255,255,255,0.78)' },
+  bottom: { gap: spacing.md, paddingTop: spacing.xl },
+  dots: {
+    flexDirection: 'row',
+    alignSelf: 'center',
+    alignItems: 'center',
+    gap: 6,
+  },
+  dot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: palette.line,
+  },
+  dotActive: { width: 18, backgroundColor: palette.green },
 });

@@ -110,9 +110,12 @@ export default function CommandeScreen() {
       </View>
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.intro}>
-          <Text variant="h1">Finaliser la commande</Text>
+          <Text variant="micro" color="green" style={styles.stepLabel}>
+            DERNIÈRE ÉTAPE
+          </Text>
+          <Text variant="h1">Livraison</Text>
           <Text variant="body" color="muted">
-            Seulement trois informations pour la livraison.
+            Indiquez où notre équipe doit vous livrer. Aucun compte nécessaire.
           </Text>
         </View>
 
@@ -132,6 +135,17 @@ export default function CommandeScreen() {
         ) : null}
 
         <Card style={styles.form}>
+          <View style={styles.formHeading}>
+            <View style={styles.formIcon}>
+              <Icon name="map-pin" size={17} color="green" />
+            </View>
+            <View style={styles.flex}>
+              <Text variant="h3">Vos coordonnées de livraison</Text>
+              <Text variant="caption" color="muted">
+                Le livreur vous contactera si nécessaire.
+              </Text>
+            </View>
+          </View>
           <Input
             label="Nom"
             value={customerName}
@@ -159,6 +173,19 @@ export default function CommandeScreen() {
             multiline
             style={styles.location}
           />
+        </Card>
+
+        <Card style={styles.paymentInfo} flat>
+          <View style={styles.paymentIcon}>
+            <Icon name="banknote" size={18} color="green" />
+          </View>
+          <View style={styles.flex}>
+            <Text variant="h3">Paiement à la livraison</Text>
+            <Text variant="caption" color="muted">
+              Réglez votre commande à la réception.
+            </Text>
+          </View>
+          <Icon name="circle-check" size={18} color="green" />
         </Card>
 
         <Card style={styles.summary}>
@@ -232,8 +259,35 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.xxxl,
   },
   intro: { gap: spacing.xs },
-  form: { gap: spacing.md },
+  stepLabel: { letterSpacing: 1.4 },
+  flex: { flex: 1 },
+  form: { gap: spacing.md, padding: spacing.lg },
+  formHeading: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  formIcon: {
+    width: 38,
+    height: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 19,
+    backgroundColor: palette.greenSoft,
+  },
   location: { minHeight: 82, paddingTop: spacing.md },
+  paymentInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    padding: spacing.md,
+    backgroundColor: palette.goldSoft,
+    borderColor: '#EAD9A5',
+  },
+  paymentIcon: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 18,
+    backgroundColor: palette.card,
+  },
   summary: { gap: spacing.sm },
   summaryLine: {
     flexDirection: 'row',

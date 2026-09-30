@@ -51,6 +51,8 @@ export type CartLineItem = {
   productId: string;
   productSlug: string;
   productName: string;
+  /** Photo mémorisée pour garder un panier lisible sans nouvelle requête. */
+  productImageUrl?: string | null;
   variantLabel: string;
   weightGrams: number;
   /** Prix connu au moment de l'ajout — à revalider côté serveur. */
@@ -118,6 +120,7 @@ export const useCartStore = create<CartState>()(
             productId: product.id,
             productSlug: product.slug,
             productName: product.name,
+            productImageUrl: product.imageUrl,
             variantLabel: variant.label,
             weightGrams: variant.weightGrams,
             unitPrice: variant.price,

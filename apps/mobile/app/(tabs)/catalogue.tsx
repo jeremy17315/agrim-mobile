@@ -18,32 +18,31 @@ import {
   ErrorState,
   ProductGridSkeleton,
 } from '@/components/states';
-import { Button, Card, Icon, Text } from '@/components/ui';
+import { Card, Icon, Text } from '@/components/ui';
 import { formatWeight, formatXof } from '@/lib/format';
 import { useDebouncedValue } from '@/lib/useDebouncedValue';
 import { useCartItemCount, useCartStore } from '@/store/cart';
 import { palette, radius, spacing, typography } from '@/theme/tokens';
 
 /**
- * Catalogue : recherche, filtre par gamme, grille de produits.
- *
- * La recherche est temporisée : sans cela, chaque frappe déclencherait une
- * requête — coûteux en data et inutile.
+ * Vitrine compacte du catalogue : recherche, gammes, cartes produits et ajout
+ * rapide. La mise en page reprend les repères d'une boutique mobile moderne,
+ * sans introduire de navigation ou de données supplémentaires.
  */
 export default function CatalogueScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const params = useLocalSearchParams<{ category?: string }>();
-  const addItem = useCartStore((s) => s.addItem);
+  const addItem = useCartStore((state) => state.addItem);
   const itemCount = useCartItemCount();
 
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState<string | undefined>(params.category);
   const debouncedSearch = useDebouncedValue(search, 350);
 
-  // La gamme peut arriver de l'accueil apres le premier rendu. On l'applique
-  // pendant le rendu plutot que dans un effet : pas de rendu en cascade, et un
-  // filtre choisi ensuite a la main n'est pas ecrase au rendu suivant.
+  // La gamme peut arriver de l'accueil après le premier rendu. On l'applique
+  // pendant le rendu pour éviter une requête supplémentaire, sans écraser un
+  // choix effectué manuellement dans la même session.
   const [appliedParam, setAppliedParam] = useState(params.category);
   if (params.category !== appliedParam) {
     setAppliedParam(params.category);
@@ -63,31 +62,44 @@ export default function CatalogueScreen() {
   const total = products.data?.pagination.total ?? 0;
 
   return (
-    <View style={[styles.screen, { paddingTop: insets.top }]}>
+    <View style={[styles.screen, { paddingTop: insets.top + spacing.sm }]}>
       <View style={styles.header}>
         <View style={styles.titleRow}>
-          <View>
-            <Text variant="micro" color="muted">
+          <View style={styles.titleCopy}>
+            <Text variant="micro" color="green" style={styles.brand}>
               BÉLIER D’OR
             </Text>
-            <Text variant="h1">Nos produits</Text>
+            <Text variant="h1">Choisissez votre riz</Text>
           </View>
-          <Button
-            label={itemCount > 0 ? `Panier (${itemCount})` : 'Panier'}
-            size="sm"
-            fullWidth={false}
-            variant="outline"
-            icon={<Icon name="shopping-cart" size={14} color="green" />}
+          <Pressable
             onPress={() => router.push('/panier')}
-          />
+            accessibilityRole="button"
+            accessibilityLabel={
+              itemCount > 0
+                ? `Ouvrir le panier, ${itemCount} article${
+                    itemCount > 1 ? 's' : ''
+                  }`
+                : 'Ouvrir le panier'
+            }
+            style={styles.cartButton}
+          >
+            <Icon name="shopping-bag" size={19} color="green" />
+            {itemCount > 0 ? (
+              <View style={styles.cartCount}>
+                <Text variant="micro" style={styles.cartCountText}>
+                  {itemCount > 9 ? '9+' : itemCount}
+                </Text>
+              </View>
+            ) : null}
+          </Pressable>
         </View>
 
         <View style={styles.searchBox}>
-          <Icon name="search" size={16} color="muted" />
+          <Icon name="search" size={17} color="muted" />
           <TextInput
             value={search}
             onChangeText={setSearch}
-            placeholder="Rechercher un riz…"
+            placeholder="Rechercher votre riz…"
             placeholderTextColor={palette.muted}
             style={styles.searchInput}
             accessibilityLabel="Rechercher un produit"
@@ -101,7 +113,7 @@ export default function CatalogueScreen() {
               accessibilityLabel="Effacer la recherche"
               hitSlop={10}
             >
-              <Icon name="x" size={15} color="muted" />
+              <Icon name="x" size={16} color="muted" />
             </Pressable>
           ) : null}
         </View>
@@ -116,13 +128,13 @@ export default function CatalogueScreen() {
             active={category === undefined}
             onPress={() => setCategory(undefined)}
           />
-          {(categories.data ?? []).map((c) => (
+          {(categories.data ?? []).map((entry) => (
             <Chip
-              key={c.id}
-              label={c.name}
-              active={category === c.slug}
+              key={entry.id}
+              label={entry.name}
+              active={category === entry.slug}
               onPress={() =>
-                setCategory(category === c.slug ? undefined : c.slug)
+                setCategory(category === entry.slug ? undefined : entry.slug)
               }
             />
           ))}
@@ -156,14 +168,18 @@ export default function CatalogueScreen() {
           columnWrapperStyle={styles.row}
           contentContainerStyle={styles.list}
           ListHeaderComponent={
-            <Text variant="caption" color="muted" style={styles.count}>
-              {total} produit{total > 1 ? 's' : ''}
-            </Text>
+            <View style={styles.listHeading}>
+              <Text variant="h2">Nos produits</Text>
+              <Text variant="caption" color="muted">
+                {total} produit{total > 1 ? 's' : ''}
+              </Text>
+            </View>
           }
           renderItem={({ item }) => (
             <View style={styles.cell}>
               <QuickProductCard
                 product={item}
+                onOpen={() => router.push(`/produit/${item.slug}`)}
                 onAdd={() => {
                   const variant = item.variants.find(
                     (value) => value.isAvailable && value.stock > 0,
@@ -182,9 +198,11 @@ export default function CatalogueScreen() {
 function QuickProductCard({
   product,
   onAdd,
+  onOpen,
 }: {
   product: Product;
   onAdd: () => void;
+  onOpen: () => void;
 }) {
   const variant = product.variants.find(
     (value) => value.isAvailable && value.stock > 0,
@@ -192,42 +210,65 @@ function QuickProductCard({
   const [imageBroken, setImageBroken] = useState(false);
 
   return (
-    <Card style={styles.productCard}>
-      <View style={styles.productVisual}>
-        {product.imageUrl && !imageBroken ? (
-          <Image
-            source={{ uri: product.imageUrl }}
-            style={styles.productImage}
-            resizeMode="cover"
-            onError={() => setImageBroken(true)}
-          />
-        ) : (
-          <Icon name="wheat" size={36} color="gold" />
-        )}
-      </View>
-      <Text variant="h3" numberOfLines={2}>
-        {product.name}
-      </Text>
-      {variant ? (
-        <>
-          <Text variant="caption" color="muted">
-            {formatWeight(variant.weightGrams)} · {variant.label}
+    <Card style={styles.productCard} padded={false} flat>
+      <Pressable
+        onPress={onOpen}
+        accessibilityRole="button"
+        accessibilityLabel={`Voir ${product.name}`}
+        style={styles.productPressable}
+      >
+        <View style={styles.productVisual}>
+          {product.imageUrl && !imageBroken ? (
+            <Image
+              source={{ uri: product.imageUrl }}
+              style={styles.productImage}
+              resizeMode="cover"
+              onError={() => setImageBroken(true)}
+            />
+          ) : (
+            <Icon name="wheat" size={42} color="gold" />
+          )}
+          {product.isFeatured ? (
+            <View style={styles.popularBadge}>
+              <Text variant="micro" style={styles.popularText}>
+                POPULAIRE
+              </Text>
+            </View>
+          ) : null}
+        </View>
+        <View style={styles.productBody}>
+          <Text variant="h3" numberOfLines={2}>
+            {product.name}
           </Text>
+          <Text variant="caption" color="muted" numberOfLines={1}>
+            {variant
+              ? formatWeight(variant.weightGrams)
+              : 'Format indisponible'}
+          </Text>
+        </View>
+      </Pressable>
+
+      <View style={styles.productFooter}>
+        {variant ? (
           <Text variant="h2" color="green">
             {formatXof(variant.price)}
           </Text>
-          <Button
-            label="AJOUTER AU PANIER"
-            size="sm"
-            icon={<Icon name="plus" size={14} color="white" />}
+        ) : (
+          <Text variant="caption" color="muted">
+            Indisponible
+          </Text>
+        )}
+        {variant ? (
+          <Pressable
             onPress={onAdd}
-          />
-        </>
-      ) : (
-        <Text variant="caption" color="muted">
-          Indisponible pour le moment
-        </Text>
-      )}
+            accessibilityRole="button"
+            accessibilityLabel={`Ajouter ${product.name} au panier`}
+            style={styles.addButton}
+          >
+            <Icon name="plus" size={18} color="white" />
+          </Pressable>
+        ) : null}
+      </View>
     </Card>
   );
 }
@@ -246,13 +287,11 @@ function Chip({
       onPress={onPress}
       accessibilityRole="button"
       accessibilityState={{ selected: active }}
-      // Le nom de la gamme apparaît aussi sur les cartes produits : sans
-      // libellé explicite, rien ne distingue le filtre du reste de l'écran.
       accessibilityLabel={`Filtrer par ${label}`}
       style={[styles.chip, active && styles.chipActive]}
     >
       <Text
-        variant="micro"
+        variant="caption"
         style={{ color: active ? palette.white : palette.body }}
       >
         {label}
@@ -265,8 +304,7 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: palette.bg },
   header: {
     paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md,
-    paddingBottom: spacing.sm,
+    paddingBottom: spacing.md,
     gap: spacing.md,
     backgroundColor: palette.bg,
   },
@@ -276,16 +314,43 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: spacing.md,
   },
+  titleCopy: { gap: 3 },
+  brand: { letterSpacing: 1.5 },
+  cartButton: {
+    width: 42,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 21,
+    backgroundColor: palette.card,
+    borderWidth: 1,
+    borderColor: palette.line,
+  },
+  cartCount: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    minWidth: 17,
+    height: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+    borderRadius: radius.pill,
+    backgroundColor: palette.green,
+    borderWidth: 1.5,
+    borderColor: palette.bg,
+  },
+  cartCountText: { color: palette.white, fontSize: 8 },
   searchBox: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
-    backgroundColor: palette.card,
-    borderWidth: 1.5,
-    borderColor: palette.line,
-    borderRadius: radius.md,
+    minHeight: 48,
     paddingHorizontal: spacing.md,
-    minHeight: 46,
+    borderRadius: radius.pill,
+    backgroundColor: palette.card,
+    borderWidth: 1,
+    borderColor: palette.line,
   },
   searchInput: {
     flex: 1,
@@ -295,7 +360,7 @@ const styles = StyleSheet.create({
   chips: { gap: spacing.sm, paddingRight: spacing.lg },
   chip: {
     paddingHorizontal: spacing.md,
-    paddingVertical: 7,
+    paddingVertical: spacing.sm,
     borderRadius: radius.pill,
     backgroundColor: palette.card,
     borderWidth: 1,
@@ -303,17 +368,49 @@ const styles = StyleSheet.create({
   },
   chipActive: { backgroundColor: palette.green, borderColor: palette.green },
   list: { padding: spacing.lg, paddingTop: spacing.sm, gap: spacing.md },
+  listHeading: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    marginBottom: spacing.xs,
+  },
   row: { gap: spacing.md },
   cell: { flex: 1 },
-  productCard: { gap: spacing.sm, padding: spacing.sm },
+  productCard: { overflow: 'hidden' },
+  productPressable: { gap: spacing.sm },
   productVisual: {
-    height: 94,
-    borderRadius: radius.md,
-    backgroundColor: palette.goldSoft,
+    height: 132,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
+    backgroundColor: palette.goldSoft,
   },
   productImage: { width: '100%', height: '100%' },
-  count: { marginBottom: spacing.xs },
+  productBody: { minHeight: 57, gap: 3, paddingHorizontal: spacing.md },
+  productFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    minHeight: 48,
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.sm,
+  },
+  addButton: {
+    width: 34,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 17,
+    backgroundColor: palette.green,
+  },
+  popularBadge: {
+    position: 'absolute',
+    top: spacing.sm,
+    left: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    backgroundColor: palette.gold,
+  },
+  popularText: { color: palette.greenDeep, fontSize: 8 },
 });

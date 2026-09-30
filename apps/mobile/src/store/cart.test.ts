@@ -63,6 +63,19 @@ describe('ajout au panier', () => {
     expect(line?.quantity).toBe(1);
   });
 
+  it('mémorise la photo pour afficher le panier sans nouvelle requête', () => {
+    useCartStore
+      .getState()
+      .addItem(
+        { ...product, imageUrl: 'https://cdn.example.test/riz.jpg' },
+        v5kg,
+      );
+
+    expect(useCartStore.getState().items[0]?.productImageUrl).toBe(
+      'https://cdn.example.test/riz.jpg',
+    );
+  });
+
   it('cumule au lieu de dupliquer quand le format est déjà présent', () => {
     const { addItem } = useCartStore.getState();
     addItem(product, v5kg);
