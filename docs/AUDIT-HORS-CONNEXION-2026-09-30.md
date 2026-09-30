@@ -30,8 +30,8 @@ pas une commande déconnectée en commande sûre.
 | Moyenne | Les fiches produits dépendaient d'un appel dédié même si le produit était déjà présent dans la liste. | Une fiche déjà téléchargée devenait inaccessible hors ligne. | La fiche utilise d'abord l'entrée catalogue mémorisée. |
 | Moyenne | Une erreur de rafraîchissement masquait des données déjà en cache. | Écran d'erreur alors que le catalogue restait disponible. | Les écrans privilégient les données présentes et conservent l'erreur uniquement si aucune donnée n'existe. |
 | Moyenne | Le panier est local, mais le bouton de commande restait actif sans réseau. | Échec incompréhensible au moment de commander. | Action de commande désactivée hors ligne avec un message explicite ; les modifications du panier restent disponibles. |
-| Moyenne | Le numéro AGRIM était affiché dans « Mon compte », sans action d'appel. | L'utilisateur devait recopier le numéro, particulièrement difficile pendant une coupure. | Bouton **Appeler AGRIM** dans le compte et dans la bannière globale hors connexion (`tel:`). |
-| À confirmer | Aucune ligne fixe n'est configurée. `COMPANY.phone` vaut `+225 07 00 05 04 52` et `secondaryPhone` vaut `07 57 66 55 27` : ce sont des numéros mobiles ivoiriens, pas un standard fixe. | Le bouton ne peut pas honnêtement être présenté comme « le fixe ». | Le bouton appelle le numéro officiel actuellement centralisé. Le vrai numéro de standard doit être fourni avant publication ; il sera remplacé dans `packages/contracts/src/company.ts`. |
+| Moyenne | Le numéro AGRIM était affiché dans « Mon compte », sans action d'appel. | L'utilisateur devait recopier le numéro, particulièrement difficile pendant une coupure. | Bouton **Appeler le fixe** dans le compte et dans la bannière globale hors connexion (`tel:`). |
+| Corrigé | Aucune ligne fixe n'était configurée. | Le bouton ne pouvait pas honnêtement être présenté comme « le fixe ». | Le standard validé `+225 27 20 36 32 83` est centralisé dans `COMPANY.landlinePhone` ; le bouton compose exclusivement ce numéro. Le mobile `+225 07 00 05 04 52` reste affiché dans « Mon compte ». |
 
 ## Limites explicites
 
@@ -71,12 +71,15 @@ connexion. Ils sont déjà détaillés et justifiés dans
 3. Couper Wi‑Fi et données mobiles, puis rouvrir l'application.
 4. Vérifier catalogue, recherche, fiche produit et panier ; le bandeau
    « Mode hors connexion » doit être visible.
-5. Vérifier que « Commander » est désactivé, puis toucher **Appeler AGRIM** :
-   le composeur du téléphone doit s'ouvrir.
+5. Vérifier que « Commander » est désactivé, puis toucher **Appeler le fixe** :
+   le composeur du téléphone doit s'ouvrir avec `+225 27 20 36 32 83`.
 6. Rétablir Internet : le bandeau disparaît et le catalogue peut se rafraîchir.
 
-## Décision attendue
+## Contact validé
 
-Communiquer le **numéro fixe / standard exact** à utiliser en production,
-avec son format international (par exemple `+225 …`). Aucun numéro ne sera
-inventé ou qualifié de fixe sans cette validation.
+Le standard fixe de production validé est **+225 27 20 36 32 83**. Il est
+centralisé dans `packages/contracts/src/company.ts` (`COMPANY.landlinePhone`) ;
+le bouton d'assistance ne doit pas recopier ce numéro dans les écrans.
+
+Le mobile de service **+225 07 00 05 04 52** reste également affiché dans la
+rubrique « Mon compte ».

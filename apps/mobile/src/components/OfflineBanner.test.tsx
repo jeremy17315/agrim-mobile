@@ -33,6 +33,6 @@ it('explique le mode hors connexion et compose le contact AGRIM', () => {
   expect(screen.getByText('Mode hors connexion')).toBeTruthy();
   expect(screen.getByText(/catalogue enregistré restent consultables/i)).toBeTruthy();
 
-  fireEvent.press(screen.getByLabelText('Appeler AGRIM'));
-  expect(Linking.openURL).toHaveBeenCalledWith('tel:+2250700050452');
+  fireEvent.press(screen.getByLabelText('Appeler le fixe'));
+  expect(Linking.openURL).toHaveBeenCalledWith('tel:+2252720363283');
 });

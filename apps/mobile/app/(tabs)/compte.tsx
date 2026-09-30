@@ -44,7 +44,7 @@ export default function CompteScreen() {
             void deleteAccount().catch(() =>
               Alert.alert(
                 'Suppression impossible',
-                'Réessayez ou contactez-nous au +225 07 00 05 04 52.',
+                `Réessayez ou appelez notre standard au ${formatPhone(COMPANY.landlinePhone)}.`,
               ),
             );
           },
@@ -222,13 +222,16 @@ export default function CompteScreen() {
           <View style={styles.flex}>
             <Text variant="h3">Besoin d’aide ?</Text>
             <Text variant="caption" color="muted">
-              {formatPhone(COMPANY.phone)}
+              Standard fixe : {formatPhone(COMPANY.landlinePhone)}
+            </Text>
+            <Text variant="caption" color="muted">
+              Mobile : {formatPhone(COMPANY.phone)}
             </Text>
             <Text variant="caption" color="muted">
               {COMPANY.address}
             </Text>
             <Button
-              label="Appeler AGRIM"
+              label="Appeler le fixe"
               variant="outline"
               size="sm"
               fullWidth={false}

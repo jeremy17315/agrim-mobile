@@ -2,12 +2,12 @@ import { COMPANY } from '@agrim/contracts';
 import { Linking } from 'react-native';
 
 /**
- * Ouvre l'application téléphonique avec le contact officiel AGRIM.
+ * Ouvre l'application téléphonique avec le standard fixe officiel AGRIM.
  *
  * Le numéro vient du contrat partagé : aucun écran ne doit dupliquer un numéro
  * de support, au risque d'appeler une mauvaise ligne après une mise à jour.
  */
 export function callCompany(): Promise<void> {
-  const phone = COMPANY.phone.replace(/[\s.-]/g, '');
+  const phone = COMPANY.landlinePhone.replace(/[\s.-]/g, '');
   return Linking.openURL(`tel:${phone}`);
 }

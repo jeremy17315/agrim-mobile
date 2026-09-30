@@ -45,7 +45,7 @@ export function OfflineBanner() {
           </View>
         </View>
         <Button
-          label="Appeler AGRIM"
+          label="Appeler le fixe"
           size="sm"
           variant="outline"
           fullWidth={false}

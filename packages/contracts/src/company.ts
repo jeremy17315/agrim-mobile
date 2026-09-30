@@ -12,7 +12,10 @@ export const COMPANY = {
   address: 'Siège Yamoussoukro, Côte d\u2019Ivoire',
   city: 'Yamoussoukro',
   country: 'Côte d\u2019Ivoire',
+  /** Ligne mobile du service client. */
   phone: '+225 07 00 05 04 52',
+  /** Standard fixe à privilégier depuis le bouton d’assistance. */
+  landlinePhone: '+225 27 20 36 32 83',
   secondaryPhone: '07 57 66 55 27',
   currency: 'XOF',
   locale: 'fr-CI',
