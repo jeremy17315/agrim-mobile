@@ -66,10 +66,12 @@ function table(prefixe: string, initiales: Row[] = []) {
 
   return {
     rows,
-    findFirst: jest.fn(async ({ where }: { where: Record<string, unknown> }) => {
-      const trouvee = rows.find((r) => filtre(r, where));
-      return trouvee ? { ...trouvee } : null;
-    }),
+    findFirst: jest.fn(
+      async ({ where }: { where: Record<string, unknown> }) => {
+        const trouvee = rows.find((r) => filtre(r, where));
+        return trouvee ? { ...trouvee } : null;
+      },
+    ),
     findMany: jest.fn(async () => rows.map((r) => ({ ...r }))),
     create: jest.fn(async ({ data }: { data: Row }) => {
       sequence += 1;
@@ -86,7 +88,13 @@ function table(prefixe: string, initiales: Row[] = []) {
       },
     ),
     updateMany: jest.fn(
-      async ({ where, data }: { where: Record<string, unknown>; data: Row }) => {
+      async ({
+        where,
+        data,
+      }: {
+        where: Record<string, unknown>;
+        data: Row;
+      }) => {
         const cibles = rows.filter((r) => filtre(r, where));
         for (const cible of cibles) Object.assign(cible, data);
         return { count: cibles.length };
@@ -306,7 +314,7 @@ describe('CatalogSyncService', () => {
 
   describe('sync — le catalogue du site fait foi', () => {
     it('adopte le catalogue réel et retire les références fantômes', async () => {
-      const { service, product, productVariant } = makeHarness();
+      const { service, category, product, productVariant } = makeHarness();
 
       const rapport = await service.sync();
 
@@ -314,7 +322,19 @@ describe('CatalogSyncService', () => {
       expect(rapport.errors).toEqual([]);
       expect(rapport.generatedAt).toBe(CATALOGUE.genere_le);
       // Djassa mise à jour, Prémium créée ; Sika retirée.
-      expect(rapport.ranges).toEqual({ created: 1, updated: 1, deactivated: 1 });
+      expect(rapport.products).toEqual({
+        created: 1,
+        updated: 1,
+        deactivated: 1,
+      });
+      // L'unique gamme commerciale regroupe les produits existants comme les
+      // nouveaux : Djassa ne reste donc pas un filtre de catégorie à part.
+      const belierDor = category.rows.find((row) => row.slug === 'belier-dor');
+      expect(belierDor).toMatchObject({ name: 'Bélier d’Or' });
+      expect(ligne(product, 'prod-djassa').categoryId).toBe(belierDor?.id);
+      expect(
+        product.rows.find((row) => row.slug === 'premium')?.categoryId,
+      ).toBe(belierDor?.id);
       // Djassa 5 kg adoptée, Prémium 5 kg créée ; trois fantômes retirés.
       expect(rapport.variants).toEqual({
         created: 1,
@@ -512,7 +532,7 @@ describe('CatalogSyncService', () => {
       const rapport = await service.sync();
 
       expect(rapport.variants.deactivated).toBe(0);
-      expect(rapport.ranges.deactivated).toBe(0);
+      expect(rapport.products.deactivated).toBe(0);
       expect(productVariant.updateMany).not.toHaveBeenCalled();
       expect(product.updateMany).not.toHaveBeenCalled();
       expect(productVariant.rows.every((r) => r.isAvailable === true)).toBe(
@@ -532,14 +552,15 @@ describe('CatalogSyncService', () => {
 
       expect(rapport.ok).toBe(false);
       expect(rapport.errors).toHaveLength(1);
-      expect(rapport.errors[0]).toContain('PRE');
-      // La référence orpheline est signalée, pas rattachée au hasard.
-      expect(rapport.skipped).toEqual(['PRE-5KG']);
+      expect(rapport.errors[0]).toContain('Bélier d’Or');
+      // Sans l'unique gamme commerciale, aucune référence n'est rattachée à
+      // une catégorie arbitraire et aucune désactivation ne peut avoir lieu.
+      expect(rapport.skipped).toEqual([]);
 
       expect(productVariant.updateMany).not.toHaveBeenCalled();
       expect(product.updateMany).not.toHaveBeenCalled();
       expect(rapport.variants.deactivated).toBe(0);
-      expect(rapport.ranges.deactivated).toBe(0);
+      expect(rapport.products.deactivated).toBe(0);
       expect(productVariant.rows.every((r) => r.isAvailable === true)).toBe(
         true,
       );
@@ -654,7 +675,8 @@ describe('CatalogSyncService', () => {
 
       const resultat = await service.quote(['DJA-5KG', 'PRE-5KG']);
 
-      if (resultat.status !== 'ok') throw new Error(`statut ${resultat.status}`);
+      if (resultat.status !== 'ok')
+        throw new Error(`statut ${resultat.status}`);
       expect(resultat.prices.get('DJA-5KG')).toEqual({
         prix: 2250,
         prixBarre: 2800,
@@ -686,7 +708,8 @@ describe('CatalogSyncService', () => {
 
       const resultat = await service.quote(['DJA-5KG']);
 
-      if (resultat.status !== 'ok') throw new Error(`statut ${resultat.status}`);
+      if (resultat.status !== 'ok')
+        throw new Error(`statut ${resultat.status}`);
       expect(resultat.prices.get('DJA-5KG')?.vendable).toBe(false);
     });
 
@@ -704,7 +727,8 @@ describe('CatalogSyncService', () => {
 
       const resultat = await service.quote(['DJA-5KG']);
 
-      if (resultat.status !== 'ok') throw new Error(`statut ${resultat.status}`);
+      if (resultat.status !== 'ok')
+        throw new Error(`statut ${resultat.status}`);
       expect(resultat.prices.get('DJA-5KG')?.vendable).toBe(true);
     });
 

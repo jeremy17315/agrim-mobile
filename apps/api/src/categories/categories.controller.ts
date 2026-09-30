@@ -11,7 +11,7 @@ export class CategoriesController {
 
   @Public()
   @Get()
-  @ApiOperation({ summary: 'Lister les gammes RIZ BOAGNI' })
+  @ApiOperation({ summary: 'Lister les gammes Bélier d’Or' })
   list() {
     return this.prisma.db.category.findMany({
       // Une ancienne catégorie peut rester en base pour préserver l'historique

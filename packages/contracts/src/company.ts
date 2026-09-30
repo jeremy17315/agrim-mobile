@@ -31,13 +31,13 @@ export const SELLING_POINTS = [
 ] as const;
 
 /**
- * Les cinq gammes Bélier d’Or proposées sur le site.
+ * Les cinq produits de l’unique gamme Bélier d’Or.
  *
  * Le site reste la source de vérité des prix, formats, disponibilités et
  * textes : cette liste sert seulement à amorcer une base vide et à empêcher
- * qu’une ancienne gamme locale ne réapparaisse dans l’app.
+ * qu’un ancien produit local ne réapparaisse dans l’app.
  */
-export const RICE_RANGES = [
+export const BELIER_PRODUCTS = [
   {
     slug: 'royal-grains',
     name: 'Royal Grains',
@@ -91,7 +91,7 @@ const SPECIAL_RICE_PRICING = {
 } as const;
 
 /**
- * Grille tarifaire RIZ BOAGNI, en XOF (section 17).
+ * Grille tarifaire des produits Bélier d’Or, en XOF (section 17).
  * `originalPrice` est le prix barré affiché en promotion.
  *
  * ⚠️ CETTE GRILLE N'EST PLUS LA SOURCE DE VÉRITÉ (audit de cohérence,
@@ -103,7 +103,7 @@ const SPECIAL_RICE_PRICING = {
  * Corriger un prix ICI ne change rien : la synchronisation suivante le
  * réécrira depuis le site. Un prix se corrige dans le back office du site.
  */
-export const RICE_PRICING = {
+export const BELIER_PRODUCT_PRICING = {
   'royal-grains': {
     900: { price: 800, originalPrice: 900 },
     5000: { price: 4000, originalPrice: 4500 },

@@ -35,7 +35,7 @@ let mockProducts: {
   refetch: jest.Mock;
 };
 
-const categories: Category[] = [
+const initialCategories: Category[] = [
   {
     id: 'c1',
     slug: 'royal-grains',
@@ -53,9 +53,10 @@ const categories: Category[] = [
     sortOrder: 2,
   },
 ];
+let mockCategories = initialCategories.map((category) => ({ ...category }));
 
 jest.mock('@/api/catalog', () => ({
-  useCategories: () => ({ data: categories, isPending: false }),
+  useCategories: () => ({ data: mockCategories, isPending: false }),
   useProducts: (filters: { search?: string; category?: string }) => {
     productCalls.push({ search: filters.search, category: filters.category });
     return mockProducts;
@@ -100,6 +101,7 @@ beforeEach(() => {
   jest.useFakeTimers();
   jest.clearAllMocks();
   productCalls.length = 0;
+  mockCategories = initialCategories.map((category) => ({ ...category }));
   mockParams = {};
   mockProducts = listing([product()]);
 });
@@ -116,6 +118,27 @@ it('affiche la grille et le nombre de résultats', () => {
 
   expect(screen.getByText('1 produit')).toBeTruthy();
   expect(screen.getByText('RIZ BOAGNI Royal Grains')).toBeTruthy();
+});
+
+it('masque le sélecteur lorsque Bélier d’Or est l’unique gamme', () => {
+  mockCategories = [
+    {
+      id: 'belier-dor',
+      slug: 'belier-dor',
+      name: 'Bélier d’Or',
+      description: 'Le bon riz local, simplement',
+      imageUrl: null,
+      sortOrder: 1,
+    },
+  ];
+  // Un lien persistant vers une ancienne catégorie ne doit pas vider le rayon.
+  mockParams = { category: 'royal-grains' };
+
+  render(<CatalogueScreen />);
+
+  expect(screen.queryByLabelText('Filtrer par Toutes')).toBeNull();
+  expect(screen.queryByLabelText('Filtrer par Bélier d’Or')).toBeNull();
+  expect(lastCall().category).toBeUndefined();
 });
 
 it('accorde le compteur au pluriel', () => {
@@ -253,7 +276,7 @@ it('distingue une recherche infructueuse d’une gamme vide', () => {
 
   const view = render(<CatalogueScreen />);
   expect(
-    screen.getByText('Aucun produit dans cette gamme pour le moment.'),
+    screen.getByText('Aucun produit disponible pour le moment.'),
   ).toBeTruthy();
 
   fireEvent.changeText(

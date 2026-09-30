@@ -1,5 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { dehydrate, hydrate, type Query, type QueryClient } from '@tanstack/react-query';
+import {
+  dehydrate,
+  hydrate,
+  type Query,
+  type QueryClient,
+} from '@tanstack/react-query';
 import { Platform } from 'react-native';
 
 /**
@@ -9,11 +14,12 @@ import { Platform } from 'react-native';
  * réponses authentifiées : elles peuvent être périmées et ne doivent pas être
  * relues par une autre personne qui utiliserait le même téléphone.
  */
-// v2 : l'ancienne liste contenait des gammes retirées (Sika / diététiques).
-// Invalider ce cache force l'affichage des cinq gammes actuelles au prochain
-// démarrage, même après une longue période hors connexion.
-const CACHE_KEY = 'agrim.catalog-query-cache.v2';
-const CACHE_VERSION = 2;
+// v3 : l'ancienne structure présentait chaque produit comme une gamme.
+// Invalider ce cache force l'affichage de l'unique gamme Bélier d’Or et de
+// ses cinq produits au prochain démarrage, même après une longue période hors
+// connexion.
+const CACHE_KEY = 'agrim.catalog-query-cache.v3';
+const CACHE_VERSION = 3;
 const MAX_CACHE_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const WRITE_DEBOUNCE_MS = 250;
 
@@ -34,7 +40,9 @@ function isCatalogQuery(query: Query): boolean {
 }
 
 /** Réhydrate le seul cache qui a une vraie valeur sans réseau : le catalogue. */
-export async function restoreCatalogCache(queryClient: QueryClient): Promise<void> {
+export async function restoreCatalogCache(
+  queryClient: QueryClient,
+): Promise<void> {
   if (!canUseStorage()) return;
 
   try {

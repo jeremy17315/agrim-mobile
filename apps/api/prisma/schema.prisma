@@ -246,9 +246,8 @@ model Category {
   sortOrder   Int       @default(0)
   products    Product[]
 
-  /// Code de la gamme côté SITE (EBE, DIE, DJA, DV, ROY, SIK).
-  /// C'est la clé de synchronisation : renommer une gamme dans le back
-  /// office du site ne doit pas créer une catégorie en double ici.
+  /// Code de l'unique gamme commerciale côté SITE (`BELIER_DOR`).
+  /// Il préserve l'identité de la catégorie lors des synchronisations.
   sourceCode String? @unique @db.VarChar(16)
 
   createdAt DateTime @default(now())
@@ -261,7 +260,7 @@ model Product {
   name             String  @db.VarChar(120)
   shortDescription String? @db.VarChar(200)
   description      String? @db.VarChar(2000)
-  brand            String  @default("RIZ BOAGNI") @db.VarChar(80)
+  brand            String  @default("Bélier d’Or") @db.VarChar(80)
   imageUrl         String?
   isFeatured       Boolean @default(false)
   isActive         Boolean @default(true)
@@ -271,7 +270,8 @@ model Product {
   variants   ProductVariant[]
   reviews    ProductReview[]
 
-  /// Code de la gamme côté SITE — même rôle que Category.sourceCode.
+  /// Code historique du produit dans le champ réseau `gammes` du SITE.
+  /// Il évite de dupliquer un produit quand son nom ou son slug évolue.
   sourceCode String? @unique @db.VarChar(16)
 
   createdAt DateTime @default(now())

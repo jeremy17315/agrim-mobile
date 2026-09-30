@@ -26,8 +26,8 @@ import { useCartItemCount, useCartStore } from '@/store/cart';
 import { palette, radius, spacing, typography } from '@/theme/tokens';
 
 /**
- * Vitrine compacte du catalogue : recherche, gammes, cartes produits et ajout
- * rapide. La mise en page reprend les repères d'une boutique mobile moderne,
+ * Vitrine compacte du catalogue : recherche, produits, cartes et ajout rapide.
+ * Le filtre de gamme disparaît lorsqu'il n'existe que Bélier d’Or. La mise en page reprend les repères d'une boutique mobile moderne,
  * sans introduire de navigation ou de données supplémentaires.
  */
 export default function CatalogueScreen() {
@@ -61,6 +61,13 @@ export default function CatalogueScreen() {
 
   const items = products.data?.data ?? [];
   const total = products.data?.pagination.total ?? 0;
+  const categoriesList = categories.data ?? [];
+
+  // Un lien historique peut cibler une ancienne catégorie. Une fois la gamme
+  // unique reçue, cette sélection ne doit pas masquer les cinq produits.
+  if (categoriesList.length === 1 && category !== undefined) {
+    setCategory(undefined);
+  }
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top + spacing.sm }]}>
@@ -119,27 +126,29 @@ export default function CatalogueScreen() {
           ) : null}
         </View>
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.chips}
-        >
-          <Chip
-            label="Toutes"
-            active={category === undefined}
-            onPress={() => setCategory(undefined)}
-          />
-          {(categories.data ?? []).map((entry) => (
+        {categoriesList.length > 1 ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.chips}
+          >
             <Chip
-              key={entry.id}
-              label={entry.name}
-              active={category === entry.slug}
-              onPress={() =>
-                setCategory(category === entry.slug ? undefined : entry.slug)
-              }
+              label="Toutes"
+              active={category === undefined}
+              onPress={() => setCategory(undefined)}
             />
-          ))}
-        </ScrollView>
+            {categoriesList.map((entry) => (
+              <Chip
+                key={entry.id}
+                label={entry.name}
+                active={category === entry.slug}
+                onPress={() =>
+                  setCategory(category === entry.slug ? undefined : entry.slug)
+                }
+              />
+            ))}
+          </ScrollView>
+        ) : null}
       </View>
 
       {products.isError && !products.data ? (
@@ -158,7 +167,7 @@ export default function CatalogueScreen() {
           message={
             debouncedSearch.length > 0
               ? `Rien ne correspond à « ${debouncedSearch} ». Essayez un autre terme.`
-              : 'Aucun produit dans cette gamme pour le moment.'
+              : 'Aucun produit disponible pour le moment.'
           }
         />
       ) : (

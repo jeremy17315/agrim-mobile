@@ -1,8 +1,8 @@
-import { RICE_RANGES } from './company';
+import { BELIER_PRODUCTS } from './company';
 
-describe('gammes Bélier d’Or', () => {
-  it('reprend exactement les cinq gammes proposées sur le site', () => {
-    expect(RICE_RANGES.map((range) => range.name)).toEqual([
+describe('produits Bélier d’Or', () => {
+  it('reprend exactement les cinq produits proposés sur le site', () => {
+    expect(BELIER_PRODUCTS.map((product) => product.name)).toEqual([
       'Royal Grains',
       'Djassa',
       'Ébène d’Or',
