@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { EmptyState, Skeleton } from '@/components/states';
 import { Banner, Button, Card, Icon, Text } from '@/components/ui';
 import { formatWeight, formatXof } from '@/lib/format';
+import { useIsOnline } from '@/lib/network';
 import { useIsAuthenticated } from '@/store/auth';
 import {
   useCartStore,
@@ -26,6 +27,7 @@ export default function PanierScreen() {
   const router = useRouter();
 
   const isAuthenticated = useIsAuthenticated();
+  const isOnline = useIsOnline();
   const items = useCartStore((s) => s.items);
   const hydrated = useCartStore((s) => s.hydrated);
   const increment = useCartStore((s) => s.increment);
@@ -41,6 +43,7 @@ export default function PanierScreen() {
    * 401 incompréhensible.
    */
   const goToCheckout = () => {
+    if (!isOnline) return;
     if (!isAuthenticated) {
       router.push('/(auth)/connexion');
       return;
@@ -111,6 +114,13 @@ export default function PanierScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.list}>
+        {!isOnline ? (
+          <Banner
+            tone="warning"
+            message="Vous pouvez modifier votre panier hors connexion. Reconnectez-vous pour finaliser la commande."
+            icon={<Icon name="wifi-off" size={15} color="#8A5310" />}
+          />
+        ) : null}
         {/* Les frais dépendent de la ZONE de livraison — donc de l'adresse,
             choisie à l'étape suivante. Annoncer ici un montant ou un seuil de
             gratuité reviendrait à promettre un total qui changerait au
@@ -165,8 +175,11 @@ export default function PanierScreen() {
         </View>
         <View style={styles.flex}>
           <Button
-            label="Commander"
-            icon={<Icon name="arrow-right" size={16} color="white" />}
+            label={isOnline ? 'Commander' : 'Connexion nécessaire'}
+            disabled={!isOnline}
+            icon={
+              isOnline ? <Icon name="arrow-right" size={16} color="white" /> : undefined
+            }
             onPress={goToCheckout}
           />
         </View>

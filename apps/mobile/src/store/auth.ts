@@ -1,4 +1,4 @@
-import type { User } from '@agrim/contracts';
+import { userSchema, type User } from '@agrim/contracts';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 import { create } from 'zustand';
@@ -13,6 +13,8 @@ import {
   type RegisterPayload,
 } from '@/api/auth';
 import { setSessionRefresher, setTokenProvider } from '@/api/client';
+import { ApiError } from '@/api/errors';
+import { hasInternetConnection } from '@/lib/network';
 
 /**
  * SESSION UTILISATEUR.
@@ -21,13 +23,15 @@ import { setSessionRefresher, setTokenProvider } from '@/api/client';
  * Keystore Android), JAMAIS dans AsyncStorage — contrairement au panier, qui
  * n'a aucune valeur pour un attaquant.
  *
- * Le profil utilisateur, lui, n'est pas secret : il est conservé en mémoire et
- * rechargé depuis l'API. On ne duplique pas des données serveur dans un store
- * persistant.
+ * Le profil utilisateur n'est pas secret, mais il est aussi conservé dans le
+ * coffre : hors ligne, il permet de rendre l'interface déjà autorisée (rôle,
+ * nom) sans prétendre valider une nouvelle opération.
+ * Dès que le réseau revient, la rotation de session le relit côté serveur.
  */
 
 const ACCESS_TOKEN_KEY = 'agrim.accessToken';
 const REFRESH_TOKEN_KEY = 'agrim.refreshToken';
+const USER_KEY = 'agrim.sessionUser';
 
 /**
  * SecureStore n'existe pas sur le web : on dégrade explicitement en mémoire
@@ -78,6 +82,36 @@ async function vaultDelete(key: string): Promise<void> {
   }
 }
 
+function parseStoredUser(raw: string | null): User | null {
+  if (!raw) return null;
+  try {
+    const parsed = userSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+async function saveSession(
+  accessToken: string,
+  refreshToken: string,
+  user: User,
+): Promise<void> {
+  await Promise.all([
+    vaultSet(ACCESS_TOKEN_KEY, accessToken),
+    vaultSet(REFRESH_TOKEN_KEY, refreshToken),
+    vaultSet(USER_KEY, JSON.stringify(user)),
+  ]);
+}
+
+async function clearStoredSession(): Promise<void> {
+  await Promise.all([
+    vaultDelete(ACCESS_TOKEN_KEY),
+    vaultDelete(REFRESH_TOKEN_KEY),
+    vaultDelete(USER_KEY),
+  ]);
+}
+
 type AuthState = {
   user: User | null;
   accessToken: string | null;
@@ -101,9 +135,12 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
   hydrated: !hasSecureVault,
 
   /**
-   * Restaure la session au lancement. On ne fait pas confiance au token
-   * stocké : on le rafraîchit, ce qui vérifie du même coup qu'il est encore
-   * valide côté serveur.
+   * Restaure la session au lancement.
+   *
+   * En ligne, le refresh reste la vérification d'autorité. Hors ligne, on
+   * restaure la dernière session locale pour que l'utilisateur puisse au moins
+   * consulter ses données déjà présentes ; aucune écriture métier ne partira
+   * tant que le réseau n'est pas revenu.
    */
   restore: async () => {
     if (!hasSecureVault) {
@@ -111,27 +148,52 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
       return;
     }
 
-    const stored = await vaultGet(REFRESH_TOKEN_KEY);
-    if (!stored) {
+    const [storedAccess, storedRefresh, storedUserRaw] = await Promise.all([
+      vaultGet(ACCESS_TOKEN_KEY),
+      vaultGet(REFRESH_TOKEN_KEY),
+      vaultGet(USER_KEY),
+    ]);
+    const storedUser = parseStoredUser(storedUserRaw);
+
+    if (!storedRefresh) {
       set({ hydrated: true });
       return;
     }
 
+    const restoreLocalSession = () => {
+      if (!storedAccess || !storedUser) return false;
+      set({
+        user: storedUser,
+        accessToken: storedAccess,
+        refreshToken: storedRefresh,
+        hydrated: true,
+      });
+      return true;
+    };
+
     try {
-      const session = await refreshSession(stored);
-      await vaultSet(ACCESS_TOKEN_KEY, session.accessToken);
-      await vaultSet(REFRESH_TOKEN_KEY, session.refreshToken);
+      if (!(await hasInternetConnection())) {
+        if (!restoreLocalSession()) set({ hydrated: true });
+        return;
+      }
+
+      const session = await refreshSession(storedRefresh);
+      await saveSession(session.accessToken, session.refreshToken, session.user);
       set({
         user: session.user,
         accessToken: session.accessToken,
         refreshToken: session.refreshToken,
         hydrated: true,
       });
-    } catch {
-      // Token révoqué, expiré ou réseau coupé : on repart déconnecté plutôt
-      // que de laisser l'application dans un état ambigu.
-      await vaultDelete(ACCESS_TOKEN_KEY);
-      await vaultDelete(REFRESH_TOKEN_KEY);
+    } catch (error) {
+      // Une coupure, un DNS indisponible ou une maintenance serveur n'est PAS
+      // une déconnexion. Seul un 401 du refresh prouve que la session est morte.
+      if (!(error instanceof ApiError && error.isAuthError)) {
+        if (!restoreLocalSession()) set({ hydrated: true });
+        return;
+      }
+
+      await clearStoredSession();
       set({
         user: null,
         accessToken: null,
@@ -141,10 +203,10 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     }
   },
 
+
   signIn: async (payload) => {
     const session = await loginRequest(payload);
-    await vaultSet(ACCESS_TOKEN_KEY, session.accessToken);
-    await vaultSet(REFRESH_TOKEN_KEY, session.refreshToken);
+    await saveSession(session.accessToken, session.refreshToken, session.user);
     set({
       user: session.user,
       accessToken: session.accessToken,
@@ -155,8 +217,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
   signUp: async (payload) => {
     const session = await registerRequest(payload);
-    await vaultSet(ACCESS_TOKEN_KEY, session.accessToken);
-    await vaultSet(REFRESH_TOKEN_KEY, session.refreshToken);
+    await saveSession(session.accessToken, session.refreshToken, session.user);
     set({
       user: session.user,
       accessToken: session.accessToken,
@@ -167,8 +228,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
   deleteAccount: async () => {
     await deleteAccountRequest();
-    await vaultDelete(ACCESS_TOKEN_KEY);
-    await vaultDelete(REFRESH_TOKEN_KEY);
+    await clearStoredSession();
     set({ user: null, accessToken: null, refreshToken: null });
   },
 
@@ -177,8 +237,7 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     // On efface localement d'abord : même si le serveur est injoignable,
     // l'utilisateur doit être déconnecté sur l'appareil.
     set({ user: null, accessToken: null, refreshToken: null });
-    await vaultDelete(ACCESS_TOKEN_KEY);
-    await vaultDelete(REFRESH_TOKEN_KEY);
+    await clearStoredSession();
 
     if (refreshToken) {
       try {
@@ -202,18 +261,19 @@ setSessionRefresher(async () => {
 
   try {
     const session = await refreshSession(refreshToken);
-    await vaultSet(ACCESS_TOKEN_KEY, session.accessToken);
-    await vaultSet(REFRESH_TOKEN_KEY, session.refreshToken);
+    await saveSession(session.accessToken, session.refreshToken, session.user);
     useAuthStore.setState({
       user: session.user,
       accessToken: session.accessToken,
       refreshToken: session.refreshToken,
     });
     return session.accessToken;
-  } catch {
-    // Refresh refusé : la session est morte, on nettoie l'appareil.
-    await vaultDelete(ACCESS_TOKEN_KEY);
-    await vaultDelete(REFRESH_TOKEN_KEY);
+  } catch (error) {
+    // Toute indisponibilité temporaire laisse l'accès local intact. Seule une
+    // réponse 401 confirme que le refresh token n'est plus valable.
+    if (!(error instanceof ApiError && error.isAuthError)) return null;
+
+    await clearStoredSession();
     useAuthStore.setState({
       user: null,
       accessToken: null,

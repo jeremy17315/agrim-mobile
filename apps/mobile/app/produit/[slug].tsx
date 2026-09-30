@@ -87,7 +87,7 @@ export default function ProductScreen() {
         </Text>
       </View>
 
-      {product.isError ? (
+      {product.isError && !product.data ? (
         <ErrorState
           error={product.error}
           onRetry={() => void product.refetch()}

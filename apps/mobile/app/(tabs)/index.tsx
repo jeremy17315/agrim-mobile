@@ -83,7 +83,7 @@ export default function HomeScreen() {
         />
 
         <Section title="Nos gammes">
-          {categories.isError ? (
+          {categories.isError && !categories.data ? (
             <ErrorState
               error={categories.error}
               onRetry={() => void categories.refetch()}
@@ -124,7 +124,7 @@ export default function HomeScreen() {
           title="Sélection du moment"
           action={<Pill label="Populaire" tone="gold" />}
         >
-          {featured.isError ? (
+          {featured.isError && !featured.data ? (
             <ErrorState
               error={featured.error}
               onRetry={() => void featured.refetch()}

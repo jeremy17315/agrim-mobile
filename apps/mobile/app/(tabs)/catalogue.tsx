@@ -49,7 +49,9 @@ export default function CatalogueScreen() {
   const products = useProducts({
     search: debouncedSearch.length > 0 ? debouncedSearch : undefined,
     category,
-    limit: 20,
+    // Une seule page complète est conservée localement, afin que recherche et
+    // navigation restent possibles après une coupure réseau.
+    limit: 100,
   });
 
   const items = products.data?.data ?? [];
@@ -107,7 +109,7 @@ export default function CatalogueScreen() {
         </ScrollView>
       </View>
 
-      {products.isError ? (
+      {products.isError && !products.data ? (
         <ErrorState
           error={products.error}
           onRetry={() => void products.refetch()}

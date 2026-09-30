@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useUnreadCount } from '@/api/notifications';
 import { Button, Card, Icon, Text, type IconName } from '@/components/ui';
+import { callCompany } from '@/lib/contact';
 import { formatPhone } from '@/lib/format';
 import { useAuthStore } from '@/store/auth';
 import { palette, radius, spacing } from '@/theme/tokens';
@@ -219,13 +220,21 @@ export default function CompteScreen() {
         <Card style={styles.contact}>
           <Icon name="phone" size={18} color="gold" />
           <View style={styles.flex}>
-            <Text variant="h3">{COMPANY.name}</Text>
+            <Text variant="h3">Besoin d’aide ?</Text>
             <Text variant="caption" color="muted">
               {formatPhone(COMPANY.phone)}
             </Text>
             <Text variant="caption" color="muted">
               {COMPANY.address}
             </Text>
+            <Button
+              label="Appeler AGRIM"
+              variant="outline"
+              size="sm"
+              fullWidth={false}
+              icon={<Icon name="phone" size={14} color="green" />}
+              onPress={() => void callCompany()}
+            />
           </View>
         </Card>
       </ScrollView>
