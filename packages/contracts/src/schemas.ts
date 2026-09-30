@@ -282,14 +282,29 @@ export type CreateOrderInput = z.infer<typeof createOrderSchema>;
  * Le backend crée les relations techniques nécessaires et recalcule toujours
  * prix, stock et frais de livraison.
  */
-export const guestOrderSchema = z.object({
-  customerName: z.string().trim().min(2).max(160),
-  phone: phoneSchema,
-  /** Ville, zone ou repère de livraison saisi simplement par le client. */
-  deliveryLocation: z.string().trim().min(2).max(255),
-  items: z.array(createOrderItemSchema).min(1).max(50),
-  idempotencyKey: z.uuid(),
-});
+export const guestOrderSchema = z
+  .object({
+    customerName: z.string().trim().min(2).max(160),
+    phone: phoneSchema,
+    /** Ville, zone ou repère de livraison saisi simplement par le client. */
+    deliveryLocation: z.string().trim().min(2).max(255),
+    items: z.array(createOrderItemSchema).min(1).max(50),
+    /** Même choix que le site, sans imposer la création d'un compte. */
+    paymentMethod: z
+      .enum(['CASH_ON_DELIVERY', 'MOBILE_MONEY'])
+      .default('CASH_ON_DELIVERY'),
+    mobileMoneyProvider: z.enum(MOBILE_MONEY_PROVIDERS).optional(),
+    idempotencyKey: z.uuid(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.paymentMethod === 'MOBILE_MONEY' && !value.mobileMoneyProvider) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['mobileMoneyProvider'],
+        message: 'Choisissez un opérateur Mobile Money.',
+      });
+    }
+  });
 export type GuestOrderInput = z.infer<typeof guestOrderSchema>;
 
 /* ──────────────────────────────── Paiement ─────────────────────────────── */

@@ -88,6 +88,24 @@ export interface PaymentStatusView {
   failureReason: string | null;
 }
 
+/** Projection minimale commune aux paiements connectés et invités. */
+type InitiableOrder = {
+  id: string;
+  reference: string;
+  userId: string;
+  status: string;
+  total: number;
+  guestName: string | null;
+  guestPhone: string | null;
+  payment: {
+    id: string;
+    method: 'MOBILE_MONEY' | 'CARD' | 'CASH_ON_DELIVERY';
+    provider: 'ORANGE_MONEY' | 'MTN_MOMO' | 'MOOV_MONEY' | 'WAVE' | null;
+    status: string;
+  } | null;
+  user: { firstName: string; lastName: string; phone: string };
+};
+
 /** Meilleure extraction de l'identifiant de transaction d'un appel entrant —
  * y compris quand sa signature n'a PAS passé : la trace de sécurité vaut ce
  * qu'elle peut. Borné à 120, comme la colonne qui le porte. */
@@ -132,46 +150,53 @@ export class PaymentsService {
   /**
    * Ouvre une transaction pour une commande en attente de paiement.
    *
-   * Rejouable : si le client abandonne la page de l'opérateur et revient, un
+   * Rejouable : si le client abandonne la page de l’opérateur et revient, un
    * nouvel appel rouvre une transaction plutôt que de le laisser coincé.
    */
   async initiate(userId: string, reference: string) {
-    const order = await this.prisma.db.order.findUnique({
-      where: { reference },
-      select: {
-        id: true,
-        reference: true,
-        userId: true,
-        status: true,
-        total: true,
-        payment: {
-          select: { id: true, method: true, provider: true, status: true },
-        },
-        user: { select: { firstName: true, lastName: true, phone: true } },
-      },
-    });
+    const order = await this.findInitiableOrder(reference);
 
     // Même réponse pour « inexistante » et « pas la vôtre » : autrement, une
     // énumération de références révèle quelles commandes existent.
-    if (!order || order.userId !== userId) {
-      throw new NotFoundException({
-        code: 'ORDER_NOT_FOUND',
-        message: 'Cette commande est introuvable.',
-      });
-    }
-    if (!order.payment) {
-      throw new NotFoundException({
-        code: 'PAYMENT_NOT_FOUND',
-        message: 'Aucun paiement rattaché à cette commande.',
-      });
-    }
-    if (order.payment.method === 'CASH_ON_DELIVERY') {
+    if (!order || order.userId !== userId) throw this.orderNotFound();
+    return this.initiateLoadedOrder(order);
+  }
+
+  /** Même paiement que le site, mais réservé à une commande explicitement
+   * marquée invitée. L'autorisation de capacité est vérifiée par le contrôleur. */
+  async initiateGuest(reference: string) {
+    const order = await this.findInitiableOrder(reference, true);
+    if (!order) throw this.orderNotFound();
+    return this.initiateLoadedOrder(order);
+  }
+
+  /**
+   * État du paiement, avec filet de sécurité. La vérification fournisseur et
+   * l'expiration restent identiques, quelle que soit l'origine de la commande.
+   */
+  async status(userId: string, reference: string): Promise<PaymentStatusView> {
+    const payment = await this.findPayment(reference, { userId });
+    if (!payment) throw this.paymentNotFound();
+    return this.resolveStatus(payment, () => this.status(userId, reference));
+  }
+
+  /** État du paiement d'une commande invitée, derrière son jeton temporaire. */
+  async statusGuest(reference: string): Promise<PaymentStatusView> {
+    const payment = await this.findPayment(reference, { guest: true });
+    if (!payment) throw this.paymentNotFound();
+    return this.resolveStatus(payment, () => this.statusGuest(reference));
+  }
+
+  private async initiateLoadedOrder(order: InitiableOrder) {
+    const payment = order.payment;
+    if (!payment) throw this.paymentNotFound();
+    if (payment.method === 'CASH_ON_DELIVERY') {
       throw new ConflictException({
         code: 'PAYMENT_NOT_APPLICABLE',
         message: 'Cette commande est réglée à la livraison.',
       });
     }
-    if (order.payment.status === 'SUCCEEDED') {
+    if (payment.status === 'SUCCEEDED') {
       throw new ConflictException({
         code: 'PAYMENT_ALREADY_SETTLED',
         message: 'Cette commande est déjà payée.',
@@ -184,26 +209,28 @@ export class PaymentsService {
       });
     }
     if (!this.gateway.isConfigured()) {
-      // 503 et non 500 : ce n'est pas un bug, c'est une passerelle non
-      // configurée. Le client peut réessayer plus tard ou payer à la livraison.
       throw new ServiceUnavailableException({
         code: 'PAYMENT_UNAVAILABLE',
-        message: "Le paiement en ligne est momentanément indisponible.",
+        message: 'Le paiement en ligne est momentanément indisponible.',
       });
     }
 
+    const customerName =
+      order.guestName ??
+      `${order.user.firstName} ${order.user.lastName}`.trim();
+    const customerPhone = order.guestPhone ?? order.user.phone;
     const result = await this.runGateway(() =>
       this.gateway.initiate({
         orderReference: order.reference,
         amountXof: order.total,
-        customerName: `${order.user.firstName} ${order.user.lastName}`.trim(),
-        customerPhone: order.user.phone,
-        provider: order.payment!.provider,
+        customerName,
+        customerPhone,
+        provider: payment.provider,
       }),
     );
 
     await this.prisma.db.payment.update({
-      where: { id: order.payment.id },
+      where: { id: payment.id },
       data: {
         providerReference: result.providerReference,
         status:
@@ -216,7 +243,7 @@ export class PaymentsService {
     // Un pilote peut trancher immédiatement (simulation, refus direct de
     // l'agrégateur). Dans ce cas le règlement a lieu tout de suite.
     if (result.status !== 'PENDING') {
-      await this.settle(order.payment.id, result.status, result.message);
+      await this.settle(payment.id, result.status, result.message);
     }
 
     return {
@@ -227,19 +254,34 @@ export class PaymentsService {
     };
   }
 
-  /**
-   * État du paiement, avec filet de sécurité.
-   *
-   * Si la transaction est ouverte depuis un moment et qu'aucun webhook n'est
-   * arrivé, on interroge le fournisseur. C'est ce qui rattrape les callbacks
-   * perdus — le mode de panne le plus courant du paiement mobile.
-   */
-  async status(
-    userId: string,
+  private async findInitiableOrder(reference: string, guest = false) {
+    return this.prisma.db.order.findFirst({
+      where: guest ? { reference, guestPhone: { not: null } } : { reference },
+      select: {
+        id: true,
+        reference: true,
+        userId: true,
+        status: true,
+        total: true,
+        guestName: true,
+        guestPhone: true,
+        payment: {
+          select: { id: true, method: true, provider: true, status: true },
+        },
+        user: { select: { firstName: true, lastName: true, phone: true } },
+      },
+    });
+  }
+
+  private async findPayment(
     reference: string,
-  ): Promise<PaymentStatusView> {
-    const payment = await this.prisma.db.payment.findFirst({
-      where: { order: { reference, userId } },
+    owner: { userId: string } | { guest: true },
+  ): Promise<PaymentStatusView | null> {
+    return this.prisma.db.payment.findFirst({
+      where:
+        'userId' in owner
+          ? { order: { reference, userId: owner.userId } }
+          : { order: { reference, guestPhone: { not: null } } },
       select: {
         id: true,
         status: true,
@@ -252,21 +294,19 @@ export class PaymentsService {
         failureReason: true,
       },
     });
+  }
 
-    if (!payment) {
-      throw new NotFoundException({
-        code: 'PAYMENT_NOT_FOUND',
-        message: 'Aucun paiement rattaché à cette commande.',
-      });
-    }
-
+  private async resolveStatus(
+    payment: PaymentStatusView,
+    reload: () => Promise<PaymentStatusView>,
+  ): Promise<PaymentStatusView> {
     const pending = payment.status === 'AWAITING_CONFIRMATION';
     if (pending && payment.providerReference && !this.gateway.callbackIsProof) {
       try {
         const check = await this.gateway.verify(payment.providerReference);
         if (check.status !== 'PENDING') {
           await this.settle(payment.id, check.status, check.message);
-          return this.status(userId, reference);
+          return reload();
         }
       } catch (error) {
         // Le filet est un confort, pas une obligation : un fournisseur
@@ -279,24 +319,26 @@ export class PaymentsService {
       }
     }
 
-    // Une transaction expirée sans nouvelle reste bloquée sinon pour toujours.
-    //
-    // Le règlement passe par `settle()` et NON par une écriture directe du
-    // statut. La distinction n'est pas cosmétique : `settle()` est le seul
-    // endroit qui rende le stock et annule la commande. Tant que cette branche
-    // écrivait `EXPIRED` elle-même, chaque paiement abandonné retirait
-    // définitivement de la marchandise du rayon — précisément ce que le
-    // commentaire de `settle()` disait vouloir éviter.
     if (pending && payment.expiresAt && payment.expiresAt < new Date()) {
-      await this.settle(
-        payment.id,
-        'EXPIRED',
-        'Délai de validation dépassé.',
-      );
-      return this.status(userId, reference);
+      await this.settle(payment.id, 'EXPIRED', 'Délai de validation dépassé.');
+      return reload();
     }
 
     return payment;
+  }
+
+  private orderNotFound(): NotFoundException {
+    return new NotFoundException({
+      code: 'ORDER_NOT_FOUND',
+      message: 'Cette commande est introuvable.',
+    });
+  }
+
+  private paymentNotFound(): NotFoundException {
+    return new NotFoundException({
+      code: 'PAYMENT_NOT_FOUND',
+      message: 'Aucun paiement rattaché à cette commande.',
+    });
   }
 
   /**
@@ -336,7 +378,11 @@ export class PaymentsService {
       // suivants : chacun est isolé.
       try {
         if (payment.expiresAt && payment.expiresAt < now) {
-          await this.settle(payment.id, 'EXPIRED', 'Délai de validation dépassé.');
+          await this.settle(
+            payment.id,
+            'EXPIRED',
+            'Délai de validation dépassé.',
+          );
           expired += 1;
           continue;
         }
@@ -464,7 +510,9 @@ export class PaymentsService {
     // Invariant nº 1 : un succès annoncé n'est jamais cru sur parole.
     if (outcome === 'PAID' && !this.gateway.callbackIsProof) {
       const check = await this.runGateway(() =>
-        this.gateway.verify(payment.providerReference ?? reading.providerReference),
+        this.gateway.verify(
+          payment.providerReference ?? reading.providerReference,
+        ),
       );
       outcome = check.status;
       message = check.message;
@@ -562,6 +610,7 @@ export class PaymentsService {
               id: true,
               reference: true,
               userId: true,
+              guestPhone: true,
               status: true,
               total: true,
               items: { select: { variantId: true, quantity: true } },
@@ -622,18 +671,23 @@ export class PaymentsService {
         // ne peut plus être perdue par un process recyclé (docs/refonte/03).
         // PAYMENT_SUCCEEDED est l'angle système (audit) ; ORDER_CONFIRMED
         // porte la diffusion client (routage : push + WhatsApp + e-mail).
-        for (const type of ['PAYMENT_SUCCEEDED', 'ORDER_CONFIRMED'] as const) {
-          await tx.outboxEvent.create({
-            data: {
-              type,
-              payload: {
-                userId: order.userId,
-                orderId: order.id,
-                reference: order.reference,
-                total: order.total,
+        if (!order.guestPhone) {
+          for (const type of [
+            'PAYMENT_SUCCEEDED',
+            'ORDER_CONFIRMED',
+          ] as const) {
+            await tx.outboxEvent.create({
+              data: {
+                type,
+                payload: {
+                  userId: order.userId,
+                  orderId: order.id,
+                  reference: order.reference,
+                  total: order.total,
+                },
               },
-            },
-          });
+            });
+          }
         }
         return { order, outcome, reservationRef: null };
       }
@@ -662,22 +716,25 @@ export class PaymentsService {
             comment: message.slice(0, 500) || 'Paiement refusé.',
           },
         });
-        // Le client doit savoir POUR REESSAYER : l'annulation porte la
-        // diffusion (push + WhatsApp + e-mail) ; PAYMENT_FAILED reste l'audit.
-        for (const type of ['PAYMENT_FAILED', 'ORDER_CANCELLED'] as const) {
-          await tx.outboxEvent.create({
-            data: {
-              type,
-              payload: {
-                userId: order.userId,
-                orderId: order.id,
-                reference: order.reference,
-                total: order.total,
+        // Les invités ne possèdent pas de canal de notification : le statut
+        // reste visible par leur jeton temporaire, jamais via le profil
+        // technique créé pour satisfaire les relations historiques.
+        if (!order.guestPhone) {
+          for (const type of ['PAYMENT_FAILED', 'ORDER_CANCELLED'] as const) {
+            await tx.outboxEvent.create({
+              data: {
+                type,
+                payload: {
+                  userId: order.userId,
+                  orderId: order.id,
+                  reference: order.reference,
+                  total: order.total,
+                },
               },
-            },
-          });
+            });
+          }
         }
-      } else {
+      } else if (!order.guestPhone) {
         // La commande était déjà annulée (client, bureau) : celui qui l'a
         // fait a déjà prévenu. L'issue du paiement reste un événement
         // d'audit — pas un second courrier.
@@ -694,7 +751,11 @@ export class PaymentsService {
         });
       }
 
-      return { order, outcome, reservationRef: released ? reservationRef : null };
+      return {
+        order,
+        outcome,
+        reservationRef: released ? reservationRef : null,
+      };
     });
 
     if (!settled) return;
@@ -732,7 +793,7 @@ export class PaymentsService {
         throw new ServiceUnavailableException({
           code: 'PAYMENT_GATEWAY_ERROR',
           message:
-            "Le service de paiement est momentanément indisponible. Réessayez dans un instant.",
+            'Le service de paiement est momentanément indisponible. Réessayez dans un instant.',
         });
       }
       throw error;

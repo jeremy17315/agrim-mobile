@@ -55,6 +55,10 @@ const MESSAGES: Record<string, string> = {
   INVALID_REFRESH_TOKEN: 'Votre session a expiré. Reconnectez-vous.',
   REFRESH_TOKEN_REUSED:
     'Session expirée pour raison de sécurité. Reconnectez-vous.',
+  GUEST_PAYMENT_ACCESS_INVALID:
+    'Cette session de paiement a expiré. Recommencez simplement votre commande.',
+  PAYMENT_UNAVAILABLE:
+    'Le paiement en ligne est momentanément indisponible. Vous pouvez payer à la livraison.',
   FORBIDDEN_ROLE: "Vous n'avez pas accès à cette fonctionnalité.",
   PRODUCT_NOT_FOUND: 'Ce produit n’est plus disponible.',
   INSUFFICIENT_STOCK: 'Stock insuffisant pour cette quantité.',

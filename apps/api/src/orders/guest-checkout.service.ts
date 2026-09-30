@@ -7,6 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import type { CreateOrderDto } from './dto/create-order.dto';
 import type { CreateGuestOrderDto } from './dto/create-guest-order.dto';
 import { OrdersService } from './orders.service';
+import { GuestPaymentTokenService } from './guest-payment-token.service';
 
 /**
  * Checkout public.
@@ -22,6 +23,7 @@ export class GuestCheckoutService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly orders: OrdersService,
+    private readonly paymentTokens: GuestPaymentTokenService,
   ) {}
 
   async create(dto: CreateGuestOrderDto) {
@@ -35,10 +37,17 @@ export class GuestCheckoutService {
       });
     }
     const phone = phoneResult.data;
+    const paymentMethod = dto.paymentMethod ?? 'CASH_ON_DELIVERY';
+    if (paymentMethod === 'MOBILE_MONEY' && !dto.mobileMoneyProvider) {
+      throw new BadRequestException({
+        code: 'PAYMENT_PROVIDER_REQUIRED',
+        message: 'Choisissez un opérateur Mobile Money.',
+      });
+    }
 
     // Réponse perdue ou double-tap : aucun nouveau profil, aucun nouveau stock.
     const replay = await this.orders.findGuestReplay(dto.idempotencyKey, phone);
-    if (replay) return replay;
+    if (replay) return this.withPaymentAccess(replay);
 
     const seed = randomUUID().replace(/-/g, '').toUpperCase();
     const guest = await this.prisma.db.user.create({
@@ -76,7 +85,11 @@ export class GuestCheckoutService {
       const order: CreateOrderDto = {
         addressId: address.id,
         items: dto.items,
-        paymentMethod: 'CASH_ON_DELIVERY',
+        paymentMethod,
+        mobileMoneyProvider:
+          paymentMethod === 'MOBILE_MONEY'
+            ? dto.mobileMoneyProvider
+            : undefined,
         idempotencyKey: dto.idempotencyKey,
       };
       const created = await this.orders.create(guest.id, order, {
@@ -96,7 +109,7 @@ export class GuestCheckoutService {
         await this.prisma.db.user.delete({ where: { id: guest.id } });
       }
 
-      return created;
+      return this.withPaymentAccess(created);
     } catch (error) {
       // Si rien n'a été créé, ne gardons pas un profil technique orphelin.
       // Si une course d'idempotence a finalement créé la commande, le profil
@@ -112,5 +125,16 @@ export class GuestCheckoutService {
       }
       throw error;
     }
+  }
+
+  /** Le jeton est une capacité de paiement limitée à cette commande invitée. */
+  private withPaymentAccess<
+    T extends { reference: string; payment: { method: string } | null },
+  >(order: T) {
+    if (order.payment?.method !== 'MOBILE_MONEY') return order;
+    return {
+      ...order,
+      paymentAccessToken: this.paymentTokens.issue(order.reference),
+    };
   }
 }

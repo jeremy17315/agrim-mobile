@@ -77,6 +77,13 @@ const orderDetailSchema = z.object({
 });
 export type OrderDetail = z.infer<typeof orderDetailSchema>;
 
+/** Réponse du checkout public : une capacité de paiement n'est renvoyée que
+ * pour une commande Mobile Money invitée, jamais pour un compte connecté. */
+const guestOrderResponseSchema = orderDetailSchema.extend({
+  paymentAccessToken: z.string().min(20).optional(),
+});
+export type GuestOrderDetail = z.infer<typeof guestOrderResponseSchema>;
+
 const paginatedOrdersSchema = paginated(orderSummarySchema);
 
 export const orderKeys = {
@@ -138,14 +145,36 @@ export type CreateOrderPayload = {
 /** Checkout public : trois informations de livraison, aucun compte. */
 export type CreateGuestOrderPayload = GuestOrderInput;
 
+const cartQuoteSchema = z.object({
+  subtotal: z.number().int(),
+  deliveryFee: z.number().int(),
+  total: z.number().int(),
+  currency: z.literal('XOF'),
+  zone: z.string(),
+});
+export type CartQuote = z.infer<typeof cartQuoteSchema>;
+
+export function quoteGuestCart(payload: {
+  items: { variantId: string; quantity: number }[];
+  city: string;
+}): Promise<CartQuote> {
+  return apiRequest({
+    method: 'POST',
+    path: '/cart/quote',
+    body: payload,
+    schema: cartQuoteSchema,
+    isPublic: true,
+  });
+}
+
 export function createGuestOrder(
   payload: CreateGuestOrderPayload,
-): Promise<OrderDetail> {
+): Promise<GuestOrderDetail> {
   return apiRequest({
     method: 'POST',
     path: '/orders/guest',
     body: payload,
-    schema: orderDetailSchema,
+    schema: guestOrderResponseSchema,
     isPublic: true,
   });
 }
@@ -199,6 +228,14 @@ export function useOrder(reference: string) {
     queryKey: orderKeys.detail(reference),
     queryFn: ({ signal }) => fetchOrder(reference, signal),
     enabled: reference.length > 0,
+  });
+}
+
+export function useGuestCartQuote() {
+  return useMutation({
+    mutationFn: quoteGuestCart,
+    // Le devis n'écrit rien et peut être relancé quand la zone évolue.
+    retry: false,
   });
 }
 

@@ -38,6 +38,18 @@ jest.mock('@/api/orders', () => ({
     mutateAsync: mockCreateGuestOrder,
     isPending: false,
   }),
+  useGuestCartQuote: () => ({
+    mutateAsync: jest.fn(),
+    data: undefined,
+  }),
+}));
+
+const mockSaveGuestPaymentAccess = jest.fn().mockResolvedValue(undefined);
+jest.mock('@/lib/guestPayment', () => ({
+  // La fonction enveloppe garde la référence du mock après l'initialisation
+  // des modules Jest (le checkout l'importe au chargement de l'écran).
+  saveGuestPaymentAccess: (...args: [string, string]) =>
+    mockSaveGuestPaymentAccess(...args),
 }));
 
 const product: Product = {
@@ -104,25 +116,51 @@ it('commande sans compte, adresse enregistrée ni prix envoyé par le client', a
   expect(JSON.stringify(payload)).not.toContain('password');
 });
 
+it('transmet le choix Mobile Money et rejoint le paiement invité sécurisé', async () => {
+  mockCreateGuestOrder.mockResolvedValueOnce({
+    reference: 'AGR-2026-0002',
+    paymentAccessToken: 'capabilite-invitee-de-paiement-valide',
+  });
+  render(<CommandeScreen />);
+  fireEvent.press(screen.getByLabelText('Payer maintenant par Mobile Money'));
+  fillDelivery();
+  fireEvent.press(screen.getByText('CONTINUER VERS LE PAIEMENT'));
+
+  await waitFor(() => expect(mockCreateGuestOrder).toHaveBeenCalled());
+  expect(mockCreateGuestOrder.mock.calls[0]![0]).toMatchObject({
+    paymentMethod: 'MOBILE_MONEY',
+    mobileMoneyProvider: 'ORANGE_MONEY',
+  });
+  await waitFor(() =>
+    expect(mockSaveGuestPaymentAccess).toHaveBeenCalledWith(
+      'AGR-2026-0002',
+      'capabilite-invitee-de-paiement-valide',
+    ),
+  );
+  expect(mockReplace).toHaveBeenCalledWith('/paiement/AGR-2026-0002');
+});
+
 it('vide le panier et affiche la confirmation après la réponse serveur', async () => {
   render(<CommandeScreen />);
   fillDelivery();
   fireEvent.press(screen.getByText('CONFIRMER LA COMMANDE'));
 
   await waitFor(() =>
-    expect(mockReplace).toHaveBeenCalledWith('/confirmation/AGR-2026-0001'),
+    expect(mockReplace).toHaveBeenCalledWith(
+      '/confirmation/AGR-2026-0001?payment=CASH_ON_DELIVERY',
+    ),
   );
   expect(useCartStore.getState().items).toHaveLength(0);
 });
 
-it('demande seulement les trois informations indispensables', () => {
+it('demande seulement les trois informations de livraison, sans adresse enregistrée', () => {
   render(<CommandeScreen />);
 
   expect(screen.getByLabelText('Nom')).toBeTruthy();
   expect(screen.getByLabelText('Numéro de téléphone')).toBeTruthy();
   expect(screen.getByLabelText('Zone / lieu de livraison')).toBeTruthy();
   expect(screen.queryByText(/Ajouter une adresse/i)).toBeNull();
-  expect(screen.queryByText(/Mobile Money/i)).toBeNull();
+  expect(screen.getByText(/Mobile Money/i)).toBeTruthy();
 });
 
 it('conserve le panier et la clé d’idempotence après une coupure réseau', async () => {

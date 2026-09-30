@@ -47,7 +47,9 @@ const EAS_PROJECT_ID =
   process.env.EAS_PROJECT_ID ?? '35eb97ae-3d76-48ec-8424-3bd75584ca72';
 
 const config: ExpoConfig = {
-  name: 'Bélier d’Or',
+  // Identité native (icône, splash et libellé installé) : AGRIM. Bélier d’Or
+  // demeure la marque commerciale présentée aux acheteurs dans le parcours.
+  name: 'AGRIM',
   slug: 'agrim-mobile',
   // Compte propriétaire du projet EAS. Doit correspondre au `slug` enregistré
   // chez Expo, sinon les builds partent sur un projet différent.

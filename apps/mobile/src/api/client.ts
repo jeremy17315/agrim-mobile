@@ -96,6 +96,8 @@ export type RequestOptions<TSchema extends z.ZodTypeAny> = {
   schema: TSchema;
   /** Requête publique : n'attache pas le token même s'il existe. */
   isPublic?: boolean;
+  /** Capacité ponctuelle (checkout invité, upload signé…) distincte du JWT. */
+  headers?: Record<string, string>;
   timeoutMs?: number;
   signal?: AbortSignal;
 };
@@ -133,6 +135,7 @@ async function performRequest<TSchema extends z.ZodTypeAny>(
     body,
     schema,
     isPublic = false,
+    headers: extraHeaders,
     timeoutMs = DEFAULT_TIMEOUT_MS,
     signal,
   } = options;
@@ -143,7 +146,10 @@ async function performRequest<TSchema extends z.ZodTypeAny>(
   if (signal)
     signal.addEventListener('abort', () => controller.abort(), { once: true });
 
-  const headers: Record<string, string> = { Accept: 'application/json' };
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    ...extraHeaders,
+  };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
 
   if (!isPublic) {

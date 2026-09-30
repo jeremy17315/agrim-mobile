@@ -8,6 +8,7 @@ import { CartQuoteController } from './cart-quote.controller';
 import { CartQuoteService } from './cart-quote.service';
 import { CheckoutService } from './checkout.service';
 import { GuestCheckoutService } from './guest-checkout.service';
+import { GuestPaymentTokenService } from './guest-payment-token.service';
 
 @Module({
   imports: [DeliveriesModule, CatalogSyncModule],
@@ -17,6 +18,8 @@ import { GuestCheckoutService } from './guest-checkout.service';
     CheckoutService,
     CartQuoteService,
     GuestCheckoutService,
+    GuestPaymentTokenService,
   ],
+  exports: [GuestPaymentTokenService],
 })
 export class OrdersModule {}

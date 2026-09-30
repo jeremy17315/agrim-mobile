@@ -8,6 +8,7 @@ jest.mock('./orders.service', () => ({
 import { BadRequestException } from '@nestjs/common';
 
 import { GuestCheckoutService } from './guest-checkout.service';
+import type { GuestPaymentTokenService } from './guest-payment-token.service';
 import type { OrdersService } from './orders.service';
 import type { PrismaService } from '../prisma/prisma.service';
 
@@ -37,11 +38,15 @@ function makeHarness() {
     findGuestReplay: jest.fn().mockResolvedValue(null),
     create: jest.fn().mockResolvedValue(created),
   } as unknown as OrdersService;
+  const paymentTokens = {
+    issue: jest.fn().mockReturnValue('guest-payment-capability'),
+  } as unknown as GuestPaymentTokenService;
 
   return {
-    service: new GuestCheckoutService(prisma, orders),
+    service: new GuestCheckoutService(prisma, orders, paymentTokens),
     prisma,
     orders,
+    paymentTokens,
     guest,
     address,
     created,
@@ -93,6 +98,36 @@ describe('GuestCheckoutService', () => {
         deliveryLocation: 'Cocody, Riviera 3 — près du rond-point',
       },
     );
+  });
+
+  it('prépare le même paiement Mobile Money que le site sans créer de compte', async () => {
+    const { service, orders, paymentTokens } = makeHarness();
+    (orders.create as jest.Mock).mockResolvedValueOnce({
+      id: 'order-1',
+      reference: 'AGR-2026-0001',
+      payment: { method: 'MOBILE_MONEY' },
+    });
+
+    await expect(
+      service.create({
+        ...validDto,
+        paymentMethod: 'MOBILE_MONEY',
+        mobileMoneyProvider: 'ORANGE_MONEY',
+      }),
+    ).resolves.toMatchObject({
+      reference: 'AGR-2026-0001',
+      paymentAccessToken: 'guest-payment-capability',
+    });
+
+    expect(orders.create).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        paymentMethod: 'MOBILE_MONEY',
+        mobileMoneyProvider: 'ORANGE_MONEY',
+      }),
+      expect.any(Object),
+    );
+    expect(paymentTokens.issue).toHaveBeenCalledWith('AGR-2026-0001');
   });
 
   it('renvoie un rejeu existant sans créer de profil invité supplémentaire', async () => {

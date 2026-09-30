@@ -123,6 +123,7 @@ export default function RootLayout() {
                 <Stack.Screen name="(tabs)" />
                 <Stack.Screen name="produit/[slug]" />
                 <Stack.Screen name="commande" />
+                <Stack.Screen name="paiement/[reference]" />
                 <Stack.Screen name="confirmation/[reference]" />
 
                 <Stack.Protected guard={!isAuthenticated}>

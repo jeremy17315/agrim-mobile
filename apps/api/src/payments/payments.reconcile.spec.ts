@@ -28,20 +28,24 @@ import 'dotenv/config';
 // virtuel. Les énumérations utilisées par le graphe d'imports
 // (payments.service → order-stock → reserve-stock) sont des stubs
 // suffisants — ces specs testent des DÉCISIONS, pas le codegen.
-jest.mock('../../generated/prisma/client', () => ({
-  PrismaClient: class {},
-  StockMovementType: {
-    ENTREE: 'ENTREE',
-    SORTIE: 'SORTIE',
-    AJUSTEMENT: 'AJUSTEMENT',
-    COMMANDE: 'COMMANDE',
-    ANNULATION: 'ANNULATION',
-    RETOUR: 'RETOUR',
-  },
-  Prisma: {
-    join: (parts: unknown[]) => parts.join(', '),
-  },
-}), { virtual: true });
+jest.mock(
+  '../../generated/prisma/client',
+  () => ({
+    PrismaClient: class {},
+    StockMovementType: {
+      ENTREE: 'ENTREE',
+      SORTIE: 'SORTIE',
+      AJUSTEMENT: 'AJUSTEMENT',
+      COMMANDE: 'COMMANDE',
+      ANNULATION: 'ANNULATION',
+      RETOUR: 'RETOUR',
+    },
+    Prisma: {
+      join: (parts: unknown[]) => parts.join(', '),
+    },
+  }),
+  { virtual: true },
+);
 
 import { ConfigService } from '@nestjs/config';
 
@@ -86,6 +90,7 @@ const STOCK_INITIAL = 100;
 function makeHarness(
   paymentStatus = 'AWAITING_CONFIRMATION',
   orderStatus = ORDER.status,
+  guestPhone: string | null = null,
 ) {
   const socle = fakeStockTx({
     order: { id: ORDER.id, reference: ORDER.reference, status: orderStatus },
@@ -98,21 +103,32 @@ function makeHarness(
   const etatPaiement = { status: paymentStatus };
 
   /** Événements d'outbox réellement poussés par settle — vérifiables. */
-  const evenements: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  const evenements: Array<{ type: string; payload: Record<string, unknown> }> =
+    [];
 
   const tx = {
     ...socle.brut,
     outboxEvent: {
-      create: jest.fn(async ({ data }: { data: { type: string; payload: Record<string, unknown> } }) => {
-        evenements.push({ type: data.type, payload: data.payload });
-        return data;
-      }),
+      create: jest.fn(
+        async ({
+          data,
+        }: {
+          data: { type: string; payload: Record<string, unknown> };
+        }) => {
+          evenements.push({ type: data.type, payload: data.payload });
+          return data;
+        },
+      ),
     },
     payment: {
       findUnique: jest.fn(async () => ({
         id: 'pay-1',
         status: etatPaiement.status,
-        order: { ...ORDER, status: socle.etat.order.status },
+        order: {
+          ...ORDER,
+          status: socle.etat.order.status,
+          guestPhone,
+        },
       })),
       updateMany: jest.fn(
         async (args: {
@@ -157,7 +173,9 @@ function makeHarness(
       webhookEvent: {
         create: jest.fn(async ({ data }: { data: Record<string, unknown> }) => {
           if (webhooks.doublonP2002) {
-            const e = new Error('unique constraint') as Error & { code?: string };
+            const e = new Error('unique constraint') as Error & {
+              code?: string;
+            };
             e.code = 'P2002';
             throw e;
           }
@@ -165,11 +183,19 @@ function makeHarness(
           webhooks.lignes.push(ligne);
           return ligne;
         }),
-        update: jest.fn(async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
-          const ligne = webhooks.lignes.find((l) => l.id === where.id);
-          if (ligne) Object.assign(ligne, data);
-          return { ...ligne, ...data };
-        }),
+        update: jest.fn(
+          async ({
+            where,
+            data,
+          }: {
+            where: { id: string };
+            data: Record<string, unknown>;
+          }) => {
+            const ligne = webhooks.lignes.find((l) => l.id === where.id);
+            if (ligne) Object.assign(ligne, data);
+            return { ...ligne, ...data };
+          },
+        ),
       },
       // Exécute le callback comme le ferait Prisma, avec notre `tx`.
       $transaction: jest.fn((cb: (t: typeof tx) => unknown) => cb(tx)),
@@ -193,12 +219,7 @@ function makeHarness(
     releaseStock: jest.fn(async () => ({ status: 'ok', body: {} })),
   } as unknown as CatalogSyncService;
 
-  const service = new PaymentsService(
-    prisma,
-    config,
-    catalog,
-    gateway,
-  );
+  const service = new PaymentsService(prisma, config, catalog, gateway);
 
   return {
     service,
@@ -302,6 +323,23 @@ describe('PaymentsService.reconcilePending', () => {
       orderId: ORDER.id,
       reference: ORDER.reference,
     });
+  });
+
+  it('ne diffuse jamais une notification au profil technique d’un invité', async () => {
+    const { service, prisma, evenements } = makeHarness(
+      'AWAITING_CONFIRMATION',
+      ORDER.status,
+      '+2250700050452',
+    );
+    (prisma.db.payment.findMany as AnyFn).mockResolvedValue([
+      { id: 'pay-1', expiresAt: passe, providerReference: 'TX-1' },
+    ]);
+
+    await service.reconcilePending(now);
+
+    // Un invité n'a aucun compte destinataire : l'outbox utilisateur ne doit
+    // donc jamais viser le profil technique qui porte la commande en base.
+    expect(evenements).toEqual([]);
   });
 
   it('un règlement réussi émet PAYMENT_SUCCEEDED et ORDER_CONFIRMED dans la même transaction', async () => {
@@ -408,7 +446,11 @@ describe('PaymentsService.handleCallback — dédoublonnage', () => {
     // Rejeu : l'index unique refuse la seconde ligne.
     webhooks.doublonP2002 = true;
 
-    const reponse = await service.handleCallback('simulation', { cpm_trans_id: 'TX-1' }, {});
+    const reponse = await service.handleCallback(
+      'simulation',
+      { cpm_trans_id: 'TX-1' },
+      {},
+    );
 
     expect(reponse).toEqual({ received: true });
     // Aucun règlement relancé : pas de recherche de paiement, pas de transaction.
@@ -434,7 +476,11 @@ describe('PaymentsService.handleCallback — dédoublonnage', () => {
       message: 'Paiement confirmé.',
     });
 
-    const reponse = await service.handleCallback('simulation', { cpm_trans_id: 'TX-1' }, {});
+    const reponse = await service.handleCallback(
+      'simulation',
+      { cpm_trans_id: 'TX-1' },
+      {},
+    );
 
     expect(reponse).toEqual({ received: true });
     expect(gateway.verify).toHaveBeenCalledWith('TX-1');

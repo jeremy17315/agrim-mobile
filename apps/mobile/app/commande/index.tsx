@@ -1,4 +1,4 @@
-import { phoneSchema } from '@agrim/contracts';
+import { phoneSchema, type MobileMoneyProvider } from '@agrim/contracts';
 import { randomUUID } from 'expo-crypto';
 import { useRouter } from 'expo-router';
 import { useRef, useState } from 'react';
@@ -6,18 +6,29 @@ import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ApiError, describeError } from '@/api/errors';
-import { useCreateGuestOrder } from '@/api/orders';
+import { useCreateGuestOrder, useGuestCartQuote } from '@/api/orders';
 import { EmptyState } from '@/components/states';
 import { Banner, Button, Card, Icon, Input, Text } from '@/components/ui';
 import { formatXof } from '@/lib/format';
+import { saveGuestPaymentAccess } from '@/lib/guestPayment';
 import { useIsOnline } from '@/lib/network';
 import { useCartStore, useCartTotals } from '@/store/cart';
 import { palette, spacing } from '@/theme/tokens';
 
+/** Le site propose ces deux parcours ; aucun ne demande de compte invité. */
+type GuestPaymentMethod = 'CASH_ON_DELIVERY' | 'MOBILE_MONEY';
+
+const PROVIDERS: { value: MobileMoneyProvider; label: string }[] = [
+  { value: 'ORANGE_MONEY', label: 'Orange Money' },
+  { value: 'MTN_MOMO', label: 'MTN MoMo' },
+  { value: 'MOOV_MONEY', label: 'Moov Money' },
+  { value: 'WAVE', label: 'Wave' },
+];
+
 /**
- * Checkout invité : volontairement trois champs. Les prix, stocks et frais de
- * livraison sont recalculés par le serveur — le client n'a rien d'autre à
- * configurer et n'a surtout pas besoin de créer un compte.
+ * Checkout invité aligné sur le site : coordonnées, choix de règlement,
+ * paiement sécurisé éventuel. Les prix, stocks et frais restent calculés côté
+ * serveur — l'invité ne crée toujours ni compte ni mot de passe.
  */
 export default function CommandeScreen() {
   const insets = useSafeAreaInsets();
@@ -27,12 +38,36 @@ export default function CommandeScreen() {
   const clearCart = useCartStore((state) => state.clear);
   const totals = useCartTotals();
   const createOrder = useCreateGuestOrder();
+  const quote = useGuestCartQuote();
 
   const [customerName, setCustomerName] = useState('');
   const [phone, setPhone] = useState('');
   const [deliveryLocation, setDeliveryLocation] = useState('');
+  const [paymentMethod, setPaymentMethod] =
+    useState<GuestPaymentMethod>('CASH_ON_DELIVERY');
+  const [mobileMoneyProvider, setMobileMoneyProvider] =
+    useState<MobileMoneyProvider>('ORANGE_MONEY');
   const [error, setError] = useState<string | null>(null);
   const idempotencyKey = useRef(randomUUID());
+
+  /** Même devis serveur que le site : prix et frais exacts, sans créer
+   * d'ordre ni réserver de stock. */
+  const refreshQuote = async () => {
+    const city = deliveryLocation.trim();
+    if (!isOnline || city.length < 2 || items.length === 0) return;
+    try {
+      await quote.mutateAsync({
+        city,
+        items: items.map((item) => ({
+          variantId: item.variantId,
+          quantity: item.quantity,
+        })),
+      });
+    } catch {
+      // Le bouton de commande reste le contrôle définitif : une erreur de
+      // devis ne doit pas effacer la saisie ni masquer le paiement à la livraison.
+    }
+  };
 
   const submit = async () => {
     const name = customerName.trim();
@@ -63,10 +98,29 @@ export default function CommandeScreen() {
           variantId: item.variantId,
           quantity: item.quantity,
         })),
+        paymentMethod,
+        mobileMoneyProvider:
+          paymentMethod === 'MOBILE_MONEY' ? mobileMoneyProvider : undefined,
         idempotencyKey: idempotencyKey.current,
       });
+
+      // Le panier est vidé uniquement quand la commande existe. Pour le
+      // Mobile Money, la capacité temporaire est stockée AVANT de quitter vers
+      // l'opérateur afin que le retour dans l'app puisse vérifier le statut.
+      if (paymentMethod === 'MOBILE_MONEY') {
+        if (!order.paymentAccessToken) {
+          throw new Error(
+            'La session de paiement est indisponible. Réessayez.',
+          );
+        }
+        await saveGuestPaymentAccess(order.reference, order.paymentAccessToken);
+      }
       clearCart();
-      router.replace(`/confirmation/${order.reference}`);
+      router.replace(
+        paymentMethod === 'MOBILE_MONEY'
+          ? `/paiement/${order.reference}`
+          : `/confirmation/${order.reference}?payment=CASH_ON_DELIVERY`,
+      );
     } catch (cause) {
       setError(describeError(cause));
       // Un refus métier signifie que le client va corriger son panier. Pour
@@ -170,23 +224,55 @@ export default function CommandeScreen() {
             placeholder="Ex. Cocody Angré, près de la pharmacie"
             autoCapitalize="sentences"
             editable={!createOrder.isPending}
+            onBlur={() => void refreshQuote()}
             multiline
             style={styles.location}
           />
         </Card>
 
-        <Card style={styles.paymentInfo} flat>
-          <View style={styles.paymentIcon}>
-            <Icon name="banknote" size={18} color="green" />
-          </View>
-          <View style={styles.flex}>
-            <Text variant="h3">Paiement à la livraison</Text>
-            <Text variant="caption" color="muted">
-              Réglez votre commande à la réception.
-            </Text>
-          </View>
-          <Icon name="circle-check" size={18} color="green" />
-        </Card>
+        <View style={styles.paymentSection}>
+          <Text variant="micro" color="muted">
+            MODE DE PAIEMENT
+          </Text>
+          <PaymentChoice
+            active={paymentMethod === 'CASH_ON_DELIVERY'}
+            icon="banknote"
+            title="Paiement à la livraison"
+            detail="Réglez votre commande à la réception."
+            onPress={() => setPaymentMethod('CASH_ON_DELIVERY')}
+          />
+          <PaymentChoice
+            active={paymentMethod === 'MOBILE_MONEY'}
+            icon="smartphone"
+            title="Payer maintenant par Mobile Money"
+            detail="Validation sécurisée chez l’opérateur."
+            onPress={() => setPaymentMethod('MOBILE_MONEY')}
+          />
+          {paymentMethod === 'MOBILE_MONEY' ? (
+            <View style={styles.providerList}>
+              {PROVIDERS.map((provider) => {
+                const active = mobileMoneyProvider === provider.value;
+                return (
+                  <Pressable
+                    key={provider.value}
+                    onPress={() => setMobileMoneyProvider(provider.value)}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: active }}
+                    accessibilityLabel={`Payer avec ${provider.label}`}
+                    style={[styles.provider, active && styles.providerActive]}
+                  >
+                    <Text
+                      variant="caption"
+                      style={{ color: active ? palette.green : palette.body }}
+                    >
+                      {provider.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ) : null}
+        </View>
 
         <Card style={styles.summary}>
           <View style={styles.summaryLine}>
@@ -194,13 +280,32 @@ export default function CommandeScreen() {
               {items.length} article{items.length > 1 ? 's' : ''}
             </Text>
             <Text variant="h2" color="green">
-              {formatXof(totals.subtotal)}
+              {formatXof(quote.data?.subtotal ?? totals.subtotal)}
             </Text>
           </View>
-          <Text variant="caption" color="muted">
-            Les frais de livraison et le total final sont confirmés selon votre
-            zone, avant préparation de la commande.
-          </Text>
+          {quote.data ? (
+            <>
+              <SummaryLine
+                label="Livraison"
+                value={formatXof(quote.data.deliveryFee)}
+              />
+              <View style={styles.summaryDivider} />
+              <SummaryLine
+                label="Total"
+                value={formatXof(quote.data.total)}
+                strong
+              />
+              <Text variant="caption" color="muted">
+                Devis serveur pour {quote.data.zone}. Le total est revérifié à
+                la création de la commande.
+              </Text>
+            </>
+          ) : (
+            <Text variant="caption" color="muted">
+              Saisissez votre zone puis quittez le champ pour obtenir les frais
+              de livraison et le total exact.
+            </Text>
+          )}
         </Card>
       </ScrollView>
 
@@ -213,7 +318,9 @@ export default function CommandeScreen() {
               ? 'Connexion nécessaire'
               : createOrder.isPending
                 ? 'Commande en cours…'
-                : 'CONFIRMER LA COMMANDE'
+                : paymentMethod === 'MOBILE_MONEY'
+                  ? 'CONTINUER VERS LE PAIEMENT'
+                  : 'CONFIRMER LA COMMANDE'
           }
           disabled={!isOnline || createOrder.isPending}
           onPress={() => void submit()}
@@ -225,6 +332,72 @@ export default function CommandeScreen() {
         />
       </View>
     </View>
+  );
+}
+
+function SummaryLine({
+  label,
+  value,
+  strong = false,
+}: {
+  label: string;
+  value: string;
+  strong?: boolean;
+}) {
+  return (
+    <View style={styles.summaryLine}>
+      <Text
+        variant={strong ? 'h3' : 'caption'}
+        color={strong ? 'ink' : 'muted'}
+      >
+        {label}
+      </Text>
+      <Text
+        variant={strong ? 'h2' : 'bodyStrong'}
+        color={strong ? 'green' : 'ink'}
+      >
+        {value}
+      </Text>
+    </View>
+  );
+}
+
+function PaymentChoice({
+  active,
+  icon,
+  title,
+  detail,
+  onPress,
+}: {
+  active: boolean;
+  icon: 'banknote' | 'smartphone';
+  title: string;
+  detail: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="radio"
+      accessibilityLabel={title}
+      accessibilityState={{ selected: active }}
+      style={[styles.paymentChoice, active && styles.paymentChoiceActive]}
+    >
+      <View style={[styles.paymentIcon, active && styles.paymentIconActive]}>
+        <Icon name={icon} size={18} color={active ? 'white' : 'green'} />
+      </View>
+      <View style={styles.flex}>
+        <Text variant="h3" color={active ? 'green' : 'ink'}>
+          {title}
+        </Text>
+        <Text variant="caption" color="muted">
+          {detail}
+        </Text>
+      </View>
+      <View style={[styles.radio, active && styles.radioActive]}>
+        {active ? <View style={styles.radioDot} /> : null}
+      </View>
+    </Pressable>
   );
 }
 
@@ -272,13 +445,20 @@ const styles = StyleSheet.create({
     backgroundColor: palette.greenSoft,
   },
   location: { minHeight: 82, paddingTop: spacing.md },
-  paymentInfo: {
+  paymentSection: { gap: spacing.sm },
+  paymentChoice: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
     padding: spacing.md,
-    backgroundColor: palette.goldSoft,
-    borderColor: '#EAD9A5',
+    borderRadius: 14,
+    backgroundColor: palette.card,
+    borderWidth: 1.5,
+    borderColor: palette.line,
+  },
+  paymentChoiceActive: {
+    borderColor: palette.green,
+    backgroundColor: palette.greenSoft,
   },
   paymentIcon: {
     width: 36,
@@ -286,9 +466,40 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 18,
+    backgroundColor: palette.greenSoft,
+  },
+  paymentIconActive: { backgroundColor: palette.green },
+  radio: {
+    width: 20,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: palette.line,
+  },
+  radioActive: { borderColor: palette.green },
+  radioDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: palette.green,
+  },
+  providerList: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  provider: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: 14,
     backgroundColor: palette.card,
+    borderWidth: 1,
+    borderColor: palette.line,
+  },
+  providerActive: {
+    borderColor: palette.green,
+    backgroundColor: palette.greenSoft,
   },
   summary: { gap: spacing.sm },
+  summaryDivider: { height: 1, backgroundColor: palette.line },
   summaryLine: {
     flexDirection: 'row',
     alignItems: 'center',
