@@ -9,10 +9,10 @@ describe('resolveProductImageUrl', () => {
 
   it('rend affichable un chemin relatif encore présent dans le cache hors ligne', () => {
     expect(resolveProductImageUrl('/media/riz-belier.jpg')).toBe(
-      'https://agrim-zuxe.onrender.com/media/riz-belier.jpg',
+      'https://agrimsarl.ci/media/riz-belier.jpg',
     );
     expect(resolveProductImageUrl('media/riz-belier.jpg')).toBe(
-      'https://agrim-zuxe.onrender.com/media/riz-belier.jpg',
+      'https://agrimsarl.ci/media/riz-belier.jpg',
     );
   });
 

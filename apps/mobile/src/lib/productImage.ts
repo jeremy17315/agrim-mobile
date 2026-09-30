@@ -6,7 +6,7 @@ import Constants from 'expo-constants';
  * Cette seconde résolution côté mobile évite qu'une photo valide du site soit
  * remplacée par le pictogramme générique après une mise à jour de l'API.
  */
-const DEFAULT_SITE_URL = 'https://agrim-zuxe.onrender.com';
+const DEFAULT_SITE_URL = 'https://agrimsarl.ci';
 
 function siteUrl(): string {
   const fromConfig = Constants.expoConfig?.extra?.['siteUrl'];

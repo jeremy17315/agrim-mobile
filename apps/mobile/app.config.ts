@@ -15,8 +15,7 @@ const API_URL =
 
 /** Base publique du site qui héberge les médias produits. Elle peut différer
  * de l'API mobile ; les images synchronisées sont parfois des chemins relatifs. */
-const SITE_URL =
-  process.env.EXPO_PUBLIC_SITE_URL ?? 'https://agrim-zuxe.onrender.com';
+const SITE_URL = process.env.EXPO_PUBLIC_SITE_URL ?? 'https://agrimsarl.ci';
 
 /**
  * Un APK de test parle à une API de développement en HTTP simple, sur le
