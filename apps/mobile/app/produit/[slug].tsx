@@ -9,6 +9,7 @@ import { ProductReviews } from '@/components/ProductReviews';
 import { ErrorState, Skeleton } from '@/components/states';
 import { Banner, Button, Card, Icon, Pill, Text } from '@/components/ui';
 import { formatWeight, formatXof } from '@/lib/format';
+import { resolveProductImageUrl } from '@/lib/productImage';
 import {
   MAX_QUANTITY_PER_LINE,
   useCartItemCount,
@@ -34,6 +35,7 @@ export default function ProductScreen() {
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [quantity, setQuantity] = useState(1);
+  const [failedImage, setFailedImage] = useState<string | null>(null);
   // Confirmation brève après l'ajout : le client doit voir que son geste a
   // abouti sans quitter la fiche.
   const [justAdded, setJustAdded] = useState(false);
@@ -49,6 +51,8 @@ export default function ProductScreen() {
   );
 
   const variants = useMemo(() => product.data?.variants ?? [], [product.data]);
+  const imageUrl = resolveProductImageUrl(product.data?.imageUrl);
+  const hasProductImage = imageUrl !== null && failedImage !== imageUrl;
 
   // Par défaut : le premier format réellement disponible.
   const selected: ProductVariant | undefined =
@@ -121,11 +125,12 @@ export default function ProductScreen() {
         <>
           <ScrollView contentContainerStyle={styles.content}>
             <View style={styles.hero}>
-              {product.data.imageUrl ? (
+              {hasProductImage ? (
                 <Image
-                  source={{ uri: product.data.imageUrl }}
+                  source={{ uri: imageUrl! }}
                   style={styles.heroPhoto}
                   resizeMode="cover"
+                  onError={() => setFailedImage(imageUrl)}
                 />
               ) : (
                 <>

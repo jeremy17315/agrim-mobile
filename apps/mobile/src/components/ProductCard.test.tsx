@@ -1,5 +1,6 @@
 import type { Product } from '@agrim/contracts';
 import { fireEvent, render, screen } from '@testing-library/react-native';
+import { Image } from 'react-native';
 
 import { ProductCard } from './ProductCard';
 
@@ -105,6 +106,18 @@ describe('ProductCard', () => {
     render(<ProductCard product={product} />);
 
     expect(screen.getByText('Rupture')).toBeTruthy();
+  });
+
+  it('affiche une photo du site même si le cache contient encore un chemin relatif', () => {
+    render(
+      <ProductCard
+        product={{ ...baseProduct, imageUrl: '/media/belier-royal.jpg' }}
+      />,
+    );
+
+    expect(screen.UNSAFE_getByType(Image).props.source).toEqual({
+      uri: 'https://agrim-zuxe.onrender.com/media/belier-royal.jpg',
+    });
   });
 
   it('remonte le produit sélectionné au parent', () => {

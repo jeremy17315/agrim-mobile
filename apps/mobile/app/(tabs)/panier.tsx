@@ -15,6 +15,7 @@ import { EmptyState, Skeleton } from '@/components/states';
 import { Banner, Button, Card, Icon, Text } from '@/components/ui';
 import { formatWeight, formatXof } from '@/lib/format';
 import { useIsOnline } from '@/lib/network';
+import { resolveProductImageUrl } from '@/lib/productImage';
 import { useCartStore, useCartTotals, type CartLineItem } from '@/store/cart';
 import { palette, radius, shadow, spacing } from '@/theme/tokens';
 
@@ -276,7 +277,8 @@ function CartThumbnail({
   onPress: () => void;
 }) {
   const [imageBroken, setImageBroken] = useState(false);
-  const photo = item.productImageUrl && !imageBroken;
+  const imageUrl = resolveProductImageUrl(item.productImageUrl);
+  const photo = imageUrl && !imageBroken;
 
   return (
     <Pressable
@@ -287,7 +289,7 @@ function CartThumbnail({
     >
       {photo ? (
         <Image
-          source={{ uri: item.productImageUrl ?? undefined }}
+          source={{ uri: imageUrl ?? undefined }}
           style={styles.thumbImage}
           resizeMode="cover"
           onError={() => setImageBroken(true)}

@@ -20,6 +20,7 @@ import {
 } from '@/components/states';
 import { Card, Icon, Text } from '@/components/ui';
 import { formatWeight, formatXof } from '@/lib/format';
+import { resolveProductImageUrl } from '@/lib/productImage';
 import { useDebouncedValue } from '@/lib/useDebouncedValue';
 import { useCartItemCount, useCartStore } from '@/store/cart';
 import { palette, radius, spacing, typography } from '@/theme/tokens';
@@ -208,6 +209,7 @@ function QuickProductCard({
     (value) => value.isAvailable && value.stock > 0,
   );
   const [imageBroken, setImageBroken] = useState(false);
+  const imageUrl = resolveProductImageUrl(product.imageUrl);
 
   return (
     <Card style={styles.productCard} padded={false} flat>
@@ -218,9 +220,9 @@ function QuickProductCard({
         style={styles.productPressable}
       >
         <View style={styles.productVisual}>
-          {product.imageUrl && !imageBroken ? (
+          {imageUrl && !imageBroken ? (
             <Image
-              source={{ uri: product.imageUrl }}
+              source={{ uri: imageUrl }}
               style={styles.productImage}
               resizeMode="cover"
               onError={() => setImageBroken(true)}

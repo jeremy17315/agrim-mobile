@@ -13,6 +13,11 @@ import type { ExpoConfig } from 'expo/config';
 const API_URL =
   process.env.EXPO_PUBLIC_API_URL ?? 'http://10.0.2.2:3000/api/v1';
 
+/** Base publique du site qui héberge les médias produits. Elle peut différer
+ * de l'API mobile ; les images synchronisées sont parfois des chemins relatifs. */
+const SITE_URL =
+  process.env.EXPO_PUBLIC_SITE_URL ?? 'https://agrim-zuxe.onrender.com';
+
 /**
  * Un APK de test parle à une API de développement en HTTP simple, sur le
  * réseau local. Or Android bloque le trafic en clair depuis Android 9 : sans
@@ -176,6 +181,9 @@ const config: ExpoConfig = {
 
   extra: {
     apiUrl: API_URL,
+    // Publique par nature : sert uniquement à résoudre les chemins d'images
+    // envoyés par le catalogue du site, aucun secret ne s'y trouve.
+    siteUrl: SITE_URL,
     eas: {
       /**
        * Identifiant du projet EAS.
