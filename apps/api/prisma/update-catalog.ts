@@ -4,17 +4,21 @@
  * ne purge RIEN : il crée ce qui manque et met à jour ce qui existe déjà,
  * en conservant les stocks réels déjà entamés par de vraies commandes.
  *
- * Cas particulier : l'ancienne gamme unique « dietetique » est renommée en
- * place vers « dietetique-complet » (même Category/Product, mêmes IDs de
- * variantes) plutôt que recréée, pour ne rien casser côté commandes
- * existantes qui référenceraient déjà ces variantes. « dietetique-violet »
- * est une gamme entièrement nouvelle.
+ * Cas particulier : les anciennes gammes diététiques sont renommées en place
+ * vers « riz-noir » et « riz-violet » (mêmes Category/Product et mêmes IDs
+ * de variantes), plutôt que recréées. Les commandes historiques continuent
+ * ainsi de référencer exactement les mêmes lignes.
  *
  * Usage : npx tsx prisma/update-catalog.ts (DATABASE_URL doit être défini).
  */
 import 'dotenv/config';
 
-import { COMPANY, PACK_FORMATS, RICE_PRICING, RICE_RANGES } from '@agrim/contracts';
+import {
+  COMPANY,
+  PACK_FORMATS,
+  RICE_PRICING,
+  RICE_RANGES,
+} from '@agrim/contracts';
 import { prisma } from '../src/prisma/prisma.client';
 
 type RangeSlug = keyof typeof RICE_PRICING;
@@ -30,9 +34,9 @@ async function upsertVariants(productId: string, rangeSlug: RangeSlug) {
     const isBigFormat = f.weightGrams >= 22500;
     const sku = `BOAGNI-${rangeSlug.toUpperCase()}-${f.weightGrams}`;
 
-    // On retrouve la variante par (produit, poids), pas par sku : le sku
-    // change pour dietetique-complet (dérivé du nouveau slug), mais le
-    // format lui-même — donc la ligne d'inventaire réelle — ne change pas.
+    // On retrouve la variante par (produit, poids), pas par sku : le sku peut
+    // changer avec le nom de gamme, mais le format lui-même — donc la ligne
+    // d'inventaire réelle — ne change pas.
     const existing = await prisma.productVariant.findFirst({
       where: { productId, weightGrams: f.weightGrams },
     });
@@ -67,20 +71,30 @@ async function upsertVariants(productId: string, rangeSlug: RangeSlug) {
 }
 
 async function main() {
-  console.log('🌾 Mise à jour du catalogue AGRIM (production, non destructive)…');
+  console.log(
+    '🌾 Mise à jour du catalogue AGRIM (production, non destructive)…',
+  );
 
-  const legacyDietetique = await prisma.category.findUnique({
-    where: { slug: 'dietetique' },
-  });
+  const legacySlugs: Partial<Record<RangeSlug, string[]>> = {
+    // Conserver les IDs historiques plutôt que de recréer les gammes : le
+    // catalogue visible change, les commandes déjà passées restent intègres.
+    'riz-violet': ['dietetique-violet'],
+    'riz-noir': ['dietetique-complet', 'dietetique'],
+  };
 
   for (const range of RICE_RANGES) {
-    const sourceSlug =
-      range.slug === 'dietetique-complet' && legacyDietetique
-        ? 'dietetique'
-        : range.slug;
+    const candidates = legacySlugs[range.slug as RangeSlug] ?? [];
+    const legacyCategory = candidates.length
+      ? await prisma.category.findFirst({ where: { slug: { in: candidates } } })
+      : null;
+    const legacyProduct = candidates.length
+      ? await prisma.product.findFirst({ where: { slug: { in: candidates } } })
+      : null;
+    const categorySourceSlug = legacyCategory?.slug ?? range.slug;
+    const productSourceSlug = legacyProduct?.slug ?? range.slug;
 
     const category = await prisma.category.upsert({
-      where: { slug: sourceSlug },
+      where: { slug: categorySourceSlug },
       create: {
         slug: range.slug,
         name: range.name,
@@ -96,7 +110,7 @@ async function main() {
     });
 
     const product = await prisma.product.upsert({
-      where: { slug: sourceSlug },
+      where: { slug: productSourceSlug },
       create: {
         slug: range.slug,
         name: `${COMPANY.brandName} ${range.name}`,
@@ -120,7 +134,24 @@ async function main() {
     console.log(`  ✓ ${range.name} (${range.slug})`);
   }
 
-  console.log('✅ Catalogue à jour : 6 gammes, 4 formats chacune.');
+  // Les anciennes gammes restent en base pour l'historique, mais ne doivent
+  // plus être proposées à l'achat ni revenir dans les filtres de l'app.
+  const retired = await prisma.product.updateMany({
+    where: {
+      slug: {
+        in: ['sika', 'dietetique', 'dietetique-complet', 'dietetique-violet'],
+      },
+      isActive: true,
+    },
+    data: { isActive: false },
+  });
+  if (retired.count > 0) {
+    console.log(
+      `  ✓ ${retired.count} ancienne(s) gamme(s) retirée(s) du rayon`,
+    );
+  }
+
+  console.log('✅ Catalogue à jour : 5 gammes, 4 formats chacune.');
 }
 
 main()

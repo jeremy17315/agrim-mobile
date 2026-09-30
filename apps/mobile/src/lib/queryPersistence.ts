@@ -9,8 +9,11 @@ import { Platform } from 'react-native';
  * réponses authentifiées : elles peuvent être périmées et ne doivent pas être
  * relues par une autre personne qui utiliserait le même téléphone.
  */
-const CACHE_KEY = 'agrim.catalog-query-cache.v1';
-const CACHE_VERSION = 1;
+// v2 : l'ancienne liste contenait des gammes retirées (Sika / diététiques).
+// Invalider ce cache force l'affichage des cinq gammes actuelles au prochain
+// démarrage, même après une longue période hors connexion.
+const CACHE_KEY = 'agrim.catalog-query-cache.v2';
+const CACHE_VERSION = 2;
 const MAX_CACHE_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const WRITE_DEBOUNCE_MS = 250;
 

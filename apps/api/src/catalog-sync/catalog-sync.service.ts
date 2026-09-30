@@ -136,20 +136,18 @@ function estVendable(produit: SourceProduct): boolean {
  *
  * Nécessaire une seule fois : au premier passage, les catégories locales
  * n'ont pas encore de `sourceCode`. Sans cette table, la synchronisation
- * créerait six gammes en double — et les commandes existantes pointeraient
- * sur les anciennes.
- *
- * `dietetique` est l'ancienne gamme unique, scindée depuis en Complet et
- * Violet côté site : elle est rattachée à Complet et conserve donc ses
- * variantes, ses identifiants et ses commandes.
+ * créerait des gammes en double — et les commandes existantes pointeraient
+ * sur les anciennes. Les dénominations diététiques historiques sont gardées
+ * comme alias de migration vers Riz noir et Riz violet.
  */
 const LEGACY_SLUGS: Record<string, string[]> = {
   EBE: ['ebene-dor', 'ebene-d-or'],
-  DIE: ['dietetique-complet', 'dietetique'],
+  DIE: ['riz-noir', 'dietetique-complet', 'dietetique'],
   DJA: ['djassa'],
-  DV: ['dietetique-violet'],
+  DV: ['riz-violet', 'dietetique-violet'],
+  NOI: ['riz-noir', 'dietetique-complet', 'dietetique'],
   ROY: ['royal-grains', 'royal-grain'],
-  SIK: ['sika'],
+  VIO: ['riz-violet', 'dietetique-violet'],
 };
 
 /**

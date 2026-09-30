@@ -153,7 +153,7 @@ async function main() {
     },
   });
 
-  /* ── Catalogue : 6 gammes × 4 formats ─────────────────────────────────
+  /* ── Catalogue : 5 gammes × 4 formats ─────────────────────────────────
      AMORÇAGE SEULEMENT. Depuis l'audit de cohérence (août 2026), le
      catalogue appartient au SITE et arrive par CatalogSyncService : ces
      valeurs ne servent qu'à faire démarrer une base vide, et la première

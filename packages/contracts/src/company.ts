@@ -31,10 +31,11 @@ export const SELLING_POINTS = [
 ] as const;
 
 /**
- * Gammes RIZ BOAGNI (section 14), alignées sur le catalogue réel agrimsarl.ci.
- * Slugs et prix sont les vraies valeurs du site ; les descriptions de
- * djassa/dietetique-complet/dietetique-violet restent provisoires (texte
- * marketing non communiqué) — à affiner avec le vrai texte du site.
+ * Les cinq gammes Bélier d’Or proposées sur le site.
+ *
+ * Le site reste la source de vérité des prix, formats, disponibilités et
+ * textes : cette liste sert seulement à amorcer une base vide et à empêcher
+ * qu’une ancienne gamme locale ne réapparaisse dans l’app.
  */
 export const RICE_RANGES = [
   {
@@ -44,37 +45,28 @@ export const RICE_RANGES = [
     sortOrder: 1,
   },
   {
-    slug: 'ebene-dor',
-    name: 'Ébène d\u2019or',
-    description: 'Élégance du goût, 25 % de brisures',
+    slug: 'djassa',
+    name: 'Djassa',
+    description: 'Le riz local du quotidien',
     sortOrder: 2,
   },
   {
-    slug: 'sika',
-    name: 'Sika',
-    description: 'Économique, 40 % de brisures',
+    slug: 'ebene-dor',
+    name: 'Ébène d’Or',
+    description: 'Élégance du goût, 25 % de brisures',
     sortOrder: 3,
   },
   {
-    slug: 'djassa',
-    name: 'Djassa',
-    // PROVISOIRE — texte marketing non communiqué.
-    description: 'Riz économique du quotidien',
+    slug: 'riz-violet',
+    name: 'Riz violet',
+    description: 'Riz violet Bélier d’Or',
     sortOrder: 4,
   },
   {
-    slug: 'dietetique-complet',
-    name: 'Diététique Complet',
-    // PROVISOIRE — texte marketing non communiqué.
-    description: 'Riz complet, diététique',
+    slug: 'riz-noir',
+    name: 'Riz noir',
+    description: 'Riz noir Bélier d’Or',
     sortOrder: 5,
-  },
-  {
-    slug: 'dietetique-violet',
-    name: 'Diététique Violet',
-    // PROVISOIRE — texte marketing non communiqué.
-    description: 'Riz violet, diététique',
-    sortOrder: 6,
   },
 ] as const;
 
@@ -86,8 +78,12 @@ export const PACK_FORMATS = [
   { label: '25 kg', weightGrams: 25000 },
 ] as const;
 
-/** Grille commune aux deux gammes Diététique (mêmes tarifs, produits différents). */
-const DIETETIQUE_PRICING = {
+/**
+ * Valeurs d’amorçage des deux riz de spécialité. Elles ne sont utilisées que
+ * pour une base locale neuve : la synchronisation les remplace par les prix
+ * et formats réels du site dès la première connexion.
+ */
+const SPECIAL_RICE_PRICING = {
   900: { price: 1000, originalPrice: 1200 },
   5000: { price: 5000, originalPrice: 7000 },
   22500: { price: 22500, originalPrice: 24000 },
@@ -114,26 +110,20 @@ export const RICE_PRICING = {
     22500: { price: 18500, originalPrice: 20000 },
     25000: { price: 20000, originalPrice: 24000 },
   },
-  'ebene-dor': {
-    900: { price: 700, originalPrice: 850 },
-    5000: { price: 3500, originalPrice: 4000 },
-    22500: { price: 15000, originalPrice: 17500 },
-    25000: { price: 17500, originalPrice: 20000 },
-  },
-  sika: {
-    900: { price: 600, originalPrice: 750 },
-    5000: { price: 3500, originalPrice: 3750 },
-    22500: { price: 13500, originalPrice: 15000 },
-    25000: { price: 15000, originalPrice: 17000 },
-  },
   djassa: {
     900: { price: 500, originalPrice: 700 },
     5000: { price: 2800, originalPrice: 3000 },
     22500: { price: 12500, originalPrice: 13500 },
     25000: { price: 14000, originalPrice: 15000 },
   },
-  'dietetique-complet': DIETETIQUE_PRICING,
-  'dietetique-violet': DIETETIQUE_PRICING,
+  'ebene-dor': {
+    900: { price: 700, originalPrice: 850 },
+    5000: { price: 3500, originalPrice: 4000 },
+    22500: { price: 15000, originalPrice: 17500 },
+    25000: { price: 17500, originalPrice: 20000 },
+  },
+  'riz-violet': SPECIAL_RICE_PRICING,
+  'riz-noir': SPECIAL_RICE_PRICING,
 } as const;
 
 /**
