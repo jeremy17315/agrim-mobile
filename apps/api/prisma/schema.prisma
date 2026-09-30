@@ -150,6 +150,9 @@ model User {
   passwordHash String
   role         Role    @default(CLIENT)
   isActive     Boolean @default(true)
+  /// Profil technique créé pour une commande invitée. Il ne permet aucune
+  /// connexion et n'est jamais compté comme un compte client.
+  isGuest      Boolean @default(false)
 
   // Parrainage (section 33). `referralCode` est attribué à l'inscription de
   // TOUS les comptes (pas seulement CLIENT), pour rester simple. Le crédit
@@ -179,6 +182,7 @@ model User {
   updatedAt DateTime @updatedAt
 
   @@index([role])
+  @@index([role, isGuest])
   @@index([referredById])
 }
 
@@ -427,6 +431,12 @@ model Order {
   user      User        @relation(fields: [userId], references: [id])
   status    OrderStatus @default(PENDING)
 
+  /// Coordonnées figées pour une commande passée sans compte. Elles vivent sur
+  /// la commande, jamais dans un « compte invité » réutilisable, afin que le
+  /// personnel voie immédiatement qui joindre sans créer d'identifiants.
+  guestName  String? @db.VarChar(160)
+  guestPhone String? @db.VarChar(20)
+
   // Prix figés au moment de la commande (ne suivent pas le catalogue).
   subtotal    Int
   deliveryFee Int
@@ -449,6 +459,7 @@ model Order {
 
   @@index([userId, status])
   @@index([status, createdAt])
+  @@index([guestPhone])
 }
 
 model OrderItem {

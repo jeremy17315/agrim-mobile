@@ -7,12 +7,7 @@ import { EmptyState, Skeleton } from '@/components/states';
 import { Banner, Button, Card, Icon, Text } from '@/components/ui';
 import { formatWeight, formatXof } from '@/lib/format';
 import { useIsOnline } from '@/lib/network';
-import { useIsAuthenticated } from '@/store/auth';
-import {
-  useCartStore,
-  useCartTotals,
-  type CartLineItem,
-} from '@/store/cart';
+import { useCartStore, useCartTotals, type CartLineItem } from '@/store/cart';
 import { palette, radius, shadow, spacing } from '@/theme/tokens';
 
 /**
@@ -26,7 +21,6 @@ export default function PanierScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
 
-  const isAuthenticated = useIsAuthenticated();
   const isOnline = useIsOnline();
   const items = useCartStore((s) => s.items);
   const hydrated = useCartStore((s) => s.hydrated);
@@ -37,17 +31,9 @@ export default function PanierScreen() {
 
   const totals = useCartTotals();
 
-  /**
-   * Commander exige un compte : le serveur rattache la commande à un
-   * utilisateur. On envoie donc vers la connexion plutôt que d'échouer sur un
-   * 401 incompréhensible.
-   */
+  /** Le checkout public demande les coordonnées de livraison, pas un compte. */
   const goToCheckout = () => {
     if (!isOnline) return;
-    if (!isAuthenticated) {
-      router.push('/(auth)/connexion');
-      return;
-    }
     router.push('/commande');
   };
 
@@ -82,7 +68,7 @@ export default function PanierScreen() {
         <EmptyState
           icon="shopping-cart"
           title="Votre panier est vide"
-          message="Parcourez le catalogue pour ajouter du riz BOAGNI."
+          message="Parcourez les produits pour ajouter votre riz Bélier d’Or."
           action={
             <Button
               label="Voir le catalogue"
@@ -114,6 +100,14 @@ export default function PanierScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.list}>
+        <Button
+          label="Continuer mes achats"
+          variant="outline"
+          size="sm"
+          fullWidth={false}
+          icon={<Icon name="arrow-left" size={14} color="green" />}
+          onPress={() => router.push('/catalogue')}
+        />
         {!isOnline ? (
           <Banner
             tone="warning"
@@ -178,7 +172,9 @@ export default function PanierScreen() {
             label={isOnline ? 'Commander' : 'Connexion nécessaire'}
             disabled={!isOnline}
             icon={
-              isOnline ? <Icon name="arrow-right" size={16} color="white" /> : undefined
+              isOnline ? (
+                <Icon name="arrow-right" size={16} color="white" />
+              ) : undefined
             }
             onPress={goToCheckout}
           />

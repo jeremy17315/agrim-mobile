@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -15,7 +15,7 @@ import {
   restoreCatalogCache,
 } from '@/lib/queryPersistence';
 import { useAuthStore } from '@/store/auth';
-import { palette } from '@/theme/tokens';
+import { palette, spacing } from '@/theme/tokens';
 
 /**
  * Racine de l'application.
@@ -118,20 +118,18 @@ export default function RootLayout() {
                   contentStyle: { backgroundColor: palette.bg },
                 }}
               >
-                {/*
-                  Le catalogue reste consultable sans compte : obliger à s'inscrire
-                  avant même de voir les produits ferait fuir des clients.
-                  Seul le tunnel de commande exige une session.
-                */}
+                {/* Le parcours d'achat est public : l'authentification reste
+                    réservée aux espaces historiques et aux rôles internes. */}
                 <Stack.Screen name="(tabs)" />
                 <Stack.Screen name="produit/[slug]" />
+                <Stack.Screen name="commande" />
+                <Stack.Screen name="confirmation/[reference]" />
 
                 <Stack.Protected guard={!isAuthenticated}>
                   <Stack.Screen name="(auth)" />
                 </Stack.Protected>
 
                 <Stack.Protected guard={isAuthenticated}>
-                  <Stack.Screen name="commande" />
                   <Stack.Screen name="commandes" />
                   <Stack.Screen name="notifications" />
                   <Stack.Screen name="parrainage" />
@@ -158,6 +156,8 @@ export default function RootLayout() {
               // les écrans maintenant provoquerait une erreur ou une redirection
               // visible dès que les données locales sont retrouvées.
               <View style={styles.splash}>
+                <Text style={styles.splashBrand}>Bélier d’Or</Text>
+                <Text style={styles.splashCompany}>AGRIM</Text>
                 <ActivityIndicator color={palette.green} />
               </View>
             )}
@@ -174,6 +174,20 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    gap: spacing.sm,
     backgroundColor: palette.bg,
+  },
+  splashBrand: {
+    color: palette.green,
+    fontSize: 34,
+    fontWeight: '900',
+    letterSpacing: -1.4,
+  },
+  splashCompany: {
+    color: palette.muted,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 2.4,
+    marginBottom: spacing.lg,
   },
 });

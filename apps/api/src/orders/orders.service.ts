@@ -33,6 +33,8 @@ const orderSelect = {
   deliveryFee: true,
   total: true,
   note: true,
+  guestName: true,
+  guestPhone: true,
   createdAt: true,
   items: {
     select: {
@@ -67,6 +69,13 @@ const orderSelect = {
   },
 } as const;
 
+/** Coordonnées immuables d'une commande passée depuis le checkout public. */
+export type GuestOrderCustomer = {
+  name: string;
+  phone: string;
+  deliveryLocation: string;
+};
+
 @Injectable()
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
@@ -87,22 +96,29 @@ export class OrdersService {
    *     paiement sont écrits ensemble ou pas du tout.
    *  3. `idempotencyKey` rend l'opération rejouable sans doublon.
    */
-  async create(userId: string, dto: CreateOrderDto) {
+  async create(
+    userId: string,
+    dto: CreateOrderDto,
+    guest?: GuestOrderCustomer,
+  ) {
     // Bascule SSOT (docs/refonte/08, phase 4) : quand cette base possède le
     // stock, la création passe par le checkout transactionnel local — plus
     // aucune réservation distante. Défaut `site` : le comportement établi
     // ci-dessous reste seul en production jusqu'à la bascule assumée.
     if (currentStockMode() === 'local') {
-      return this.checkout.create(userId, dto);
+      return this.checkout.create(userId, dto, guest);
     }
 
     // Rejouer une requête perdue ne doit jamais créer une seconde commande.
     const replayed = await this.prisma.db.order.findUnique({
       where: { idempotencyKey: dto.idempotencyKey },
-      select: { id: true, userId: true },
+      select: { id: true, userId: true, guestPhone: true },
     });
     if (replayed) {
-      if (replayed.userId !== userId) {
+      const belongsToCaller =
+        replayed.userId === userId ||
+        (guest !== undefined && replayed.guestPhone === guest.phone);
+      if (!belongsToCaller) {
         throw new ConflictException({
           code: 'IDEMPOTENCY_KEY_CONFLICT',
           message: 'Cette commande ne peut pas être rejouée.',
@@ -217,7 +233,8 @@ export class OrdersService {
     // sans quoi une panne du site fermerait la boutique de l'application.
     if (cotation.status === 'ok') {
       const retirees = variants.filter(
-        (v) => v.sourceRef && cotation.prices.get(v.sourceRef)?.vendable === false,
+        (v) =>
+          v.sourceRef && cotation.prices.get(v.sourceRef)?.vendable === false,
       );
       if (retirees.length > 0) {
         throw new BadRequestException({
@@ -379,40 +396,44 @@ export class OrdersService {
         }
 
         const order = await tx.order.create({
-        data: {
-          reference,
-          userId,
-          addressId: dto.addressId,
-          status: 'PENDING',
-          subtotal: totals.subtotal,
-          deliveryFee: totals.deliveryFee,
-          total: totals.total,
-          note: dto.note ?? null,
-          idempotencyKey: dto.idempotencyKey,
-          items: {
-            create: lines.map((l) => ({
-              variantId: l.variantId,
-              productName: l.productName,
-              variantLabel: l.variantLabel,
-              unitPrice: l.unitPrice,
-              quantity: l.quantity,
-              lineTotal: l.unitPrice * l.quantity,
-            })),
-          },
-          events: {
-            create: { status: 'PENDING', actorId: userId },
-          },
-          payment: {
-            create: {
-              method: dto.paymentMethod,
-              provider: dto.mobileMoneyProvider ?? null,
-              amount: totals.total,
-              // Le paiement à la livraison est en attente jusqu'à la remise ;
-              // aucun statut ne peut être décidé par le client.
-              status: 'PENDING',
+          data: {
+            reference,
+            userId,
+            addressId: dto.addressId,
+            status: 'PENDING',
+            subtotal: totals.subtotal,
+            deliveryFee: totals.deliveryFee,
+            total: totals.total,
+            note: dto.note ?? null,
+            guestName: guest?.name ?? null,
+            guestPhone: guest?.phone ?? null,
+            idempotencyKey: dto.idempotencyKey,
+            items: {
+              create: lines.map((l) => ({
+                variantId: l.variantId,
+                productName: l.productName,
+                variantLabel: l.variantLabel,
+                unitPrice: l.unitPrice,
+                quantity: l.quantity,
+                lineTotal: l.unitPrice * l.quantity,
+              })),
+            },
+            events: {
+              // Une commande invitée n'a pas d'auteur authentifié : lui attribuer
+              // le profil technique brouillerait l'audit.
+              create: { status: 'PENDING', actorId: guest ? null : userId },
+            },
+            payment: {
+              create: {
+                method: dto.paymentMethod,
+                provider: dto.mobileMoneyProvider ?? null,
+                amount: totals.total,
+                // Le paiement à la livraison est en attente jusqu'à la remise ;
+                // aucun statut ne peut être décidé par le client.
+                status: 'PENDING',
+              },
             },
           },
-        },
           select: orderSelect,
         });
 
@@ -427,9 +448,12 @@ export class OrdersService {
         // gagnante — la libérer rendrait au rayon le stock d'une vente réelle.
         const gagnante = await this.prisma.db.order.findUnique({
           where: { idempotencyKey: dto.idempotencyKey },
-          select: { id: true, userId: true },
+          select: { id: true, userId: true, guestPhone: true },
         });
-        if (gagnante && gagnante.userId === userId) {
+        const belongsToCaller =
+          gagnante?.userId === userId ||
+          (guest !== undefined && gagnante?.guestPhone === guest.phone);
+        if (gagnante && belongsToCaller) {
           return this.prisma.db.order.findUniqueOrThrow({
             where: { id: gagnante.id },
             select: orderSelect,
@@ -462,15 +486,42 @@ export class OrdersService {
       );
     }
 
-    // Hors transaction, pour la même raison que l'annulation.
-    await this.notifications.notify({
-      userId,
-      type: 'ORDER_CREATED',
-      reference: created.reference,
-      orderId: created.id,
-    });
+    // Hors transaction, pour la même raison que l'annulation. Une commande
+    // invitée ne possède ni compte ni jeton de notification : l'équipe voit
+    // son vrai numéro directement dans la file de préparation.
+    if (!guest) {
+      await this.notifications.notify({
+        userId,
+        type: 'ORDER_CREATED',
+        reference: created.reference,
+        orderId: created.id,
+      });
+    }
 
     return created;
+  }
+
+  /**
+   * Rejoue un checkout invité quand la réponse réseau a été perdue. Le numéro
+   * fait partie du contrôle : une clé aléatoire ne donne jamais accès à la
+   * commande d'un autre client.
+   */
+  async findGuestReplay(idempotencyKey: string, phone: string) {
+    const order = await this.prisma.db.order.findUnique({
+      where: { idempotencyKey },
+      select: { id: true, guestPhone: true },
+    });
+    if (!order) return null;
+    if (order.guestPhone !== phone) {
+      throw new ConflictException({
+        code: 'IDEMPOTENCY_KEY_CONFLICT',
+        message: 'Cette commande ne peut pas être rejouée.',
+      });
+    }
+    return this.prisma.db.order.findUniqueOrThrow({
+      where: { id: order.id },
+      select: orderSelect,
+    });
   }
 
   /** Historique du client : liste allégée, sans les lignes. */

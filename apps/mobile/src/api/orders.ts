@@ -4,6 +4,7 @@ import {
   paginated,
   type Address,
   type CreateAddressInput,
+  type GuestOrderInput,
   type MobileMoneyProvider,
   type Order,
   type PaymentMethod,
@@ -134,6 +135,21 @@ export type CreateOrderPayload = {
   note?: string;
 };
 
+/** Checkout public : trois informations de livraison, aucun compte. */
+export type CreateGuestOrderPayload = GuestOrderInput;
+
+export function createGuestOrder(
+  payload: CreateGuestOrderPayload,
+): Promise<OrderDetail> {
+  return apiRequest({
+    method: 'POST',
+    path: '/orders/guest',
+    body: payload,
+    schema: orderDetailSchema,
+    isPublic: true,
+  });
+}
+
 export function createOrder(payload: CreateOrderPayload): Promise<OrderDetail> {
   return apiRequest({
     method: 'POST',
@@ -183,6 +199,18 @@ export function useOrder(reference: string) {
     queryKey: orderKeys.detail(reference),
     queryFn: ({ signal }) => fetchOrder(reference, signal),
     enabled: reference.length > 0,
+  });
+}
+
+export function useCreateGuestOrder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: createGuestOrder,
+    onSuccess: (order) => {
+      queryClient.setQueryData(orderKeys.detail(order.reference), order);
+    },
+    // La clé d'idempotence reste stable dans l'écran tant que le client retente.
+    retry: false,
   });
 }
 

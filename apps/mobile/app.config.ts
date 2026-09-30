@@ -47,7 +47,7 @@ const EAS_PROJECT_ID =
   process.env.EAS_PROJECT_ID ?? '35eb97ae-3d76-48ec-8424-3bd75584ca72';
 
 const config: ExpoConfig = {
-  name: 'AGRIM',
+  name: 'Bélier d’Or',
   slug: 'agrim-mobile',
   // Compte propriétaire du projet EAS. Doit correspondre au `slug` enregistré
   // chez Expo, sinon les builds partent sur un projet différent.
@@ -115,7 +115,7 @@ const config: ExpoConfig = {
     [
       'expo-splash-screen',
       {
-        image: './assets/splash-icon.png',
+        image: './assets/splash-belier.png',
         backgroundColor: '#0B5D1E',
         imageWidth: 180,
       },

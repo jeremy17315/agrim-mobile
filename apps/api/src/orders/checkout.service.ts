@@ -24,6 +24,7 @@ import {
 import { kickOutboxDrain } from '../jobs/outbox-drain';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CreateOrderDto } from './dto/create-order.dto';
+import type { GuestOrderCustomer } from './orders.service';
 import { formatOrderReference } from './order-reference';
 
 /** Projection publique d'une commande (identique au service actuel). */
@@ -35,6 +36,8 @@ const orderSelect = {
   deliveryFee: true,
   total: true,
   note: true,
+  guestName: true,
+  guestPhone: true,
   createdAt: true,
   items: {
     select: {
@@ -80,8 +83,12 @@ const IDEMPOTENCY_TTL_DAYS = 7;
 export class CheckoutService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(userId: string, dto: CreateOrderDto) {
-    const requestHash = this.fingerprint(userId, dto);
+  async create(
+    userId: string,
+    dto: CreateOrderDto,
+    guest?: GuestOrderCustomer,
+  ) {
+    const requestHash = this.fingerprint(userId, dto, guest);
 
     // `isReplay` distingue une création fraîche d'un rejeu : on ne notifie
     // qu'une fois, à la création — le rejeu renvoie la commande d'origine
@@ -101,7 +108,7 @@ export class CheckoutService {
           });
         }
         isReplay = true;
-        return this.replay(tx, dto.idempotencyKey, userId);
+        return this.replay(tx, dto.idempotencyKey, userId, guest);
       }
 
       if (dto.paymentMethod === 'MOBILE_MONEY' && !dto.mobileMoneyProvider) {
@@ -115,7 +122,10 @@ export class CheckoutService {
       // ferait ligne par ligne et laisserait passer un dépassement.
       const merged = new Map<string, number>();
       for (const item of dto.items) {
-        merged.set(item.variantId, (merged.get(item.variantId) ?? 0) + item.quantity);
+        merged.set(
+          item.variantId,
+          (merged.get(item.variantId) ?? 0) + item.quantity,
+        );
       }
 
       // ── Livraison : l'adresse appartient au client, la grille à la maison ──
@@ -143,7 +153,13 @@ export class CheckoutService {
       // relecture entre-temps qui pourrait voir un autre monde que le verrou.
       const promotions = await tx.promotion.findMany({
         where: { variantId: { in: [...merged.keys()] }, isActive: true },
-        select: { isActive: true, variantId: true, priceXof: true, startsAt: true, endsAt: true },
+        select: {
+          isActive: true,
+          variantId: true,
+          priceXof: true,
+          startsAt: true,
+          endsAt: true,
+        },
       });
       // Règle de prix UNIQUE (common/pricing) : checkout, catalogue et
       // lectures publiques tranchent la promotion de la même façon — un
@@ -235,6 +251,8 @@ export class CheckoutService {
             deliveryFee: totals.deliveryFee,
             total: totals.total,
             note: dto.note ?? null,
+            guestName: guest?.name ?? null,
+            guestPhone: guest?.phone ?? null,
             idempotencyKey: dto.idempotencyKey,
             items: {
               create: lines.map((l) => ({
@@ -246,7 +264,9 @@ export class CheckoutService {
                 lineTotal: l.unitPrice * l.quantity,
               })),
             },
-            events: { create: { status: 'PENDING', actorId: userId } },
+            events: {
+              create: { status: 'PENDING', actorId: guest ? null : userId },
+            },
             payment: {
               create: {
                 method: dto.paymentMethod,
@@ -259,11 +279,9 @@ export class CheckoutService {
           select: orderSelect,
         });
       } catch (erreur) {
-        if (
-          estP2002(erreur)
-        ) {
+        if (estP2002(erreur)) {
           isReplay = true;
-          return this.replay(tx, dto.idempotencyKey, userId);
+          return this.replay(tx, dto.idempotencyKey, userId, guest);
         }
         throw erreur;
       }
@@ -271,17 +289,19 @@ export class CheckoutService {
       // L'événement naît AVEC la commande, dans la même transaction : aucun
       // ordre créé sans son événement, aucune notification perdue en silence.
       // (la diffusion elle-même reste post-commit — outbox, jamais en ligne)
-      await tx.outboxEvent.create({
-        data: {
-          type: 'ORDER_CREATED',
-          payload: {
-            orderId: order.id,
-            reference: order.reference,
-            userId,
-            total: order.total,
-          } as Prisma.InputJsonValue,
-        },
-      });
+      if (!guest) {
+        await tx.outboxEvent.create({
+          data: {
+            type: 'ORDER_CREATED',
+            payload: {
+              orderId: order.id,
+              reference: order.reference,
+              userId,
+              total: order.total,
+            } as Prisma.InputJsonValue,
+          },
+        });
+      }
 
       await tx.idempotencyRecord.create({
         data: {
@@ -290,7 +310,9 @@ export class CheckoutService {
           requestHash,
           responseStatus: 201,
           responseBody: { reference: order.reference } as Prisma.InputJsonValue,
-          expiresAt: new Date(now.getTime() + IDEMPOTENCY_TTL_DAYS * 86_400_000),
+          expiresAt: new Date(
+            now.getTime() + IDEMPOTENCY_TTL_DAYS * 86_400_000,
+          ),
         },
       });
 
@@ -302,7 +324,7 @@ export class CheckoutService {
     // tente de le diffuser immédiatement sans jamais bloquer la réponse,
     // et le cron `outbox-drain` reste le filet. Un rejeu, lui, ne kick pas :
     // l'événement d'origine a déjà été diffusé.
-    if (!isReplay) kickOutboxDrain();
+    if (!isReplay && !guest) kickOutboxDrain();
 
     return created;
   }
@@ -312,27 +334,45 @@ export class CheckoutService {
     tx: Prisma.TransactionClient,
     idempotencyKey: string,
     userId: string,
+    guest?: GuestOrderCustomer,
   ) {
     const order = await tx.order.findUnique({
       where: { idempotencyKey },
-      select: { id: true, userId: true },
+      select: { id: true, userId: true, guestPhone: true },
     });
-    if (!order || order.userId !== userId) {
+    const belongsToCaller =
+      order?.userId === userId ||
+      (guest !== undefined && order?.guestPhone === guest.phone);
+    if (!order || !belongsToCaller) {
       throw new ConflictException({
         code: 'IDEMPOTENCY_KEY_CONFLICT',
         message: 'Cette commande ne peut pas être rejouée.',
       });
     }
-    return tx.order.findUniqueOrThrow({ where: { id: order.id }, select: orderSelect });
+    return tx.order.findUniqueOrThrow({
+      where: { id: order.id },
+      select: orderSelect,
+    });
   }
-
 
   /** Empreinte stable du couple (utilisateur, intention) : l'ordre des
    * lignes ne doit pas transformer un rejeu en conflit. */
-  private fingerprint(userId: string, dto: CreateOrderDto): string {
+  private fingerprint(
+    userId: string,
+    dto: CreateOrderDto,
+    guest?: GuestOrderCustomer,
+  ): string {
     const canonical = {
-      userId,
-      addressId: dto.addressId,
+      // Un invité obtient un profil technique neuf à chaque tentative : son
+      // identité métier est donc le téléphone, pas cet identifiant interne.
+      customer: guest
+        ? {
+            guestName: guest.name,
+            guestPhone: guest.phone,
+            deliveryLocation: guest.deliveryLocation,
+          }
+        : { userId },
+      addressId: guest ? null : dto.addressId,
       paymentMethod: dto.paymentMethod,
       mobileMoneyProvider: dto.mobileMoneyProvider ?? null,
       note: dto.note ?? null,

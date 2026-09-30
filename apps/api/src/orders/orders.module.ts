@@ -7,10 +7,16 @@ import { OrdersService } from './orders.service';
 import { CartQuoteController } from './cart-quote.controller';
 import { CartQuoteService } from './cart-quote.service';
 import { CheckoutService } from './checkout.service';
+import { GuestCheckoutService } from './guest-checkout.service';
 
 @Module({
   imports: [DeliveriesModule, CatalogSyncModule],
   controllers: [OrdersController, CartQuoteController],
-  providers: [OrdersService, CheckoutService, CartQuoteService],
+  providers: [
+    OrdersService,
+    CheckoutService,
+    CartQuoteService,
+    GuestCheckoutService,
+  ],
 })
 export class OrdersModule {}

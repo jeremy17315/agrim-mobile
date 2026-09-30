@@ -1,6 +1,6 @@
 import { Stack } from 'expo-router';
 
-/** Tunnel de commande : regroupé pour être protégé d'un seul tenant. */
+/** Checkout public : regroupé pour garder un écran sans en-tête système. */
 export default function CommandeLayout() {
   return <Stack screenOptions={{ headerShown: false }} />;
 }

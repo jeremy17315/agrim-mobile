@@ -2,7 +2,7 @@ import { StatusBar } from 'expo-status-bar';
 import { View, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { callCompany } from '@/lib/contact';
+import { callMobileSupport } from '@/lib/contact';
 import { useIsOnline } from '@/lib/network';
 import { palette, spacing } from '@/theme/tokens';
 
@@ -36,21 +36,21 @@ export function OfflineBanner() {
           <Icon name="wifi-off" size={17} color="gold" />
           <View style={styles.copy}>
             <Text variant="bodyStrong" color="white">
-              Mode hors connexion
+              Bélier d’Or
             </Text>
             <Text variant="micro" style={styles.detail}>
-              Votre panier et le catalogue enregistré restent consultables. Une
-              connexion est nécessaire pour commander.
+              Pas de connexion Internet. Pour passer votre commande,
+              contactez-nous directement par téléphone.
             </Text>
           </View>
         </View>
         <Button
-          label="Appeler le fixe"
+          label="APPELER"
           size="sm"
           variant="outline"
           fullWidth={false}
           icon={<Icon name="phone" size={14} color="green" />}
-          onPress={() => void callCompany()}
+          onPress={() => void callMobileSupport()}
         />
       </View>
     </>

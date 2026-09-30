@@ -21,7 +21,7 @@ afterEach(() => {
 it('ne gêne pas la navigation lorsque le téléphone est connecté', () => {
   render(<OfflineBanner />);
 
-  expect(screen.queryByText('Mode hors connexion')).toBeNull();
+  expect(screen.queryByText('Bélier d’Or')).toBeNull();
 });
 
 it('explique le mode hors connexion et compose le contact AGRIM', () => {
@@ -30,9 +30,9 @@ it('explique le mode hors connexion et compose le contact AGRIM', () => {
   });
   render(<OfflineBanner />);
 
-  expect(screen.getByText('Mode hors connexion')).toBeTruthy();
-  expect(screen.getByText(/catalogue enregistré restent consultables/i)).toBeTruthy();
+  expect(screen.getByText('Bélier d’Or')).toBeTruthy();
+  expect(screen.getByText(/Pas de connexion Internet/i)).toBeTruthy();
 
-  fireEvent.press(screen.getByLabelText('Appeler le fixe'));
-  expect(Linking.openURL).toHaveBeenCalledWith('tel:+2252720363283');
+  fireEvent.press(screen.getByLabelText('APPELER'));
+  expect(Linking.openURL).toHaveBeenCalledWith('tel:+2250700050452');
 });

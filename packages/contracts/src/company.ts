@@ -7,8 +7,8 @@
 export const COMPANY = {
   name: 'AGRIM',
   slogan: 'Développer autrement',
-  brandName: 'RIZ BOAGNI',
-  brandSignature: 'Pur riz local de luxe',
+  brandName: 'Bélier d’Or',
+  brandSignature: 'Le bon riz local, simplement',
   address: 'Siège Yamoussoukro, Côte d\u2019Ivoire',
   city: 'Yamoussoukro',
   country: 'Côte d\u2019Ivoire',

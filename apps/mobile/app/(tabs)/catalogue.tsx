@@ -1,7 +1,9 @@
+import { type Product } from '@agrim/contracts';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
   FlatList,
+  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -11,14 +13,15 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useCategories, useProducts } from '@/api/catalog';
-import { ProductCard } from '@/components/ProductCard';
 import {
   EmptyState,
   ErrorState,
   ProductGridSkeleton,
 } from '@/components/states';
-import { Icon, Text } from '@/components/ui';
+import { Button, Card, Icon, Text } from '@/components/ui';
+import { formatWeight, formatXof } from '@/lib/format';
 import { useDebouncedValue } from '@/lib/useDebouncedValue';
+import { useCartItemCount, useCartStore } from '@/store/cart';
 import { palette, radius, spacing, typography } from '@/theme/tokens';
 
 /**
@@ -31,6 +34,8 @@ export default function CatalogueScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const params = useLocalSearchParams<{ category?: string }>();
+  const addItem = useCartStore((s) => s.addItem);
+  const itemCount = useCartItemCount();
 
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState<string | undefined>(params.category);
@@ -60,7 +65,22 @@ export default function CatalogueScreen() {
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <View style={styles.header}>
-        <Text variant="h1">Catalogue</Text>
+        <View style={styles.titleRow}>
+          <View>
+            <Text variant="micro" color="muted">
+              BÉLIER D’OR
+            </Text>
+            <Text variant="h1">Nos produits</Text>
+          </View>
+          <Button
+            label={itemCount > 0 ? `Panier (${itemCount})` : 'Panier'}
+            size="sm"
+            fullWidth={false}
+            variant="outline"
+            icon={<Icon name="shopping-cart" size={14} color="green" />}
+            onPress={() => router.push('/panier')}
+          />
+        </View>
 
         <View style={styles.searchBox}>
           <Icon name="search" size={16} color="muted" />
@@ -142,15 +162,73 @@ export default function CatalogueScreen() {
           }
           renderItem={({ item }) => (
             <View style={styles.cell}>
-              <ProductCard
+              <QuickProductCard
                 product={item}
-                onPress={(p) => router.push(`/produit/${p.slug}`)}
+                onAdd={() => {
+                  const variant = item.variants.find(
+                    (value) => value.isAvailable && value.stock > 0,
+                  );
+                  if (variant) addItem(item, variant);
+                }}
               />
             </View>
           )}
         />
       )}
     </View>
+  );
+}
+
+function QuickProductCard({
+  product,
+  onAdd,
+}: {
+  product: Product;
+  onAdd: () => void;
+}) {
+  const variant = product.variants.find(
+    (value) => value.isAvailable && value.stock > 0,
+  );
+  const [imageBroken, setImageBroken] = useState(false);
+
+  return (
+    <Card style={styles.productCard}>
+      <View style={styles.productVisual}>
+        {product.imageUrl && !imageBroken ? (
+          <Image
+            source={{ uri: product.imageUrl }}
+            style={styles.productImage}
+            resizeMode="cover"
+            onError={() => setImageBroken(true)}
+          />
+        ) : (
+          <Icon name="wheat" size={36} color="gold" />
+        )}
+      </View>
+      <Text variant="h3" numberOfLines={2}>
+        {product.name}
+      </Text>
+      {variant ? (
+        <>
+          <Text variant="caption" color="muted">
+            {formatWeight(variant.weightGrams)} · {variant.label}
+          </Text>
+          <Text variant="h2" color="green">
+            {formatXof(variant.price)}
+          </Text>
+          <Button
+            label="AJOUTER AU PANIER"
+            size="sm"
+            icon={<Icon name="plus" size={14} color="white" />}
+            onPress={onAdd}
+          />
+        </>
+      ) : (
+        <Text variant="caption" color="muted">
+          Indisponible pour le moment
+        </Text>
+      )}
+    </Card>
   );
 }
 
@@ -192,6 +270,12 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     backgroundColor: palette.bg,
   },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+  },
   searchBox: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -221,5 +305,15 @@ const styles = StyleSheet.create({
   list: { padding: spacing.lg, paddingTop: spacing.sm, gap: spacing.md },
   row: { gap: spacing.md },
   cell: { flex: 1 },
+  productCard: { gap: spacing.sm, padding: spacing.sm },
+  productVisual: {
+    height: 94,
+    borderRadius: radius.md,
+    backgroundColor: palette.goldSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  productImage: { width: '100%', height: '100%' },
   count: { marginBottom: spacing.xs },
 });

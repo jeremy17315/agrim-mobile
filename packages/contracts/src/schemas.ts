@@ -184,7 +184,9 @@ export const createProductReviewSchema = z.object({
     .min(8, 'Écrivez au moins quelques mots (8 caractères).')
     .max(800),
 });
-export type CreateProductReviewInput = z.infer<typeof createProductReviewSchema>;
+export type CreateProductReviewInput = z.infer<
+  typeof createProductReviewSchema
+>;
 
 /* ──────────────────────────────── Panier ───────────────────────────────── */
 
@@ -273,6 +275,22 @@ export const createOrderSchema = z.object({
   note: z.string().max(500).optional(),
 });
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;
+
+/**
+ * Commande invitée : le parcours public ne demande que l'identité utile à la
+ * livraison. Aucun mot de passe, e-mail ou compte n'est créé côté client.
+ * Le backend crée les relations techniques nécessaires et recalcule toujours
+ * prix, stock et frais de livraison.
+ */
+export const guestOrderSchema = z.object({
+  customerName: z.string().trim().min(2).max(160),
+  phone: phoneSchema,
+  /** Ville, zone ou repère de livraison saisi simplement par le client. */
+  deliveryLocation: z.string().trim().min(2).max(255),
+  items: z.array(createOrderItemSchema).min(1).max(50),
+  idempotencyKey: z.uuid(),
+});
+export type GuestOrderInput = z.infer<typeof guestOrderSchema>;
 
 /* ──────────────────────────────── Paiement ─────────────────────────────── */
 
