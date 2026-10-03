@@ -230,15 +230,18 @@ export function selectItemCount(state: Pick<CartState, 'items'>): number {
 }
 
 /**
- * Totaux du panier, frais de livraison NON compris.
+ * Totaux du panier — AUCUN frais de livraison, jamais.
  *
- * `deliveryFee: 0` n'est pas une promesse de gratuité : c'est l'absence
- * d'information. Le montant facturé est celui que le serveur calcule.
+ * Le site n'encaisse aucun frais en ligne, de la mise au panier jusqu'au
+ * paiement : son tiroir affiche « Applicable selon la zone », son récapitulatif
+ * « À confirmer », et son total reste le sous-total. Ce sélecteur ne fait donc
+ * qu'additionner les lignes, exactement comme le contrat le dit depuis le
+ * 2 octobre 2026. Une remise, elle, viendrait du serveur (calculateur du site)
+ * et non d'ici.
  */
 export function selectTotals(state: Pick<CartState, 'items'>): CartTotals {
   return computeCartTotals(
     state.items.map((i) => ({ unitPrice: i.unitPrice, quantity: i.quantity })),
-    { deliveryFee: 0 },
   );
 }
 

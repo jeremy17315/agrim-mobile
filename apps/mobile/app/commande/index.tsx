@@ -43,6 +43,7 @@ export default function CommandeScreen() {
   const [customerName, setCustomerName] = useState('');
   const [phone, setPhone] = useState('');
   const [deliveryLocation, setDeliveryLocation] = useState('');
+  const [codePromo, setCodePromo] = useState('');
   const [paymentMethod, setPaymentMethod] =
     useState<GuestPaymentMethod>('CASH_ON_DELIVERY');
   const [mobileMoneyProvider, setMobileMoneyProvider] =
@@ -50,8 +51,9 @@ export default function CommandeScreen() {
   const [error, setError] = useState<string | null>(null);
   const idempotencyKey = useRef(randomUUID());
 
-  /** Même devis serveur que le site : prix et frais exacts, sans créer
-   * d'ordre ni réserver de stock. */
+  /** Même devis serveur que le site : prix, remises et total exacts, sans
+   * créer d'ordre ni réserver de stock. Les frais de livraison, eux, ne sont
+   * jamais chiffrés — le site dit « À confirmer », on dit pareil. */
   const refreshQuote = async () => {
     const city = deliveryLocation.trim();
     if (!isOnline || city.length < 2 || items.length === 0) return;
@@ -62,6 +64,8 @@ export default function CommandeScreen() {
           variantId: item.variantId,
           quantity: item.quantity,
         })),
+        codePromo: codePromo.trim() ? codePromo.trim() : undefined,
+        phone: phone.trim() ? phone.trim() : undefined,
       });
     } catch {
       // Le bouton de commande reste le contrôle définitif : une erreur de
@@ -101,6 +105,7 @@ export default function CommandeScreen() {
         paymentMethod,
         mobileMoneyProvider:
           paymentMethod === 'MOBILE_MONEY' ? mobileMoneyProvider : undefined,
+        codePromo: codePromo.trim() ? codePromo.trim() : undefined,
         idempotencyKey: idempotencyKey.current,
       });
 
@@ -228,6 +233,16 @@ export default function CommandeScreen() {
             multiline
             style={styles.location}
           />
+          <Input
+            label="Code promo (facultatif)"
+            value={codePromo}
+            onChangeText={setCodePromo}
+            placeholder="Ex. BIENVENUE10"
+            autoCapitalize="characters"
+            editable={!createOrder.isPending}
+            onBlur={() => void refreshQuote()}
+            hint="Vérifié par AGRIM au moment du devis."
+          />
         </Card>
 
         <View style={styles.paymentSection}>
@@ -285,25 +300,45 @@ export default function CommandeScreen() {
           </View>
           {quote.data ? (
             <>
+              {/* Le site affiche « À confirmer » et n'ajoute AUCUN montant :
+                  on reprend son libellé mot pour mot. */}
               <SummaryLine
                 label="Livraison"
-                value={formatXof(quote.data.deliveryFee)}
+                value={quote.data.delivery.message}
               />
+              {quote.data.remise > 0 ? (
+                <SummaryLine
+                  label={
+                    quote.data.promoCode
+                      ? `Remise ${quote.data.promoCode}`
+                      : 'Remises appliquées'
+                  }
+                  value={`− ${formatXof(quote.data.remise)}`}
+                />
+              ) : null}
               <View style={styles.summaryDivider} />
               <SummaryLine
-                label="Total"
+                label="Total à payer"
                 value={formatXof(quote.data.total)}
                 strong
               />
+              {quote.data.promoMessage ? (
+                <Banner
+                  tone="warning"
+                  message={quote.data.promoMessage}
+                  icon={<Icon name="triangle-alert" size={15} color="#8A5310" />}
+                />
+              ) : null}
               <Text variant="caption" color="muted">
                 Devis serveur pour {quote.data.zone}. Le total est revérifié à
-                la création de la commande.
+                la création de la commande ; les frais de livraison sont
+                confirmés par téléphone.
               </Text>
             </>
           ) : (
             <Text variant="caption" color="muted">
-              Saisissez votre zone puis quittez le champ pour obtenir les frais
-              de livraison et le total exact.
+              Saisissez votre zone puis quittez le champ pour obtenir le total
+              exact. Les frais de livraison sont confirmés par téléphone.
             </Text>
           )}
         </Card>

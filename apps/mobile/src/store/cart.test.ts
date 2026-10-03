@@ -160,6 +160,7 @@ describe('totaux', () => {
   it('n’applique aucun frais sur un panier vide', () => {
     expect(selectTotals(useCartStore.getState())).toEqual({
       subtotal: 0,
+      remise: 0,
       deliveryFee: 0,
       total: 0,
     });

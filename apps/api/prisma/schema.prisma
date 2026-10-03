@@ -878,6 +878,19 @@ model IdempotencyRecord {
 /// Un seul endroit répond à « ce client a-t-il été prévenu ? » — quel que soit
 /// le canal. Une panne d'agrégateur y laisse une ligne FAILED consultable et
 /// rejouable, jamais un silence.
+model SieveSession {
+  id          String   @id @default(uuid()) @db.Uuid
+  instruction String   @db.VarChar(2000)
+  status      String   @default("queued") @db.VarChar(20)
+  error       String?  @db.VarChar(1000)
+  turns       String?  @db.Text
+  updatedAt   DateTime @updatedAt
+
+  /// The run may have consumed credits before the driver wrote this row: a
+  /// crash here means the driver must resume polling this session, not start.
+  @@index([status, updatedAt])
+}
+
 model MessageLog {
   id       String @id @default(uuid()) @db.Uuid
   /// PUSH|WHATSAPP|SMS|EMAIL

@@ -6,14 +6,11 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import {
-  computeCartTotals,
-  computeDeliveryFee,
-  resolveDeliveryZone,
-} from '@agrim/contracts';
+import { computeCartTotals, resolveDeliveryZone } from '@agrim/contracts';
 import { Prisma } from '../../generated/prisma/client';
 import { estP2002 } from '../common/prisma/prisma-erreur';
 import { promosActives } from '../common/pricing/effective-price';
+import { SitePricingService } from '../site-pricing/site-pricing.service';
 import { readDeliveryGrid } from './delivery-grid';
 
 import {
@@ -23,6 +20,7 @@ import {
 } from '../common/stock/reserve-stock';
 import { kickOutboxDrain } from '../jobs/outbox-drain';
 import { PrismaService } from '../prisma/prisma.service';
+import { SieveSession } from '../sieve/model';
 import type { CreateOrderDto } from './dto/create-order.dto';
 import type { GuestOrderCustomer } from './orders.service';
 import { formatOrderReference } from './order-reference';
@@ -81,7 +79,83 @@ const IDEMPOTENCY_TTL_DAYS = 7;
  */
 @Injectable()
 export class CheckoutService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly pricing: SitePricingService,
+    private readonly sieveSession: SieveSession,
+  ) {}
+
+  /**
+   * Préparation HORS transaction : adresse, zone, remises.
+   *
+   * Tout ce qui peut appeler le réseau — le calculateur du site — se passe
+   * ici, avant d'ouvrir la transaction : un appel tenu sous verrou retiendrait
+   * les verrous PostgreSQL pendant toute la latence du site.
+   */
+  private async prepare(
+    userId: string,
+    dto: CreateOrderDto,
+    guest?: GuestOrderCustomer,
+  ): Promise<{ remise: number }> {
+    const address = await this.prisma.db.address.findFirst({
+      where: { id: dto.addressId, userId },
+      select: { id: true, city: true },
+    });
+    if (!address) {
+      throw new NotFoundException({
+        code: 'ADDRESS_NOT_FOUND',
+        message: 'Cette adresse de livraison est introuvable.',
+      });
+    }
+
+    // Grille du site : elle nomme la zone et son délai. Aucun montant n'en
+    // est tiré — le site n'encaisse aucun frais en ligne.
+    const grid = await readDeliveryGrid(this.prisma.db);
+    const zone = resolveDeliveryZone(address.city, grid);
+
+    // ── Scratch d'instructions de livraison (Sieve) ──────────────────────
+    //
+    // Un scrape Sieve prépare d'éventuelles instructions de livraison
+    // (code postal, points de repère, accès particulier) avant que le
+    // client ne les confirme. Le run est préservé et pollé par le
+    // driver de commande ; au moment où la commande est validée,
+    // `GET /sieve/scrapes/:session_id` donne la derniere état.
+    //
+    // Pilotage désactivé ⇒ pas d'appel : le driver renvoie une session
+    // `error` et la commande continue avec la grille de zone du site,
+    // sans aucune divergence avec la règle « le SITE fait foi ».
+    if (this.sieveSession.hasKey()) {
+      try {
+        await this.sieveSession.create({
+          instruction:
+            `Récupérer les instructions de livraison pour la livraison à ${address.city}`,
+          status: 'queued',
+        });
+      } catch {
+        // La persistance de la session est un repli logique ; son échec
+        // n'empêche pas la commande de passer — la grille de zone reste.
+      }
+    }
+
+    const variants = await this.prisma.db.productVariant.findMany({
+      where: { id: { in: dto.items.map((i) => i.variantId) } },
+      select: { id: true, sourceRef: true },
+    });
+    const refs = new Map(variants.map((v) => [v.id, v.sourceRef]));
+
+    const remise = await this.pricing.remise({
+      items: dto.items.map((item) => ({
+        sourceRef: refs.get(item.variantId) ?? null,
+        quantity: item.quantity,
+      })),
+      zone,
+      mode: 'domicile',
+      codePromo: dto.codePromo,
+      phone: guest?.phone,
+    });
+
+    return { remise: remise.status === 'ok' ? remise.remise : 0 };
+  }
 
   async create(
     userId: string,
@@ -89,6 +163,9 @@ export class CheckoutService {
     guest?: GuestOrderCustomer,
   ) {
     const requestHash = this.fingerprint(userId, dto, guest);
+
+    // Réseau AVANT verrous : voir `prepare`.
+    const preflight = await this.prepare(userId, dto, guest);
 
     // `isReplay` distingue une création fraîche d'un rejeu : on ne notifie
     // qu'une fois, à la création — le rejeu renvoie la commande d'origine
@@ -183,20 +260,12 @@ export class CheckoutService {
         };
       });
 
-      const grid = await readDeliveryGrid(tx);
-      const weightKg =
-        lines.reduce((sum, l) => sum + l.weightGrams * l.quantity, 0) / 1000;
-      const deliveryFee = computeDeliveryFee(
-        {
-          zone: resolveDeliveryZone(address.city, grid),
-          mode: 'domicile',
-          weightKg,
-        },
-        grid,
-      );
       const totals = computeCartTotals(
         lines.map((l) => ({ unitPrice: l.unitPrice, quantity: l.quantity })),
-        { deliveryFee },
+        // Remise décidée par le site, lue avant la transaction. Les frais de
+        // livraison, eux, ne sont JAMAIS additionnés : le site n'en facture
+        // aucun en ligne.
+        { remise: preflight.remise },
       );
 
       // Compteur annuel atomique AVANT la réservation : la référence existe

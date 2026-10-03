@@ -294,6 +294,10 @@ export const guestOrderSchema = z
       .enum(['CASH_ON_DELIVERY', 'MOBILE_MONEY'])
       .default('CASH_ON_DELIVERY'),
     mobileMoneyProvider: z.enum(MOBILE_MONEY_PROVIDERS).optional(),
+    /** Code promo : relais vers le calculateur du SITE, seul juge du rabais. */
+    codePromo: z.string().trim().max(40).optional(),
+    /** Note pour le livreur — le site en propose une à sa page de commande. */
+    note: z.string().max(500).optional(),
     idempotencyKey: z.uuid(),
   })
   .superRefine((value, ctx) => {

@@ -80,17 +80,17 @@ export class GuestCheckoutService {
           isDefault: true,
         },
         select: { id: true },
-      });
-
-      const order: CreateOrderDto = {
+      });      const order: CreateOrderDto = {
         addressId: address.id,
         items: dto.items,
         paymentMethod,
         mobileMoneyProvider:
-          paymentMethod === 'MOBILE_MONEY'
-            ? dto.mobileMoneyProvider
-            : undefined,
+          paymentMethod === 'MOBILE_MONEY' ? dto.mobileMoneyProvider : undefined,
         idempotencyKey: dto.idempotencyKey,
+        // Relais vers le calculateur du site : seul lui sait si le code est
+        // valable, et seule la remise qu'il renvoie est appliquée.
+        codePromo: dto.codePromo,
+        note: dto.note,
       };
       const created = await this.orders.create(guest.id, order, {
         name: customerName,

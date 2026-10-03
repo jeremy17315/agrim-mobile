@@ -171,6 +171,21 @@ const envSchema = z.object({
     .int()
     .positive()
     .default(10),
+
+  /**
+   * Pilote Sieve scrape API.
+   *
+   * `SIEVE_API_KEY` porte la clé déployée par le fournisseur (store, jamais
+   * imprimée, jamais journalisée, jamais livrée au mobile). `SIEVE_BASE_URL`
+   * est l'URL de base du service de scrapes ; elle sert aussi de valeur de
+   * repli `sendSieveRequest` si l'endpoint renvoyé au login ne l'indique pas.
+   *
+   * Vide = pilotage désactivé : les endpoints `/sieve/*` répondent 503 et
+   * le code ne tente aucun appel sortant. Comportement inchangé par rapport
+   * à une intégration absente.
+   */
+  SIEVE_BASE_URL: z.string().url().default('https://scrape.usesieve.com'),
+  SIEVE_API_KEY: z.string().default(''),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;
@@ -242,3 +257,5 @@ export function validateEnv(raw: Record<string, unknown>): AppEnv {
 
   return env;
 }
+
+

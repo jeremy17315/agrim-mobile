@@ -145,8 +145,31 @@ export type CreateOrderPayload = {
 /** Checkout public : trois informations de livraison, aucun compte. */
 export type CreateGuestOrderPayload = GuestOrderInput;
 
+/**
+ * La livraison telle qu'elle est PRÉSENTÉÉE : un libellé et un délai, jamais
+ * un montant à additionner. Le site n'encaisse aucun frais en ligne — sa
+ * page `/commander` affiche « À confirmer » et laisse le total intact.
+ */
+const deliveryQuoteSchema = z.object({
+  mode: z.enum(['domicile', 'retrait']),
+  zone: z.string(),
+  libelle: z.string(),
+  delai: z.string(),
+  statut: z.enum(['A_CONFIRMER', 'GRATUIT']),
+  message: z.string(),
+  frais: z.number().int(),
+});
+
 const cartQuoteSchema = z.object({
   subtotal: z.number().int(),
+  /** Remise décidée par le site (volume, grossiste, code promo). */
+  remise: z.number().int().default(0),
+  /** `unavailable` : le calculateur est injoignable ⇒ aucune remise. */
+  remiseStatus: z.enum(['ok', 'unavailable']).default('unavailable'),
+  promoCode: z.string().nullable().default(null),
+  promoMessage: z.string().nullable().default(null),
+  delivery: deliveryQuoteSchema,
+  /** Toujours 0 : aucun frais n'est encaissé en ligne. */
   deliveryFee: z.number().int(),
   total: z.number().int(),
   currency: z.literal('XOF'),
@@ -157,6 +180,9 @@ export type CartQuote = z.infer<typeof cartQuoteSchema>;
 export function quoteGuestCart(payload: {
   items: { variantId: string; quantity: number }[];
   city: string;
+  /** Code promo à faire valider par le calculateur du site. */
+  codePromo?: string;
+  phone?: string;
 }): Promise<CartQuote> {
   return apiRequest({
     method: 'POST',

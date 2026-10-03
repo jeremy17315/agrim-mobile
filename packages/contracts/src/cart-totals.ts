@@ -19,21 +19,32 @@ export interface CartLine {
 
 export interface CartTotals {
   subtotal: number;
+  /** Remises déjà calculées (volume, code promo) : à soustraire. */
+  remise: number;
+  /**
+   * Montant ENCAISSÉ pour la livraison — toujours `0`.
+   *
+   * Le site n'ajoute aucun frais de livraison au total payable, de la mise au
+   * panier jusqu'au paiement : sa ligne « Livraison » affiche « À confirmer »
+   * (domicile) ou « Gratuit » (retrait), et le total reste le sous-total moins
+   * les remises. L'application suit cette logique — la grille du site ne sert
+   * plus qu'à décrire la zone et son délai.
+   *
+   * Le champ reste nommé `deliveryFee` parce que la colonne de la commande et
+   * les réponses d'API portent ce nom ; sa valeur est désormais, honnêtement,
+   * le montant facturé en ligne : zéro.
+   */
   deliveryFee: number;
   total: number;
 }
 
 /**
- * Frais de livraison DÉJÀ décidés, à additionner.
- *
- * Ce module ne calcule plus le montant : depuis la décision du 29 août 2026,
- * il vient de la grille du site (`computeDeliveryFee`, dans `delivery.ts`).
- * Additionner et décider sont deux responsabilités, et les mélanger avait
- * produit exactement le défaut corrigé — un forfait local qui contredisait le
- * tarif officiel.
+ * Ce que ce module accepte : les remises. Les frais de livraison ne sont
+ * plus un intrant — ils ne sont jamais additionnés.
  */
-export interface CartDeliveryFee {
-  deliveryFee: number;
+export interface CartOptions {
+  /** Remise globale (volume + code promo) déjà décidée par le serveur. */
+  remise?: number;
 }
 
 export function computeLineTotal(line: CartLine): number {
@@ -48,11 +59,16 @@ export function computeLineTotal(line: CartLine): number {
 
 export function computeCartTotals(
   lines: readonly CartLine[],
-  options: CartDeliveryFee,
+  options: CartOptions = {},
 ): CartTotals {
   const subtotal = lines.reduce((sum, l) => sum + computeLineTotal(l), 0);
-  // Un panier vide ne coûte pas de livraison, quel que soit le tarif : il n'y
-  // a rien à transporter.
-  const deliveryFee = subtotal === 0 ? 0 : options.deliveryFee;
-  return { subtotal, deliveryFee, total: subtotal + deliveryFee };
+  // Une remise ne dépasse jamais ce qui est vendu : un panier ne peut pas
+  // devenir négatif par excès de générosité d'un code promo.
+  const remise = Math.min(Math.max(options.remise ?? 0, 0), subtotal);
+  return {
+    subtotal,
+    remise,
+    deliveryFee: 0,
+    total: subtotal - remise,
+  };
 }

@@ -20,31 +20,51 @@ describe('Référence de commande', () => {
 });
 
 describe('Calculs du panier', () => {
-  // Le montant n'est plus d\u00e9duit d'un forfait : il vient de la grille du site
-  // (d\u00e9cision du 29 ao\u00fbt 2026). Cette fonction ne fait plus qu'additionner.
-  const opts = { deliveryFee: 1000 };
+  // Logique du SITE, vérifiée sur agrimsarl.ci le 2 octobre 2026 : aucun
+  // frais de livraison n'est ajouté au total payable, de la mise au panier
+  // jusqu'au bouton « Payer ». Le seul intrant qui puisse baisser le total
+  // est une REMISE — volume, grossiste ou code promo, tous décidés là-bas.
 
-  it('calcule le total d\u2019une ligne', () => {
+  it('calcule le total d’une ligne', () => {
     expect(computeLineTotal({ unitPrice: 6000, quantity: 3 })).toBe(18_000);
   });
 
-  it('ajoute les frais de livraison d\u00e9cid\u00e9s en amont', () => {
-    const t = computeCartTotals([{ unitPrice: 6000, quantity: 2 }], opts);
-    expect(t).toEqual({ subtotal: 12_000, deliveryFee: 1000, total: 13_000 });
+  it('n’ajoute AUCUN frais de livraison au total', () => {
+    const t = computeCartTotals([{ unitPrice: 6000, quantity: 2 }]);
+    expect(t).toEqual({
+      subtotal: 12_000,
+      remise: 0,
+      deliveryFee: 0,
+      total: 12_000,
+    });
   });
 
-  it('ajoute z\u00e9ro quand la livraison est offerte', () => {
+  it('soustrait la remise décidée par le site', () => {
     const t = computeCartTotals(
-      [{ unitPrice: 25_000, quantity: 1 }],
-      { deliveryFee: 0 },
+      [{ unitPrice: 10_000, quantity: 2 }],
+      { remise: 1_000 },
     );
-    expect(t).toEqual({ subtotal: 25_000, deliveryFee: 0, total: 25_000 });
+    expect(t).toEqual({
+      subtotal: 20_000,
+      remise: 1_000,
+      deliveryFee: 0,
+      total: 19_000,
+    });
   });
 
-  it('ne facture pas la livraison sur un panier vide', () => {
-    // M\u00eame avec un tarif non nul : il n'y a rien \u00e0 transporter.
-    expect(computeCartTotals([], opts)).toEqual({
+  it('ne laisse jamais un total descendre sous zéro', () => {
+    // Une remise trop généreuse (ou périmée) ne doit pas PAYER le client.
+    const t = computeCartTotals([{ unitPrice: 500, quantity: 1 }], {
+      remise: 999_999,
+    });
+    expect(t.total).toBe(0);
+    expect(t.remise).toBe(500);
+  });
+
+  it('ne facture rien sur un panier vide', () => {
+    expect(computeCartTotals([], { remise: 1_000 })).toEqual({
       subtotal: 0,
+      remise: 0,
       deliveryFee: 0,
       total: 0,
     });
@@ -56,9 +76,10 @@ describe('Calculs du panier', () => {
         { unitPrice: 1200, quantity: 7 },
         { unitPrice: 800, quantity: 3 },
       ],
-      opts,
+      { remise: 800 },
     );
     expect(t.subtotal).toBe(10_800);
+    expect(t.total).toBe(10_000);
     expect(Number.isInteger(t.total)).toBe(true);
   });
 

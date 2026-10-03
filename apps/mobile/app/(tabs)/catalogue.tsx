@@ -18,11 +18,12 @@ import {
   ErrorState,
   ProductGridSkeleton,
 } from '@/components/states';
-import { Card, Icon, Text } from '@/components/ui';
+import { Button, Card, Icon, Text } from '@/components/ui';
 import { formatWeight, formatXof } from '@/lib/format';
+import { useIsOnline } from '@/lib/network';
 import { resolveProductImageUrl } from '@/lib/productImage';
 import { useDebouncedValue } from '@/lib/useDebouncedValue';
-import { useCartItemCount, useCartStore } from '@/store/cart';
+import { useCartItemCount, useCartStore, useCartTotals } from '@/store/cart';
 import { palette, radius, spacing, typography } from '@/theme/tokens';
 
 /**
@@ -36,6 +37,8 @@ export default function CatalogueScreen() {
   const params = useLocalSearchParams<{ category?: string }>();
   const addItem = useCartStore((state) => state.addItem);
   const itemCount = useCartItemCount();
+  const totals = useCartTotals();
+  const isOnline = useIsOnline();
 
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState<string | undefined>(params.category);
@@ -174,6 +177,7 @@ export default function CatalogueScreen() {
         <FlatList
           data={items}
           keyExtractor={(item) => item.id}
+          style={styles.listGrow}
           numColumns={2}
           columnWrapperStyle={styles.row}
           contentContainerStyle={styles.list}
@@ -201,6 +205,40 @@ export default function CatalogueScreen() {
           )}
         />
       )}
+
+      {/* Raccourci de commande : depuis le catalogue, le client ajoute puis
+          commande sans transiter par l'écran du panier — le récapitulatif vit
+          déjà sur l'écran « Commande ». Trois gestes suffisent : « + »,
+          « Commander », puis « CONFIRMER LA COMMANDE ». */}
+      {itemCount > 0 ? (
+        <View
+          style={[
+            styles.checkoutBar,
+            { paddingBottom: insets.bottom + spacing.md },
+          ]}
+        >
+          <View style={styles.checkoutMeta}>
+            <Text variant="micro" color="muted">
+              {itemCount} ARTICLE{itemCount > 1 ? 'S' : ''} · SOUS-TOTAL
+            </Text>
+            <Text variant="h3" color="green">
+              {formatXof(totals.subtotal)}
+            </Text>
+          </View>
+          <View style={styles.checkoutAction}>
+            <Button
+              label={isOnline ? 'Commander' : 'Connexion nécessaire'}
+              disabled={!isOnline}
+              onPress={() => router.push('/commande')}
+              icon={
+                isOnline ? (
+                  <Icon name="arrow-right" size={16} color="white" />
+                ) : undefined
+              }
+            />
+          </View>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -352,6 +390,19 @@ const styles = StyleSheet.create({
     borderColor: palette.bg,
   },
   cartCountText: { color: palette.white, fontSize: 8 },
+  listGrow: { flex: 1 },
+  checkoutBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    backgroundColor: palette.card,
+    borderTopWidth: 1,
+    borderTopColor: palette.line,
+  },
+  checkoutMeta: { gap: 2 },
+  checkoutAction: { flex: 1 },
   searchBox: {
     flexDirection: 'row',
     alignItems: 'center',

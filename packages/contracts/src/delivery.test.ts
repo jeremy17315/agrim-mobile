@@ -14,6 +14,7 @@
  */
 import {
   computeDeliveryFee,
+  quoteDelivery,
   resolveDeliveryZone,
   weightUntilFreeDelivery,
   type DeliveryGrid,
@@ -117,38 +118,91 @@ describe('computeDeliveryFee — la règle officielle', () => {
 });
 
 describe('le scénario de l’énoncé', () => {
-  it('Abidjan, 10 000 F de riz : total = produit + tarif officiel', () => {
-    // C'est le cas qui a révélé la divergence. Le tarif officiel étant celui
-    // du site, la commande revient à 13 500 F et non à 11 000 F.
+  it('Abidjan, 10 000 F de riz : le client paie 10 000 F, pas 13 500 F', () => {
+    // C'est le cas qui avait révélé la divergence (3 500 sur le site, 1 000
+    // dans l'app). Depuis le 2 octobre 2026, aucun des deux ne facture : le
+    // site affiche « À confirmer » et n'ajoute rien au total payable.
     const sousTotal = 10_000;
-    const frais = computeDeliveryFee(
-      { zone: resolveDeliveryZone('Abidjan', GRILLE), mode: 'domicile', weightKg: 10 },
-      GRILLE,
-    );
+    const livraison = quoteDelivery({
+      mode: 'domicile',
+      zone: resolveDeliveryZone('Abidjan', GRILLE),
+      grid: GRILLE,
+    });
 
-    expect(frais).toBe(3500);
-    expect(sousTotal + frais).toBe(13_500);
+    expect(livraison.statut).toBe('A_CONFIRMER');
+    expect(livraison.frais).toBe(0);
+    expect(sousTotal + livraison.frais).toBe(10_000);
+    // Le tarif de zone existe toujours : il est confirmé hors ligne.
+    expect(
+      computeDeliveryFee(
+        { zone: 'abidjan', mode: 'domicile', weightKg: 10 },
+        GRILLE,
+      ),
+    ).toBe(3500);
   });
 
-  it('la même commande à Yamoussoukro coûte moins cher, et c’est voulu', () => {
-    const frais = computeDeliveryFee(
-      {
-        zone: resolveDeliveryZone('Yamoussoukro', GRILLE),
+  it('la livraison n’ajoute rien, quelles que soient la ville ni le volume', () => {
+    for (const ville of ['Yamoussoukro', 'Abidjan', 'Bouaké', 'Korhogo']) {
+      const livraison = quoteDelivery({
         mode: 'domicile',
-        weightKg: 10,
-      },
-      GRILLE,
-    );
-    expect(frais).toBe(1000);
+        zone: resolveDeliveryZone(ville, GRILLE),
+        grid: GRILLE,
+      });
+      expect(livraison.frais).toBe(0);
+      expect(livraison.statut).toBe('A_CONFIRMER');
+    }
+  });
+});
+
+describe('quoteDelivery — ce que lit le client', () => {
+  it('à domicile : le tarif n’est pas affiché, il est « à confirmer »', () => {
+    const livraison = quoteDelivery({
+      mode: 'domicile',
+      zone: 'abidjan',
+      grid: GRILLE,
+    });
+
+    expect(livraison).toEqual({
+      mode: 'domicile',
+      zone: 'abidjan',
+      libelle: 'Abidjan',
+      delai: '48 h',
+      statut: 'A_CONFIRMER',
+      message: 'À confirmer',
+      frais: 0,
+    });
   });
 
-  it('un gros volume vers Abidjan ne paie plus la livraison', () => {
-    // Quatre sacs de 25 kg = 100 kg, au-delà du seuil de 75 kg.
-    const frais = computeDeliveryFee(
-      { zone: 'abidjan', mode: 'domicile', weightKg: 100 },
-      GRILLE,
-    );
-    expect(frais).toBe(0);
+  it('au retrait : gratuit, comme sur le site', () => {
+    const livraison = quoteDelivery({
+      mode: 'retrait',
+      zone: 'abidjan',
+      grid: GRILLE,
+    });
+
+    expect(livraison.statut).toBe('GRATUIT');
+    expect(livraison.message).toBe('Gratuit');
+    expect(livraison.frais).toBe(0);
+    expect(livraison.delai).toBe(GRILLE.retrait.delai);
+  });
+
+  it('zone inconnue : délai de la zone par défaut', () => {
+    const livraison = quoteDelivery({
+      mode: 'domicile',
+      zone: 'zone-qui-nexiste-pas',
+      grid: GRILLE,
+    });
+
+    expect(livraison.libelle).toBe('Autre ville');
+    expect(livraison.delai).toBe('72 h');
+    expect(livraison.frais).toBe(0);
+  });
+
+  it('refuse une grille inexploitable plutôt qu’un délai inventé', () => {
+    const cassee: DeliveryGrid = { ...GRILLE, zones: {} };
+    expect(() =>
+      quoteDelivery({ mode: 'domicile', zone: 'abidjan', grid: cassee }),
+    ).toThrow(/inexploitable/i);
   });
 });
 

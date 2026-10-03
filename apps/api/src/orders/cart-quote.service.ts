@@ -1,13 +1,14 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import {
   computeCartTotals,
-  computeDeliveryFee,
+  quoteDelivery,
   resolveDeliveryZone,
   weightUntilFreeDelivery,
 } from '@agrim/contracts';
 
 import { prixEffectif, promosActives } from '../common/pricing/effective-price';
 import { PrismaService } from '../prisma/prisma.service';
+import { SitePricingService } from '../site-pricing/site-pricing.service';
 import { readDeliveryGrid } from './delivery-grid';
 import type { CartQuoteDto } from './dto/cart-quote.dto';
 
@@ -22,6 +23,8 @@ export interface LigneDevis {
   quantity: number;
   weightGrams: number;
   stock: number;
+  /** Référence côté site : clé de rattachement des remises. */
+  sourceRef: string | null;
 }
 
 /**
@@ -30,8 +33,12 @@ export interface LigneDevis {
  *
  * Le client (site, mobile) n'est jamais une source fiable : il dit CE QU'IL
  * VEUT (des variantes et des quantités), l'API dit CE QUE C'EST — prix
- * effectifs (promotions dans leur fenêtre), poids, zone, frais, total.
- * Aucun montant envoyé par le front n'est lu, aucun n'est accepté.
+ * effectifs (promotions dans leur fenêtre), remises décidées par le site,
+ * zone et délai de livraison, total à payer. Aucun montant envoyé par le front
+ * n'est lu, aucun n'est accepté.
+ *
+ * La livraison n'y figure comme MONTANT nulle part : le site n'encaisse
+ * aucun frais en ligne, ce devis expose donc un libellé et un délai.
  *
  * Le devis ne réserve RIEN et n'écrit RIEN : il est idempotent par
  * construction et peut être rappelé à chaque frappe du panier. La commande,
@@ -40,7 +47,10 @@ export interface LigneDevis {
  */
 @Injectable()
 export class CartQuoteService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly pricing: SitePricingService,
+  ) {}
 
   async quote(dto: CartQuoteDto) {
     // Quantités fusionnées par variante : « 2 + 3 » est « 5 », pas deux
@@ -63,6 +73,7 @@ export class CartQuoteService {
         price: true,
         weightGrams: true,
         stock: true,
+        sourceRef: true,
         product: { select: { name: true } },
         promotions: {
           where: { isActive: true },
@@ -90,6 +101,7 @@ export class CartQuoteService {
         quantity: merged.get(variant.id)!,
         weightGrams: variant.weightGrams,
         stock: variant.stock,
+        sourceRef: variant.sourceRef,
       };
     });
 
@@ -97,23 +109,47 @@ export class CartQuoteService {
     const weightKg =
       lines.reduce((sum, l) => sum + l.weightGrams * l.quantity, 0) / 1000;
     const zone = resolveDeliveryZone(dto.city, grid);
-    const deliveryFee = computeDeliveryFee(
-      { zone, mode: 'domicile', weightKg },
-      grid,
-    );
+
+    // ── Livraison : DESCRIPTEUR, pas montant ────────────────────────────
+    // Le site n'ajoute aucun frais au total payable — vérifié sur sa page
+    // `/commander` (« Livraison : À confirmer », total inchangé). Ce devis
+    // affiche donc le même libellé, pour le même délai, sans jamais
+    // additionner un tarif.
+    const delivery = quoteDelivery({ mode: 'domicile', zone, grid });
+
+    // ── Remises : LE SITE les calcule ───────────────────────────────────
+    // Volume, grossiste et code promo vivent dans son back office. Site
+    // injoignable ⇒ aucune remise appliquée, jamais une remise devinée.
+    const remise = await this.pricing.remise({
+      items: lines.map((l) => ({
+        sourceRef: l.sourceRef,
+        quantity: l.quantity,
+      })),
+      zone,
+      mode: 'domicile',
+      codePromo: dto.codePromo,
+      phone: dto.phone,
+    });
+
     const totals = computeCartTotals(
       lines.map((l) => ({ unitPrice: l.unitPrice, quantity: l.quantity })),
-      { deliveryFee },
+      { remise: remise.status === 'ok' ? remise.remise : 0 },
     );
 
     return {
       items: lines,
       weightKg,
       zone,
+      delivery,
       // Barre de progression du panier : « plus que X kg pour la livraison
-      // offerte » (0 = atteint ou offre désactivée).
+      // offerte » (0 = atteint ou offre désactivée sur le site).
       weightUntilFreeDeliveryKg: weightUntilFreeDelivery(weightKg, grid),
       subtotal: totals.subtotal,
+      remise: totals.remise,
+      remiseStatus: remise.status === 'ok' ? ('ok' as const) : ('unavailable' as const),
+      promoCode: remise.status === 'ok' ? remise.code : null,
+      promoMessage: remise.status === 'ok' ? remise.message : null,
+      // Toujours 0 : aucun frais n'est encaissé en ligne (voir contracts).
       deliveryFee: totals.deliveryFee,
       total: totals.total,
       currency: 'XOF',

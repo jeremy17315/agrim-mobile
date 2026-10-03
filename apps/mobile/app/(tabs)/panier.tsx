@@ -124,14 +124,14 @@ export default function PanierScreen() {
             icon={<Icon name="wifi-off" size={15} color="#8A5310" />}
           />
         ) : null}
-        {/* Les frais dépendent de la ZONE de livraison — donc de l'adresse,
-            choisie à l'étape suivante. Annoncer ici un montant ou un seuil de
-            gratuité reviendrait à promettre un total qui changerait au
-            paiement. On annonce donc le moment où il sera connu, pas une
-            estimation. Décision tarifaire du 29 août 2026. */}
+        {/* Le site, de la mise au panier jusqu'au paiement, n'ajoute AUCUN
+            frais au total payable : son tiroir de panier écrit « Applicable
+            selon la zone », et sa page de commande « À confirmer ». On
+            reprend ses mots. Ce qui est annoncé ici n'est pas un montant :
+            c'est le moment et le lieu où il sera convenu — par téléphone. */}
         <Banner
           tone="info"
-          message="Les frais de livraison s’affichent à l’étape suivante, selon votre adresse."
+          message="Les frais de livraison sont confirmés par téléphone selon votre zone : ils ne sont pas ajoutés au total en ligne."
           icon={<Icon name="truck" size={15} color="info" />}
         />
 
@@ -148,10 +148,9 @@ export default function PanierScreen() {
 
         <Card style={styles.summary}>
           <SummaryRow label="Sous-total" value={formatXof(totals.subtotal)} />
-          {/* « À calculer » et non « Offerte » : zéro signifie ici que le
-              montant n'est pas connu, pas qu'il est nul. Écrire « Offerte »
-              serait une promesse que le récapitulatif démentirait. */}
-          <SummaryRow label="Livraison" value="À calculer" />
+          {/* Formulation du site, tiroir de panier : aucun montant, aucune
+              promesse de gratuité — seulement la dépendance à la zone. */}
+          <SummaryRow label="Livraison" value="Applicable selon la zone" />
           <View style={styles.separator} />
           <View style={styles.totalRow}>
             <Text variant="h3">Sous-total</Text>
@@ -160,7 +159,8 @@ export default function PanierScreen() {
             </Text>
           </View>
           <Text variant="micro" color="muted">
-            Livraison et total confirmés par {COMPANY.name} à l’étape suivante.
+            Frais de livraison confirmés par {COMPANY.name} — ils ne s’ajoutent
+            pas à ce total.
           </Text>
         </Card>
       </ScrollView>

@@ -69,4 +69,18 @@ export class CreateGuestOrderDto {
   @ApiProperty({ format: 'uuid' })
   @IsUUID()
   idempotencyKey!: string;
+
+  /** Code promo : relaqué au calculateur du site, seul juge du rabais. */
+  @ApiProperty({ required: false, example: 'BIENVENUE10' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  codePromo?: string;
+
+  /** Note pour le livreur — le site en propose une à sa page de commande. */
+  @ApiProperty({ required: false, example: 'Appeler avant d’arriver' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  note?: string;
 }

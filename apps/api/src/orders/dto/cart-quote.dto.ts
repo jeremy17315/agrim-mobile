@@ -8,6 +8,7 @@ import {
   IsString,
   IsUUID,
   Max,
+  MaxLength,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -39,4 +40,24 @@ export class CartQuoteDto {
   @IsOptional()
   @IsString()
   city?: string;
+
+  /**
+   * Code promo saisi par le client.
+   *
+   * Il n'est jamais interprété ici : le site seul connaît ses codes, leurs
+   * dates et leurs plafonds. Ce champ n'est qu'un RELAIS vers son calculateur,
+   * seul juge de la remise accordée.
+   */
+  @ApiPropertyOptional({ example: 'BIENVENUE10', required: false })
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  codePromo?: string;
+
+  /** Téléphone : accompagne le code pour le plafond « une fois par client ». */
+  @ApiPropertyOptional({ example: '07 00 00 00 01', required: false })
+  @IsOptional()
+  @IsString()
+  @MaxLength(25)
+  phone?: string;
 }

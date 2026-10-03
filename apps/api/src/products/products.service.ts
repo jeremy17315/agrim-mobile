@@ -11,7 +11,11 @@ function resolveImageUrl(
   const value = (raw ?? '').trim();
   if (!value) return null;
   if (/^https?:\/\//i.test(value)) return value;
-  if (!siteBase) return null;
+  // Sans base de site configurée, on rend le chemin RELATIF tel quel : le
+  // mobile sait le résoudre (il connaît l'URL publique du site). Le réduire à
+  // `null` ferait disparaître la photo du produit — un pictogramme générique
+  // à la place d'une image que le catalogue fournit pourtant.
+  if (!siteBase) return value;
   const base = siteBase.replace(/\/+$/, '');
   return value.startsWith('/') ? `${base}${value}` : `${base}/${value}`;
 }
