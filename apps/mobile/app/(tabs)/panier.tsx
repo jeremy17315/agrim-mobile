@@ -11,8 +11,10 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { CheckoutProgress } from '@/components/CheckoutProgress';
 import { EmptyState, Skeleton } from '@/components/states';
 import { Banner, Button, Card, Icon, Text } from '@/components/ui';
+import { callMobileSupport } from '@/lib/contact';
 import { formatWeight, formatXof } from '@/lib/format';
 import { useIsOnline } from '@/lib/network';
 import { resolveProductImageUrl } from '@/lib/productImage';
@@ -107,6 +109,9 @@ export default function PanierScreen() {
           </Text>
         </Pressable>
       </View>
+      <View style={styles.progress}>
+        <CheckoutProgress step={1} />
+      </View>
 
       <ScrollView contentContainerStyle={styles.list}>
         <Button
@@ -118,11 +123,21 @@ export default function PanierScreen() {
           onPress={() => router.push('/catalogue')}
         />
         {!isOnline ? (
-          <Banner
-            tone="warning"
-            message="Vous pouvez modifier votre panier hors connexion. Reconnectez-vous pour finaliser la commande."
-            icon={<Icon name="wifi-off" size={15} color="#8A5310" />}
-          />
+          <View style={styles.offlineSupport}>
+            <Banner
+              tone="warning"
+              message="Vous pouvez modifier votre panier hors connexion. Pour commander, appelez AGRIM."
+              icon={<Icon name="wifi-off" size={15} color="#8A5310" />}
+            />
+            <Button
+              label="APPELER AGRIM · 07 00 05 04 52"
+              variant="outline"
+              size="sm"
+              fullWidth={false}
+              onPress={() => void callMobileSupport()}
+              icon={<Icon name="phone" size={15} color="green" />}
+            />
+          </View>
         ) : null}
         {/* Le site, de la mise au panier jusqu'au paiement, n'ajoute AUCUN
             frais au total payable : son tiroir de panier écrit « Applicable
@@ -178,7 +193,9 @@ export default function PanierScreen() {
         </View>
         <View style={styles.flex}>
           <Button
-            label={isOnline ? 'Commander' : 'Connexion nécessaire'}
+            label={
+              isOnline ? 'CONTINUER VERS LA LIVRAISON' : 'CONNEXION NÉCESSAIRE'
+            }
             disabled={!isOnline}
             icon={
               isOnline ? (
@@ -331,6 +348,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: spacing.lg,
   },
+  progress: { paddingHorizontal: spacing.lg, paddingTop: spacing.md },
+  offlineSupport: { gap: spacing.sm, alignItems: 'flex-start' },
   loading: { padding: spacing.lg, gap: spacing.md },
   list: { padding: spacing.lg, gap: spacing.md, paddingBottom: spacing.xxxl },
   flex: { flex: 1 },

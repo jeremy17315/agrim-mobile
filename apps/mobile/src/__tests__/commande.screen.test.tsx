@@ -33,19 +33,48 @@ jest.mock('expo-crypto', () => ({
 }));
 
 const mockCreateGuestOrder = jest.fn();
+const mockQuoteCart = jest.fn();
+let mockQuoteData:
+  | {
+      subtotal: number;
+      remise: number;
+      remiseStatus: 'ok' | 'unavailable';
+      promoCode: string | null;
+      promoMessage: string | null;
+      delivery: {
+        mode: 'domicile' | 'retrait';
+        zone: string;
+        libelle: string;
+        delai: string;
+        statut: 'A_CONFIRMER' | 'GRATUIT';
+        message: string;
+        frais: number;
+      };
+      deliveryFee: number;
+      total: number;
+      currency: 'XOF';
+      zone: string;
+    }
+  | undefined;
+
 jest.mock('@/api/orders', () => ({
   useCreateGuestOrder: () => ({
     mutateAsync: mockCreateGuestOrder,
     isPending: false,
   }),
   useGuestCartQuote: () => ({
-    mutateAsync: jest.fn(),
-    data: undefined,
+    mutateAsync: mockQuoteCart,
+    data: mockQuoteData,
   }),
   useDeliveryZones: () => ({
     data: {
       zones: [
-        { value: 'yamoussoukro', label: 'Yamoussoukro', delai: '24 h', frais: 0 },
+        {
+          value: 'yamoussoukro',
+          label: 'Yamoussoukro',
+          delai: '24 h',
+          frais: 0,
+        },
         { value: 'abidjan', label: 'Abidjan', delai: '48 h', frais: 0 },
         { value: 'bouake', label: 'Bouaké', delai: '48 h', frais: 0 },
         { value: 'autre', label: 'Autre ville', delai: '72 h', frais: 0 },
@@ -100,10 +129,49 @@ const fillDelivery = () => {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockQuoteData = undefined;
   mockUuidCounter = 0;
   useCartStore.setState({ items: [], hydrated: true });
   useCartStore.getState().addItem(product, variant, 2);
   mockCreateGuestOrder.mockResolvedValue({ reference: 'AGR-2026-0001' });
+});
+
+it('affiche l’étape livraison et le devis confirmé par le serveur', async () => {
+  mockQuoteData = {
+    subtotal: 12_000,
+    remise: 0,
+    remiseStatus: 'ok',
+    promoCode: null,
+    promoMessage: null,
+    delivery: {
+      mode: 'domicile',
+      zone: 'Abidjan',
+      libelle: 'Livraison à domicile',
+      delai: '48 h',
+      statut: 'A_CONFIRMER',
+      message: 'À confirmer',
+      frais: 0,
+    },
+    deliveryFee: 0,
+    total: 12_000,
+    currency: 'XOF',
+    zone: 'Abidjan',
+  };
+  render(<CommandeScreen />);
+
+  expect(screen.getByLabelText('Étape 2 sur 4 : Livraison')).toBeTruthy();
+  expect(screen.getByText('À confirmer')).toBeTruthy();
+  expect(screen.getByText(/Livraison à domicile.*48 h/)).toBeTruthy();
+
+  fireEvent.press(screen.getByLabelText('Livrer à Abidjan'));
+  await waitFor(() =>
+    expect(mockQuoteCart).toHaveBeenCalledWith({
+      city: 'Abidjan',
+      items: [{ variantId: variant.id, quantity: 2 }],
+      codePromo: undefined,
+      phone: undefined,
+    }),
+  );
 });
 
 it('commande sans compte, adresse enregistrée ni prix envoyé par le client', async () => {

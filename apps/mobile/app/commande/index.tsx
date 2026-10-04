@@ -11,8 +11,10 @@ import {
   useDeliveryZones,
   useGuestCartQuote,
 } from '@/api/orders';
+import { CheckoutProgress } from '@/components/CheckoutProgress';
 import { EmptyState } from '@/components/states';
 import { Banner, Button, Card, Icon, Input, Text } from '@/components/ui';
+import { callMobileSupport } from '@/lib/contact';
 import { formatXof } from '@/lib/format';
 import { saveGuestPaymentAccess } from '@/lib/guestPayment';
 import { useIsOnline } from '@/lib/network';
@@ -61,17 +63,17 @@ export default function CommandeScreen() {
 
   /** Zone choisie + précisions éventuelles : le serveur résout la zone depuis
    * ce texte, exactement comme le site le fait depuis la ville choisie. */
-  function deliveryLocation(): string {
+  function deliveryLocation(selectedZone = zone): string {
     const details = landmark.trim();
-    if (!zone) return details;
-    return details ? `${zone} — ${details}` : zone;
+    if (!selectedZone) return details;
+    return details ? `${selectedZone} — ${details}` : selectedZone;
   }
 
   /** Même devis serveur que le site : prix, remises et total exacts, sans
    * créer d'ordre ni réserver de stock. Les frais de livraison, eux, ne sont
    * jamais chiffrés — le site dit « À confirmer », on dit pareil. */
-  const refreshQuote = async () => {
-    const city = deliveryLocation().trim();
+  const refreshQuote = async (location = deliveryLocation()) => {
+    const city = location.trim();
     if (!isOnline || city.length < 2 || items.length === 0) return;
     try {
       await quote.mutateAsync({
@@ -183,10 +185,13 @@ export default function CommandeScreen() {
       <View style={{ paddingTop: insets.top + spacing.md }}>
         <Header onBack={() => router.back()} />
       </View>
+      <View style={styles.progress}>
+        <CheckoutProgress step={2} />
+      </View>
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.intro}>
           <Text variant="micro" color="green" style={styles.stepLabel}>
-            DERNIÈRE ÉTAPE
+            ÉTAPE 2 SUR 4
           </Text>
           <Text variant="h1">Livraison</Text>
           <Text variant="body" color="muted">
@@ -195,11 +200,21 @@ export default function CommandeScreen() {
         </View>
 
         {!isOnline ? (
-          <Banner
-            tone="warning"
-            message="Pas de connexion Internet. Appelez-nous directement pour commander."
-            icon={<Icon name="wifi-off" size={15} color="#8A5310" />}
-          />
+          <View style={styles.offlineSupport}>
+            <Banner
+              tone="warning"
+              message="Pas de connexion Internet. Vous pouvez appeler AGRIM pour commander."
+              icon={<Icon name="wifi-off" size={15} color="#8A5310" />}
+            />
+            <Button
+              label="APPELER AGRIM · 07 00 05 04 52"
+              variant="outline"
+              size="sm"
+              fullWidth={false}
+              onPress={() => void callMobileSupport()}
+              icon={<Icon name="phone" size={15} color="green" />}
+            />
+          </View>
         ) : null}
         {error ? (
           <Banner
@@ -250,7 +265,9 @@ export default function CommandeScreen() {
                     key={option.value}
                     onPress={() => {
                       setZone(option.label);
-                      void refreshQuote();
+                      // `setZone` est asynchrone : passer la valeur choisie
+                      // évite un devis sur la zone précédente au premier clic.
+                      void refreshQuote(deliveryLocation(option.label));
                     }}
                     accessibilityRole="radio"
                     accessibilityState={{ selected: active }}
@@ -359,6 +376,10 @@ export default function CommandeScreen() {
                 label="Livraison"
                 value={quote.data.delivery.message}
               />
+              <Text variant="caption" color="muted">
+                {quote.data.delivery.libelle} · délai estimé :{' '}
+                {quote.data.delivery.delai}
+              </Text>
               {quote.data.remise > 0 ? (
                 <SummaryLine
                   label={
@@ -379,7 +400,9 @@ export default function CommandeScreen() {
                 <Banner
                   tone="warning"
                   message={quote.data.promoMessage}
-                  icon={<Icon name="triangle-alert" size={15} color="#8A5310" />}
+                  icon={
+                    <Icon name="triangle-alert" size={15} color="#8A5310" />
+                  }
                 />
               ) : null}
               <Text variant="caption" color="muted">
@@ -514,6 +537,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingBottom: spacing.md,
   },
+  progress: { paddingHorizontal: spacing.lg, paddingBottom: spacing.sm },
   content: {
     padding: spacing.lg,
     gap: spacing.lg,
@@ -521,6 +545,7 @@ const styles = StyleSheet.create({
   },
   intro: { gap: spacing.xs },
   stepLabel: { letterSpacing: 1.4 },
+  offlineSupport: { gap: spacing.sm, alignItems: 'flex-start' },
   flex: { flex: 1 },
   form: { gap: spacing.md, padding: spacing.lg },
   formHeading: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },

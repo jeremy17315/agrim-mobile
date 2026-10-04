@@ -83,6 +83,15 @@ it('affiche la ligne, son total et le récapitulatif', () => {
   expect(screen.queryAllByText(`13${NB}000${NB}F`)).toHaveLength(0);
 });
 
+it('identifie le panier comme la première étape et mène vers la livraison', () => {
+  useCartStore.getState().addItem(product, variant, 1);
+  render(<PanierScreen />);
+
+  expect(screen.getByLabelText('Étape 1 sur 4 : Panier')).toBeTruthy();
+  fireEvent.press(screen.getByText('CONTINUER VERS LA LIVRAISON'));
+  expect(mockPush).toHaveBeenCalledWith('/commande');
+});
+
 it('incrémente la quantité depuis la ligne', () => {
   useCartStore.getState().addItem(product, variant, 1);
   render(<PanierScreen />);
