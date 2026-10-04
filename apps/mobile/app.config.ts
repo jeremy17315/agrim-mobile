@@ -13,6 +13,10 @@ import type { ExpoConfig } from 'expo/config';
 const API_URL =
   process.env.EXPO_PUBLIC_API_URL ?? 'http://10.0.2.2:3000/api/v1';
 
+/** Base publique du site qui héberge les médias produits. Elle peut différer
+ * de l'API mobile ; les images synchronisées sont parfois des chemins relatifs. */
+const SITE_URL = process.env.EXPO_PUBLIC_SITE_URL ?? 'https://agrimsarl.ci';
+
 /**
  * Un APK de test parle à une API de développement en HTTP simple, sur le
  * réseau local. Or Android bloque le trafic en clair depuis Android 9 : sans
@@ -47,6 +51,8 @@ const EAS_PROJECT_ID =
   process.env.EAS_PROJECT_ID ?? '35eb97ae-3d76-48ec-8424-3bd75584ca72';
 
 const config: ExpoConfig = {
+  // Identité native (icône, splash et libellé installé) : AGRIM. Bélier d’Or
+  // demeure la marque commerciale présentée aux acheteurs dans le parcours.
   name: 'AGRIM',
   slug: 'agrim-mobile',
   // Compte propriétaire du projet EAS. Doit correspondre au `slug` enregistré
@@ -174,6 +180,9 @@ const config: ExpoConfig = {
 
   extra: {
     apiUrl: API_URL,
+    // Publique par nature : sert uniquement à résoudre les chemins d'images
+    // envoyés par le catalogue du site, aucun secret ne s'y trouve.
+    siteUrl: SITE_URL,
     eas: {
       /**
        * Identifiant du projet EAS.

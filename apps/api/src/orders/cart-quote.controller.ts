@@ -1,4 +1,4 @@
-import { Body, Controller, HttpCode, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Post } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { Public } from '../common/decorators/public.decorator';
@@ -19,6 +19,15 @@ import { CartQuoteDto } from './dto/cart-quote.dto';
 @Controller('cart')
 export class CartQuoteController {
   constructor(private readonly quotes: CartQuoteService) {}
+
+  @Public()
+  @Get('delivery-zones')
+  @ApiOperation({
+    summary: 'Zones de livraison proposées, telles que le site les publie',
+  })
+  deliveryZones() {
+    return this.quotes.zones();
+  }
 
   @Public()
   @Post('quote')

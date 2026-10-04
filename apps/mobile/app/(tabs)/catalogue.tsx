@@ -1,7 +1,9 @@
+import { type Product } from '@agrim/contracts';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
   FlatList,
+  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -11,34 +13,38 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useCategories, useProducts } from '@/api/catalog';
-import { ProductCard } from '@/components/ProductCard';
 import {
   EmptyState,
   ErrorState,
   ProductGridSkeleton,
 } from '@/components/states';
-import { Icon, Text } from '@/components/ui';
+import { Button, Card, Icon, Text } from '@/components/ui';
+import { formatWeight, formatXof } from '@/lib/format';
+import { resolveProductImageUrl } from '@/lib/productImage';
 import { useDebouncedValue } from '@/lib/useDebouncedValue';
-import { palette, radius, spacing, typography } from '@/theme/tokens';
+import { useCartItemCount, useCartStore, useCartTotals } from '@/store/cart';
+import { palette, radius, shadow, spacing, typography } from '@/theme/tokens';
 
 /**
- * Catalogue : recherche, filtre par gamme, grille de produits.
- *
- * La recherche est temporisée : sans cela, chaque frappe déclencherait une
- * requête — coûteux en data et inutile.
+ * Vitrine compacte du catalogue : recherche, produits, cartes et ajout rapide.
+ * Le filtre de gamme disparaît lorsqu'il n'existe que Bélier d’Or. La mise en page reprend les repères d'une boutique mobile moderne,
+ * sans introduire de navigation ou de données supplémentaires.
  */
 export default function CatalogueScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const params = useLocalSearchParams<{ category?: string }>();
+  const addItem = useCartStore((state) => state.addItem);
+  const itemCount = useCartItemCount();
+  const cartTotals = useCartTotals();
 
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState<string | undefined>(params.category);
   const debouncedSearch = useDebouncedValue(search, 350);
 
-  // La gamme peut arriver de l'accueil apres le premier rendu. On l'applique
-  // pendant le rendu plutot que dans un effet : pas de rendu en cascade, et un
-  // filtre choisi ensuite a la main n'est pas ecrase au rendu suivant.
+  // La gamme peut arriver de l'accueil après le premier rendu. On l'applique
+  // pendant le rendu pour éviter une requête supplémentaire, sans écraser un
+  // choix effectué manuellement dans la même session.
   const [appliedParam, setAppliedParam] = useState(params.category);
   if (params.category !== appliedParam) {
     setAppliedParam(params.category);
@@ -49,23 +55,60 @@ export default function CatalogueScreen() {
   const products = useProducts({
     search: debouncedSearch.length > 0 ? debouncedSearch : undefined,
     category,
-    limit: 20,
+    // Une seule page complète est conservée localement, afin que recherche et
+    // navigation restent possibles après une coupure réseau.
+    limit: 100,
   });
 
   const items = products.data?.data ?? [];
   const total = products.data?.pagination.total ?? 0;
+  const categoriesList = categories.data ?? [];
+
+  // Un lien historique peut cibler une ancienne catégorie. Une fois la gamme
+  // unique reçue, cette sélection ne doit pas masquer les cinq produits.
+  if (categoriesList.length === 1 && category !== undefined) {
+    setCategory(undefined);
+  }
 
   return (
-    <View style={[styles.screen, { paddingTop: insets.top }]}>
+    <View style={[styles.screen, { paddingTop: insets.top + spacing.sm }]}>
       <View style={styles.header}>
-        <Text variant="h1">Catalogue</Text>
+        <View style={styles.titleRow}>
+          <View style={styles.titleCopy}>
+            <Text variant="micro" color="green" style={styles.brand}>
+              BÉLIER D’OR
+            </Text>
+            <Text variant="h1">Choisissez votre riz</Text>
+          </View>
+          <Pressable
+            onPress={() => router.push('/panier')}
+            accessibilityRole="button"
+            accessibilityLabel={
+              itemCount > 0
+                ? `Ouvrir le panier, ${itemCount} article${
+                    itemCount > 1 ? 's' : ''
+                  }`
+                : 'Ouvrir le panier'
+            }
+            style={styles.cartButton}
+          >
+            <Icon name="shopping-bag" size={19} color="green" />
+            {itemCount > 0 ? (
+              <View style={styles.cartCount}>
+                <Text variant="micro" style={styles.cartCountText}>
+                  {itemCount > 9 ? '9+' : itemCount}
+                </Text>
+              </View>
+            ) : null}
+          </Pressable>
+        </View>
 
         <View style={styles.searchBox}>
-          <Icon name="search" size={16} color="muted" />
+          <Icon name="search" size={17} color="muted" />
           <TextInput
             value={search}
             onChangeText={setSearch}
-            placeholder="Rechercher un riz…"
+            placeholder="Rechercher votre riz…"
             placeholderTextColor={palette.muted}
             style={styles.searchInput}
             accessibilityLabel="Rechercher un produit"
@@ -79,35 +122,37 @@ export default function CatalogueScreen() {
               accessibilityLabel="Effacer la recherche"
               hitSlop={10}
             >
-              <Icon name="x" size={15} color="muted" />
+              <Icon name="x" size={16} color="muted" />
             </Pressable>
           ) : null}
         </View>
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.chips}
-        >
-          <Chip
-            label="Toutes"
-            active={category === undefined}
-            onPress={() => setCategory(undefined)}
-          />
-          {(categories.data ?? []).map((c) => (
+        {categoriesList.length > 1 ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.chips}
+          >
             <Chip
-              key={c.id}
-              label={c.name}
-              active={category === c.slug}
-              onPress={() =>
-                setCategory(category === c.slug ? undefined : c.slug)
-              }
+              label="Toutes"
+              active={category === undefined}
+              onPress={() => setCategory(undefined)}
             />
-          ))}
-        </ScrollView>
+            {categoriesList.map((entry) => (
+              <Chip
+                key={entry.id}
+                label={entry.name}
+                active={category === entry.slug}
+                onPress={() =>
+                  setCategory(category === entry.slug ? undefined : entry.slug)
+                }
+              />
+            ))}
+          </ScrollView>
+        ) : null}
       </View>
 
-      {products.isError ? (
+      {products.isError && !products.data ? (
         <ErrorState
           error={products.error}
           onRetry={() => void products.refetch()}
@@ -123,7 +168,7 @@ export default function CatalogueScreen() {
           message={
             debouncedSearch.length > 0
               ? `Rien ne correspond à « ${debouncedSearch} ». Essayez un autre terme.`
-              : 'Aucun produit dans cette gamme pour le moment.'
+              : 'Aucun produit disponible pour le moment.'
           }
         />
       ) : (
@@ -132,23 +177,140 @@ export default function CatalogueScreen() {
           keyExtractor={(item) => item.id}
           numColumns={2}
           columnWrapperStyle={styles.row}
-          contentContainerStyle={styles.list}
+          contentContainerStyle={[
+            styles.list,
+            itemCount > 0 && styles.listWithCartShortcut,
+          ]}
           ListHeaderComponent={
-            <Text variant="caption" color="muted" style={styles.count}>
-              {total} produit{total > 1 ? 's' : ''}
-            </Text>
+            <View style={styles.listHeading}>
+              <Text variant="h2">Nos produits</Text>
+              <Text variant="caption" color="muted">
+                {total} produit{total > 1 ? 's' : ''}
+              </Text>
+            </View>
           }
           renderItem={({ item }) => (
             <View style={styles.cell}>
-              <ProductCard
+              <QuickProductCard
                 product={item}
-                onPress={(p) => router.push(`/produit/${p.slug}`)}
+                onOpen={() => router.push(`/produit/${item.slug}`)}
+                onAdd={() => {
+                  const variant = item.variants.find(
+                    (value) => value.isAvailable && value.stock > 0,
+                  );
+                  if (variant) addItem(item, variant);
+                }}
               />
             </View>
           )}
         />
       )}
+
+      {itemCount > 0 ? (
+        <View
+          style={[
+            styles.cartShortcut,
+            { paddingBottom: insets.bottom + spacing.sm },
+          ]}
+        >
+          <View style={styles.cartShortcutTotal}>
+            <Text variant="micro" color="muted">
+              {itemCount} ARTICLE{itemCount > 1 ? 'S' : ''}
+            </Text>
+            <Text variant="h3" color="green">
+              {formatXof(cartTotals.subtotal)}
+            </Text>
+          </View>
+          <View style={styles.cartShortcutAction}>
+            <Button
+              label="VOIR LE PANIER"
+              size="sm"
+              onPress={() => router.push('/panier')}
+              icon={<Icon name="shopping-bag" size={16} color="white" />}
+            />
+          </View>
+        </View>
+      ) : null}
     </View>
+  );
+}
+
+function QuickProductCard({
+  product,
+  onAdd,
+  onOpen,
+}: {
+  product: Product;
+  onAdd: () => void;
+  onOpen: () => void;
+}) {
+  const variant = product.variants.find(
+    (value) => value.isAvailable && value.stock > 0,
+  );
+  const [imageBroken, setImageBroken] = useState(false);
+  const imageUrl = resolveProductImageUrl(product.imageUrl);
+
+  return (
+    <Card style={styles.productCard} padded={false} flat>
+      <Pressable
+        onPress={onOpen}
+        accessibilityRole="button"
+        accessibilityLabel={`Voir ${product.name}`}
+        style={styles.productPressable}
+      >
+        <View style={styles.productVisual}>
+          {imageUrl && !imageBroken ? (
+            <Image
+              source={{ uri: imageUrl }}
+              style={styles.productImage}
+              resizeMode="contain"
+              onError={() => setImageBroken(true)}
+            />
+          ) : (
+            <Icon name="wheat" size={42} color="gold" />
+          )}
+          {product.isFeatured ? (
+            <View style={styles.popularBadge}>
+              <Text variant="micro" style={styles.popularText}>
+                POPULAIRE
+              </Text>
+            </View>
+          ) : null}
+        </View>
+        <View style={styles.productBody}>
+          <Text variant="h3" numberOfLines={2}>
+            {product.name}
+          </Text>
+          <Text variant="caption" color="muted" numberOfLines={1}>
+            {variant
+              ? formatWeight(variant.weightGrams)
+              : 'Format indisponible'}
+          </Text>
+        </View>
+      </Pressable>
+
+      <View style={styles.productFooter}>
+        {variant ? (
+          <Text variant="h2" color="green">
+            {formatXof(variant.price)}
+          </Text>
+        ) : (
+          <Text variant="caption" color="muted">
+            Indisponible
+          </Text>
+        )}
+        {variant ? (
+          <Pressable
+            onPress={onAdd}
+            accessibilityRole="button"
+            accessibilityLabel={`Ajouter ${product.name} au panier`}
+            style={styles.addButton}
+          >
+            <Icon name="plus" size={18} color="white" />
+          </Pressable>
+        ) : null}
+      </View>
+    </Card>
   );
 }
 
@@ -166,13 +328,11 @@ function Chip({
       onPress={onPress}
       accessibilityRole="button"
       accessibilityState={{ selected: active }}
-      // Le nom de la gamme apparaît aussi sur les cartes produits : sans
-      // libellé explicite, rien ne distingue le filtre du reste de l'écran.
       accessibilityLabel={`Filtrer par ${label}`}
       style={[styles.chip, active && styles.chipActive]}
     >
       <Text
-        variant="micro"
+        variant="caption"
         style={{ color: active ? palette.white : palette.body }}
       >
         {label}
@@ -185,21 +345,53 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: palette.bg },
   header: {
     paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md,
-    paddingBottom: spacing.sm,
+    paddingBottom: spacing.md,
     gap: spacing.md,
     backgroundColor: palette.bg,
   },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+  },
+  titleCopy: { gap: 3 },
+  brand: { letterSpacing: 1.5 },
+  cartButton: {
+    width: 42,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 21,
+    backgroundColor: palette.card,
+    borderWidth: 1,
+    borderColor: palette.line,
+  },
+  cartCount: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    minWidth: 17,
+    height: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+    borderRadius: radius.pill,
+    backgroundColor: palette.green,
+    borderWidth: 1.5,
+    borderColor: palette.bg,
+  },
+  cartCountText: { color: palette.white, fontSize: 8 },
   searchBox: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
-    backgroundColor: palette.card,
-    borderWidth: 1.5,
-    borderColor: palette.line,
-    borderRadius: radius.md,
+    minHeight: 48,
     paddingHorizontal: spacing.md,
-    minHeight: 46,
+    borderRadius: radius.pill,
+    backgroundColor: palette.card,
+    borderWidth: 1,
+    borderColor: palette.line,
   },
   searchInput: {
     flex: 1,
@@ -209,7 +401,7 @@ const styles = StyleSheet.create({
   chips: { gap: spacing.sm, paddingRight: spacing.lg },
   chip: {
     paddingHorizontal: spacing.md,
-    paddingVertical: 7,
+    paddingVertical: spacing.sm,
     borderRadius: radius.pill,
     backgroundColor: palette.card,
     borderWidth: 1,
@@ -217,7 +409,67 @@ const styles = StyleSheet.create({
   },
   chipActive: { backgroundColor: palette.green, borderColor: palette.green },
   list: { padding: spacing.lg, paddingTop: spacing.sm, gap: spacing.md },
+  listWithCartShortcut: { paddingBottom: 106 },
+  listHeading: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    marginBottom: spacing.xs,
+  },
   row: { gap: spacing.md },
   cell: { flex: 1 },
-  count: { marginBottom: spacing.xs },
+  productCard: { overflow: 'hidden' },
+  productPressable: { gap: spacing.sm },
+  productVisual: {
+    height: 148,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    padding: spacing.sm,
+    backgroundColor: palette.goldSoft,
+  },
+  productImage: { width: '100%', height: '100%' },
+  productBody: { minHeight: 57, gap: 3, paddingHorizontal: spacing.md },
+  productFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    minHeight: 48,
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.sm,
+  },
+  addButton: {
+    width: 34,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 17,
+    backgroundColor: palette.green,
+  },
+  popularBadge: {
+    position: 'absolute',
+    top: spacing.sm,
+    left: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    backgroundColor: palette.gold,
+  },
+  popularText: { color: palette.greenDeep, fontSize: 8 },
+  cartShortcut: {
+    position: 'absolute',
+    right: spacing.lg,
+    bottom: 0,
+    left: spacing.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingTop: spacing.sm,
+    backgroundColor: palette.card,
+    borderTopLeftRadius: radius.lg,
+    borderTopRightRadius: radius.lg,
+    ...shadow.floating,
+  },
+  cartShortcutTotal: { flex: 1, gap: 2, paddingLeft: spacing.md },
+  cartShortcutAction: { minWidth: 158 },
 });

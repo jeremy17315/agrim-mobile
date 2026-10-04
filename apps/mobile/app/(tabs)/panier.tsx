@@ -1,17 +1,24 @@
-import { COMPANY } from '@agrim/contracts';
+import { cleanProductName, COMPANY } from '@agrim/contracts';
 import { useRouter } from 'expo-router';
-import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useState } from 'react';
+import {
+  Alert,
+  Image,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { CheckoutProgress } from '@/components/CheckoutProgress';
 import { EmptyState, Skeleton } from '@/components/states';
 import { Banner, Button, Card, Icon, Text } from '@/components/ui';
+import { callMobileSupport } from '@/lib/contact';
 import { formatWeight, formatXof } from '@/lib/format';
-import { useIsAuthenticated } from '@/store/auth';
-import {
-  useCartStore,
-  useCartTotals,
-  type CartLineItem,
-} from '@/store/cart';
+import { useIsOnline } from '@/lib/network';
+import { resolveProductImageUrl } from '@/lib/productImage';
+import { useCartStore, useCartTotals, type CartLineItem } from '@/store/cart';
 import { palette, radius, shadow, spacing } from '@/theme/tokens';
 
 /**
@@ -25,7 +32,7 @@ export default function PanierScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
 
-  const isAuthenticated = useIsAuthenticated();
+  const isOnline = useIsOnline();
   const items = useCartStore((s) => s.items);
   const hydrated = useCartStore((s) => s.hydrated);
   const increment = useCartStore((s) => s.increment);
@@ -35,16 +42,9 @@ export default function PanierScreen() {
 
   const totals = useCartTotals();
 
-  /**
-   * Commander exige un compte : le serveur rattache la commande à un
-   * utilisateur. On envoie donc vers la connexion plutôt que d'échouer sur un
-   * 401 incompréhensible.
-   */
+  /** Le checkout public demande les coordonnées de livraison, pas un compte. */
   const goToCheckout = () => {
-    if (!isAuthenticated) {
-      router.push('/(auth)/connexion');
-      return;
-    }
+    if (!isOnline) return;
     router.push('/commande');
   };
 
@@ -79,7 +79,7 @@ export default function PanierScreen() {
         <EmptyState
           icon="shopping-cart"
           title="Votre panier est vide"
-          message="Parcourez le catalogue pour ajouter du riz BOAGNI."
+          message="Parcourez les produits pour ajouter votre riz Bélier d’Or."
           action={
             <Button
               label="Voir le catalogue"
@@ -109,16 +109,44 @@ export default function PanierScreen() {
           </Text>
         </Pressable>
       </View>
+      <View style={styles.progress}>
+        <CheckoutProgress step={1} />
+      </View>
 
       <ScrollView contentContainerStyle={styles.list}>
-        {/* Les frais dépendent de la ZONE de livraison — donc de l'adresse,
-            choisie à l'étape suivante. Annoncer ici un montant ou un seuil de
-            gratuité reviendrait à promettre un total qui changerait au
-            paiement. On annonce donc le moment où il sera connu, pas une
-            estimation. Décision tarifaire du 29 août 2026. */}
+        <Button
+          label="Continuer mes achats"
+          variant="outline"
+          size="sm"
+          fullWidth={false}
+          icon={<Icon name="arrow-left" size={14} color="green" />}
+          onPress={() => router.push('/catalogue')}
+        />
+        {!isOnline ? (
+          <View style={styles.offlineSupport}>
+            <Banner
+              tone="warning"
+              message="Vous pouvez modifier votre panier hors connexion. Pour commander, appelez AGRIM."
+              icon={<Icon name="wifi-off" size={15} color="#8A5310" />}
+            />
+            <Button
+              label="APPELER AGRIM · 07 00 05 04 52"
+              variant="outline"
+              size="sm"
+              fullWidth={false}
+              onPress={() => void callMobileSupport()}
+              icon={<Icon name="phone" size={15} color="green" />}
+            />
+          </View>
+        ) : null}
+        {/* Le site, de la mise au panier jusqu'au paiement, n'ajoute AUCUN
+            frais au total payable : son tiroir de panier écrit « Applicable
+            selon la zone », et sa page de commande « À confirmer ». On
+            reprend ses mots. Ce qui est annoncé ici n'est pas un montant :
+            c'est le moment et le lieu où il sera convenu — par téléphone. */}
         <Banner
           tone="info"
-          message="Les frais de livraison s’affichent à l’étape suivante, selon votre adresse."
+          message="Les frais de livraison sont confirmés par téléphone selon votre zone : ils ne sont pas ajoutés au total en ligne."
           icon={<Icon name="truck" size={15} color="info" />}
         />
 
@@ -135,10 +163,9 @@ export default function PanierScreen() {
 
         <Card style={styles.summary}>
           <SummaryRow label="Sous-total" value={formatXof(totals.subtotal)} />
-          {/* « À calculer » et non « Offerte » : zéro signifie ici que le
-              montant n'est pas connu, pas qu'il est nul. Écrire « Offerte »
-              serait une promesse que le récapitulatif démentirait. */}
-          <SummaryRow label="Livraison" value="À calculer" />
+          {/* Formulation du site, tiroir de panier : aucun montant, aucune
+              promesse de gratuité — seulement la dépendance à la zone. */}
+          <SummaryRow label="Livraison" value="Applicable selon la zone" />
           <View style={styles.separator} />
           <View style={styles.totalRow}>
             <Text variant="h3">Sous-total</Text>
@@ -147,7 +174,8 @@ export default function PanierScreen() {
             </Text>
           </View>
           <Text variant="micro" color="muted">
-            Livraison et total confirmés par {COMPANY.name} à l’étape suivante.
+            Frais de livraison confirmés par {COMPANY.name} — ils ne s’ajoutent
+            pas à ce total.
           </Text>
         </Card>
       </ScrollView>
@@ -165,8 +193,15 @@ export default function PanierScreen() {
         </View>
         <View style={styles.flex}>
           <Button
-            label="Commander"
-            icon={<Icon name="arrow-right" size={16} color="white" />}
+            label={
+              isOnline ? 'CONTINUER VERS LA LIVRAISON' : 'CONNEXION NÉCESSAIRE'
+            }
+            disabled={!isOnline}
+            icon={
+              isOnline ? (
+                <Icon name="arrow-right" size={16} color="white" />
+              ) : undefined
+            }
             onPress={goToCheckout}
           />
         </View>
@@ -192,24 +227,17 @@ function CartLine({
 
   return (
     <Card style={styles.line}>
-      <Pressable
-        onPress={onOpen}
-        accessibilityRole="button"
-        accessibilityLabel={`Voir ${item.productName}`}
-        style={styles.thumb}
-      >
-        <Icon name="wheat" size={20} color="gold" />
-      </Pressable>
+      <CartThumbnail item={item} onPress={onOpen} />
 
       <View style={styles.lineBody}>
         <View style={styles.lineHead}>
           <Text variant="h3" numberOfLines={2} style={styles.flex}>
-            {item.productName}
+            {cleanProductName(item.productName)}
           </Text>
           <Pressable
             onPress={onRemove}
             accessibilityRole="button"
-            accessibilityLabel={`Retirer ${item.productName} ${item.variantLabel}`}
+            accessibilityLabel={`Retirer ${cleanProductName(item.productName)} ${item.variantLabel}`}
             hitSlop={10}
           >
             <Icon name="trash-2" size={15} color="muted" />
@@ -258,6 +286,38 @@ function CartLine({
   );
 }
 
+function CartThumbnail({
+  item,
+  onPress,
+}: {
+  item: CartLineItem;
+  onPress: () => void;
+}) {
+  const [imageBroken, setImageBroken] = useState(false);
+  const imageUrl = resolveProductImageUrl(item.productImageUrl);
+  const photo = imageUrl && !imageBroken;
+
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`Voir ${cleanProductName(item.productName)}`}
+      style={styles.thumb}
+    >
+      {photo ? (
+        <Image
+          source={{ uri: imageUrl ?? undefined }}
+          style={styles.thumbImage}
+          resizeMode="cover"
+          onError={() => setImageBroken(true)}
+        />
+      ) : (
+        <Icon name="wheat" size={20} color="gold" />
+      )}
+    </Pressable>
+  );
+}
+
 function SummaryRow({
   label,
   value,
@@ -288,6 +348,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: spacing.lg,
   },
+  progress: { paddingHorizontal: spacing.lg, paddingTop: spacing.md },
+  offlineSupport: { gap: spacing.sm, alignItems: 'flex-start' },
   loading: { padding: spacing.lg, gap: spacing.md },
   list: { padding: spacing.lg, gap: spacing.md, paddingBottom: spacing.xxxl },
   flex: { flex: 1 },
@@ -308,13 +370,15 @@ const styles = StyleSheet.create({
 
   line: { flexDirection: 'row', gap: spacing.md },
   thumb: {
-    width: 58,
-    height: 58,
+    width: 66,
+    height: 66,
+    overflow: 'hidden',
     borderRadius: radius.md,
     backgroundColor: palette.goldSoft,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  thumbImage: { width: '100%', height: '100%' },
   lineBody: { flex: 1, gap: 3 },
   lineHead: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
   lineFoot: {

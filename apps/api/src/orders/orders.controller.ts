@@ -19,8 +19,11 @@ import {
   CurrentUser,
   type AuthenticatedUser,
 } from '../common/decorators/current-user.decorator';
+import { Public } from '../common/decorators/public.decorator';
+import { CreateGuestOrderDto } from './dto/create-guest-order.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { TrackingService } from '../deliveries/tracking.service';
+import { GuestCheckoutService } from './guest-checkout.service';
 import { OrdersService } from './orders.service';
 
 /**
@@ -36,7 +39,18 @@ export class OrdersController {
   constructor(
     private readonly orders: OrdersService,
     private readonly tracking: TrackingService,
+    private readonly guestCheckout: GuestCheckoutService,
   ) {}
+
+  /** Checkout express : aucun compte ni jeton n'est requis. */
+  @Public()
+  @Post('guest')
+  @ApiOperation({
+    summary: 'Créer une commande invitée (nom, téléphone et zone de livraison)',
+  })
+  createGuest(@Body() dto: CreateGuestOrderDto) {
+    return this.guestCheckout.create(dto);
+  }
 
   @Post()
   @ApiOperation({

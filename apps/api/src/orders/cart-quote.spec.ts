@@ -7,6 +7,10 @@ jest.mock('../../generated/prisma/client', () => ({
 
 import { CartQuoteService } from './cart-quote.service';
 import type { PrismaService } from '../prisma/prisma.service';
+import type {
+  RemiseResult,
+  SitePricingService,
+} from '../site-pricing/site-pricing.service';
 
 /**
  * Le devis panier, sous test — POLITIQUE de prix, pas transport.
@@ -35,6 +39,7 @@ interface VarianteFausse {
   price: number;
   weightGrams: number;
   stock: number;
+  sourceRef: string | null;
   product: { name: string };
   promotions: { isActive: boolean; priceXof: number; startsAt: Date; endsAt: Date | null }[];
 }
@@ -47,6 +52,7 @@ function variante(overrides: Partial<VarianteFausse>): VarianteFausse {
     price: 2500,
     weightGrams: 1000,
     stock: 12,
+    sourceRef: 'RB-ATT-01',
     product: { name: 'Attiéké' },
     promotions: [],
     ...overrides,
@@ -56,6 +62,8 @@ function variante(overrides: Partial<VarianteFausse>): VarianteFausse {
 function harnais(opts: {
   variants?: VarianteFausse[];
   grille?: Record<string, unknown> | null;
+  /** Réponse du calculateur du site (remises). Par défaut : 0, sans code. */
+  remise?: RemiseResult;
 } = {}) {
   const db = {
     productVariant: {
@@ -69,7 +77,14 @@ function harnais(opts: {
       ),
     },
   };
-  const service = new CartQuoteService({ db } as unknown as PrismaService);
+  const service = new CartQuoteService(
+    { db } as unknown as PrismaService,
+    {
+      remise: jest.fn(async () =>
+        opts.remise ?? { status: 'ok', remise: 0, code: null, message: null },
+      ),
+    } as unknown as SitePricingService,
+  );
   return { service, db };
 }
 
@@ -81,7 +96,7 @@ const items = (...paires: [string, number][]) =>
   paires.map(([variantId, quantity]) => ({ variantId, quantity }));
 
 describe('CartQuoteService — le serveur calcule, le client affiche', () => {
-  it('devis nominal : prix effectif (promo active), zone résolue, frais, total', async () => {
+  it('devis nominal : prix effectif (promo active), zone résolue, total sans frais', async () => {
     const { service } = harnais({
       variants: [
         variante({
@@ -107,15 +122,75 @@ describe('CartQuoteService — le serveur calcule, le client affiche', () => {
     // Le prix AFFICHÉ est le prix FACTURÉ : la promotion s'applique.
     expect(devis.items[0].unitPrice).toBe(1990);
     expect(devis.items[1].unitPrice).toBe(4000);
-    // Sous-total 2×1990 + 4000 = 7980 ; Abidjan ⇒ 1000 XOF.
+    // Sous-total 2×1990 + 4000 = 7980. Abidjan a une zone, un délai — et
+    // AUCUN frais encaissé : le total reste le sous-total (site, /commander).
     expect(devis.subtotal).toBe(7980);
     expect(devis.zone).toBe('abidjan');
-    expect(devis.deliveryFee).toBe(1000);
-    expect(devis.total).toBe(8980);
+    expect(devis.deliveryFee).toBe(0);
+    expect(devis.delivery.statut).toBe('A_CONFIRMER');
+    expect(devis.delivery.message).toBe('À confirmer');
+    expect(devis.delivery.delai).toBe('24-48h');
+    expect(devis.total).toBe(7980);
     expect(devis.currency).toBe('XOF');
     // Poids 2×1kg + 2kg = 4kg, seuil 10 ⇒ il manque 6 kg pour l'offerte.
     expect(devis.weightKg).toBe(4);
     expect(devis.weightUntilFreeDeliveryKg).toBe(6);
+  });
+
+  it('applique la remise renvoyée par le site, et rien d’autre', async () => {
+    const { service } = harnais({
+      variants: [variante({})],
+      remise: { status: 'ok', remise: 500, code: null, message: null },
+    });
+
+    const devis = await service.quote({
+      items: items(['var-1', 2]),
+      city: 'Abidjan',
+    });
+
+    expect(devis.subtotal).toBe(5000);
+    expect(devis.remise).toBe(500);
+    expect(devis.total).toBe(4500);
+    expect(devis.deliveryFee).toBe(0);
+  });
+
+  it('site injoignable ⇒ aucune remise, jamais une remise inventée', async () => {
+    const { service } = harnais({
+      variants: [variante({})],
+      remise: { status: 'unavailable' },
+    });
+
+    const devis = await service.quote({
+      items: items(['var-1', 2]),
+      city: 'Abidjan',
+      codePromo: 'BIENVENUE10',
+    });
+
+    expect(devis.remise).toBe(0);
+    expect(devis.remiseStatus).toBe('unavailable');
+    expect(devis.total).toBe(5000);
+  });
+
+  it('un code refusé par le site remonte sa raison au client', async () => {
+    const { service } = harnais({
+      variants: [variante({})],
+      remise: {
+        status: 'ok',
+        remise: 0,
+        code: null,
+        message: 'Ce code a déjà été utilisé.',
+      },
+    });
+
+    const devis = await service.quote({
+      items: items(['var-1', 1]),
+      city: 'Abidjan',
+      codePromo: 'USÉ',
+    });
+
+    expect(devis.promoMessage).toBe('Ce code a déjà été utilisé.');
+    expect(devis.remise).toBe(0);
+    expect(devis.total).toBe(2500);
   });
 
   it('une promotion périmée ou future ne change PAS le prix affiché', async () => {
@@ -126,13 +201,13 @@ describe('CartQuoteService — le serveur calcule, le client affiche', () => {
             {
               isActive: true,
               priceXof: 990,
-              startsAt: new Date('2026-08-01T00:00:00Z'),
-              endsAt: new Date('2026-08-31T00:00:00Z'),
+              startsAt: new Date('2001-08-01T00:00:00Z'),
+              endsAt: new Date('2001-08-31T00:00:00Z'),
             },
             {
               isActive: true,
               priceXof: 990,
-              startsAt: new Date('2026-10-01T00:00:00Z'),
+              startsAt: new Date('2099-10-01T00:00:00Z'),
               endsAt: null,
             },
           ],
@@ -146,7 +221,7 @@ describe('CartQuoteService — le serveur calcule, le client affiche', () => {
     });
 
     expect(devis.items[0].unitPrice).toBe(2500);
-    expect(devis.total).toBe(2500 + 1000);
+    expect(devis.total).toBe(2500);
   });
 
   it('quantités dupliquées : fusionnées en une ligne (2+3 = 5)', async () => {
@@ -162,9 +237,12 @@ describe('CartQuoteService — le serveur calcule, le client affiche', () => {
     expect(devis.subtotal).toBe(5 * 2500);
   });
 
-  it('livraison offerte au-delà du seuil de poids', async () => {
+  it('le seuil de poids de la grille ne change plus le total', async () => {
     const { service } = harnais({
-      variants: [variante({ weightGrams: 6000 }), variante({ id: 'var-2', weightGrams: 5000 })],
+      variants: [
+        variante({ weightGrams: 6000 }),
+        variante({ id: 'var-2', weightGrams: 5000 }),
+      ],
     });
 
     const devis = await service.quote({
@@ -174,6 +252,7 @@ describe('CartQuoteService — le serveur calcule, le client affiche', () => {
 
     expect(devis.weightKg).toBe(11);
     expect(devis.weightUntilFreeDeliveryKg).toBe(0);
+    // Au-dessus du seuil comme en dessous : aucun frais n'est encaissé.
     expect(devis.deliveryFee).toBe(0);
     expect(devis.total).toBe(devis.subtotal);
   });
@@ -187,7 +266,8 @@ describe('CartQuoteService — le serveur calcule, le client affiche', () => {
     });
 
     expect(devis.zone).toBe('interieur');
-    expect(devis.deliveryFee).toBe(2500);
+    expect(devis.deliveryFee).toBe(0);
+    expect(devis.delivery.message).toBe('À confirmer');
   });
 
   it('une variante inconnue ou retirée du rayon ⇒ 404 métier', async () => {
@@ -212,6 +292,28 @@ describe('CartQuoteService — le serveur calcule, le client affiche', () => {
     await expect(
       service.quote({ items: items(['var-1', 1]), city: 'Abidjan' }),
     ).rejects.toMatchObject(codeErreur('DELIVERY_GRID_UNAVAILABLE'));
+  });
+});
+
+describe('CartQuoteService — les zones proposées au client', () => {
+  it('expose les zones de la grille du site, sans en écrire aucune en dur', async () => {
+    const { service } = harnais({});
+
+    const proposees = await service.zones();
+
+    expect(proposees.zones).toEqual([
+      { value: 'abidjan', label: 'Abidjan', delai: '24-48h', frais: 1000 },
+      { value: 'interieur', label: 'Intérieur', delai: '3-5 jours', frais: 2500 },
+    ]);
+    expect(proposees.defaultZone).toBe('interieur');
+  });
+
+  it('sans grille connue ⇒ 503, jamais une liste inventée', async () => {
+    const { service } = harnais({ grille: null });
+
+    await expect(service.zones()).rejects.toMatchObject(
+      codeErreur('DELIVERY_GRID_UNAVAILABLE'),
+    );
   });
 });
 

@@ -7,6 +7,7 @@ import { useProductReviews, useSubmitReview } from '@/api/reviews';
 import { StarRating } from '@/components/StarRating';
 import { Banner, Button, Card, Icon, Input, Text } from '@/components/ui';
 import { formatDateTime } from '@/lib/format';
+import { useIsOnline } from '@/lib/network';
 import { useIsAuthenticated } from '@/store/auth';
 import { spacing } from '@/theme/tokens';
 
@@ -21,6 +22,7 @@ function formatNote(value: number): string {
 export function ProductReviews({ slug }: { slug: string }) {
   const router = useRouter();
   const connected = useIsAuthenticated();
+  const isOnline = useIsOnline();
   const avis = useProductReviews(slug);
   const publier = useSubmitReview(slug);
 
@@ -32,6 +34,10 @@ export function ProductReviews({ slug }: { slug: string }) {
   const envoyer = async () => {
     setErreur(null);
     setMerci(false);
+    if (!isOnline) {
+      setErreur('Reconnectez-vous pour publier un avis.');
+      return;
+    }
     if (!connected) {
       router.push('/(auth)/connexion');
       return;
@@ -77,12 +83,18 @@ export function ProductReviews({ slug }: { slug: string }) {
 
       <Card style={styles.form}>
         <Text variant="bodyStrong">Votre note</Text>
-        <StarRating value={note} onChange={setNote} interactive size={28} />
+        <StarRating
+          value={note}
+          onChange={isOnline ? setNote : undefined}
+          interactive={isOnline}
+          size={28}
+        />
         <Input
           label="Votre commentaire"
           placeholder="Le goût, la cuisson, le rapport qualité-prix…"
           value={commentaire}
           onChangeText={setCommentaire}
+          editable={isOnline}
           multiline
           textAlignVertical="top"
           style={styles.zone}
@@ -101,7 +113,11 @@ export function ProductReviews({ slug }: { slug: string }) {
             icon={<Icon name="circle-check" size={14} color="green" />}
           />
         ) : null}
-        {connected ? (
+        {!isOnline ? (
+          <Text variant="caption" color="muted" center>
+            Reconnectez-vous pour publier un avis.
+          </Text>
+        ) : connected ? (
           <Button
             label={publier.isPending ? 'Publication…' : 'Publier mon avis'}
             disabled={publier.isPending}

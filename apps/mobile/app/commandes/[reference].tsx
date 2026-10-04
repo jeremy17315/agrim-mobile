@@ -232,10 +232,13 @@ export default function SuiviCommandeScreen() {
               </Text>
               <Text
                 variant="bodyStrong"
-                color={order.data.deliveryFee === 0 ? 'green' : 'ink'}
+                color={order.data.deliveryFee === 0 ? 'muted' : 'ink'}
               >
+                {/* Zéro n'annonce pas « Offerte » : le site affiche
+                    « À confirmer », et c'est bien ce qui s'est passé — les
+                    frais ont été convenus hors ligne, pas encaissés en ligne. */}
                 {order.data.deliveryFee === 0
-                  ? 'Offerte'
+                  ? 'À confirmer'
                   : formatXof(order.data.deliveryFee)}
               </Text>
             </View>

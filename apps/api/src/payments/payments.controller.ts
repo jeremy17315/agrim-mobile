@@ -15,6 +15,7 @@ import {
   CurrentUser,
   type AuthenticatedUser,
 } from '../common/decorators/current-user.decorator';
+import { GuestPaymentTokenService } from '../orders/guest-payment-token.service';
 import { PaymentsService } from './payments.service';
 
 /**
@@ -27,7 +28,10 @@ import { PaymentsService } from './payments.service';
 @ApiTags('payments')
 @Controller('payments')
 export class PaymentsController {
-  constructor(private readonly payments: PaymentsService) {}
+  constructor(
+    private readonly payments: PaymentsService,
+    private readonly guestTokens: GuestPaymentTokenService,
+  ) {}
 
   @Get('provider')
   @Public()
@@ -58,6 +62,30 @@ export class PaymentsController {
     @Param('reference') reference: string,
   ) {
     return this.payments.status(user.id, reference);
+  }
+
+  /** Même passerelle que le site, autorisée sans compte par une capacité
+   * temporaire retournée uniquement lors du checkout invité. */
+  @Public()
+  @Post('guest/orders/:reference/initiate')
+  @ApiOperation({ summary: 'Ouvrir le paiement Mobile Money d’un invité' })
+  initiateGuest(
+    @Param('reference') reference: string,
+    @Headers('x-guest-payment-token') token: string | undefined,
+  ) {
+    this.guestTokens.assertValid(token, reference);
+    return this.payments.initiateGuest(reference);
+  }
+
+  @Public()
+  @Get('guest/orders/:reference')
+  @ApiOperation({ summary: 'Lire le statut de paiement d’un invité' })
+  guestStatus(
+    @Param('reference') reference: string,
+    @Headers('x-guest-payment-token') token: string | undefined,
+  ) {
+    this.guestTokens.assertValid(token, reference);
+    return this.payments.statusGuest(reference);
   }
 
   /**

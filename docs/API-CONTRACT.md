@@ -219,6 +219,13 @@ site, l'intégration répond `503` — elle est désactivée, pas ouverte.
 
 Le catalogue complet. Consommé toutes les 15 minutes par `CatalogSyncService`.
 
+> **Compatibilité de vocabulaire :** le champ réseau historique `gammes` et
+> les clés `gamme_*` restent inchangés côté site. Dans l'application, chaque
+> entrée de `gammes` est interprétée comme un **produit** (Royal Grains,
+> Djassa, Ébène d’Or, Riz violet ou Riz noir), dont les entrées de `produits`
+> sont les formats/variantes. Ils sont tous rattachés à l'unique gamme
+> commerciale **Bélier d’Or**.
+
 ```json
 {
   "genere_le": "2026-08-28T18:00:00Z",
@@ -252,7 +259,7 @@ Le catalogue complet. Consommé toutes les 15 minutes par `CatalogSyncService`.
    effectif — le site a appliqué la promotion. L'application n'a aucune règle
    de prix à connaître, elle ne peut donc pas les interpréter autrement.
 2. **La clé est `reference`**, jamais le nom, le sku ni la position. Renommer
-   une gamme dans le back office ne crée pas de doublon côté application.
+   un produit dans le back office ne crée pas de doublon côté application.
 
 **Les trois clés de disponibilité** (ajoutées à l'audit d'août 2026) :
 

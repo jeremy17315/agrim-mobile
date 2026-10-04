@@ -1,5 +1,5 @@
 /**
- * Frais de livraison — RÈGLE OFFICIELLE UNIQUE.
+ * Livraison — RÈGLE OFFICIELLE UNIQUE.
  *
  * Décision métier du 29 août 2026
  * ────────────────────────────────
@@ -17,6 +17,17 @@
  * C'est la même séparation que pour le catalogue : le site décide, les deux
  * plateformes appliquent. Un tarif écrit en dur ici recréerait exactement la
  * divergence que cette étape supprime.
+ *
+ * Décision métier du 2 octobre 2026
+ * ──────────────────────────────────
+ * **AUCUN FRAIS N'EST ENCAISSÉ EN LIGNE.** Vérifié sur le site lui-même :
+ * `POST /api/panier/calculer` renvoie `frais_livraison: 0` avec
+ * `livraison_a_confirmer: true`, et sa page `/commander` affiche « Livraison :
+ * À confirmer » — total inchangé, du tiroir de panier jusqu'au bouton
+ * « Payer ». Le retrait sur place y affiche « Gratuit ».
+ *
+ * Ce module décrit donc la livraison (zone, délai, statut) ; `quoteDelivery`
+ * ne produit AUCUN montant à additionner.
  */
 
 /** Une zone de livraison, telle que le site la publie. */
@@ -43,6 +54,69 @@ export interface DeliveryGrid {
 }
 
 export type DeliveryMode = 'domicile' | 'retrait';
+
+/** Ce que le client LIT sur la ligne « Livraison ». */
+export type DeliveryQuoteStatus = 'A_CONFIRMER' | 'GRATUIT';
+
+/**
+ * La livraison, telle qu'elle est présentée au client — identique au site.
+ *
+ * `frais` est toujours `0` : il documente le montant encaissé en ligne, pas
+ * un tarif. Le tarif de zone (`DeliveryZone.frais`) existe toujours dans la
+ * grille, mais il n'est plus jamais facturé : il est confirmé hors ligne.
+ */
+export interface DeliveryQuote {
+  mode: DeliveryMode;
+  zone: string;
+  libelle: string;
+  delai: string;
+  statut: DeliveryQuoteStatus;
+  /** Le texte affiché : « À confirmer » ou « Gratuit ». */
+  message: string;
+  frais: number;
+}
+
+/**
+ * Descriptor de livraison pour l'écran de commande.
+ *
+ * Aucun montant n'en sort qui puisse être additionné : c'est un libellé et un
+ * délai, exactement ce que le site affiche dans son récapitulatif.
+ */
+export function quoteDelivery(input: {
+  mode: DeliveryMode;
+  zone: string;
+  grid: DeliveryGrid;
+}): DeliveryQuote {
+  const { mode, zone, grid } = input;
+  if (mode === 'retrait') {
+    return {
+      mode,
+      zone,
+      libelle: grid.retrait.libelle,
+      delai: grid.retrait.delai,
+      statut: 'GRATUIT',
+      message: 'Gratuit',
+      frais: 0,
+    };
+  }
+  const found = grid.zones[zone] ?? grid.zones[grid.zoneParDefaut];
+  if (!found) {
+    // Une grille sans zone par défaut est une grille cassée : mieux vaut le
+    // dire que d'afficher un délai qui n'est celui d'aucune zone.
+    throw new Error(
+      `Grille de livraison inexploitable : ni « ${zone} » ni la zone par défaut « ${grid.zoneParDefaut} » n'y figurent.`,
+    );
+  }
+  return {
+    mode,
+    zone,
+    libelle: found.libelle,
+    delai: found.delai,
+    statut: 'A_CONFIRMER',
+    message: 'À confirmer',
+    frais: 0,
+  };
+}
 
 export interface DeliveryFeeInput {
   /** Clé de zone déjà résolue (voir `resolveDeliveryZone`). */
@@ -85,7 +159,18 @@ export function resolveDeliveryZone(
 
   for (const cle of Object.keys(grid.zones)) {
     if (normalise(cle) === cible) return cle;
-    if (normalise(grid.zones[cle]!.libelle) === cible) return cle;
+    const libelle = normalise(grid.zones[cle]!.libelle);
+    if (libelle === cible) return cle;
+    // « Bouaké Centre », « Bouake » vs libellé « Bouaké » : une saisie qui
+    // CONTIENT la zone nommée appartient à cette zone. Sans ce tour, la
+    // deuxième plus grande ville du pays tomberait dans la zone par défaut —
+    // c'est-à-dire dans un délai et un tarif qui ne sont pas les siens.
+    if (
+      libelle.length >= 4 &&
+      (cible.startsWith(libelle) || cible.endsWith(libelle))
+    ) {
+      return cle;
+    }
   }
   return grid.zoneParDefaut;
 }

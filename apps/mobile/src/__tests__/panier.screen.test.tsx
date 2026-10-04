@@ -83,6 +83,15 @@ it('affiche la ligne, son total et le récapitulatif', () => {
   expect(screen.queryAllByText(`13${NB}000${NB}F`)).toHaveLength(0);
 });
 
+it('identifie le panier comme la première étape et mène vers la livraison', () => {
+  useCartStore.getState().addItem(product, variant, 1);
+  render(<PanierScreen />);
+
+  expect(screen.getByLabelText('Étape 1 sur 4 : Panier')).toBeTruthy();
+  fireEvent.press(screen.getByText('CONTINUER VERS LA LIVRAISON'));
+  expect(mockPush).toHaveBeenCalledWith('/commande');
+});
+
 it('incrémente la quantité depuis la ligne', () => {
   useCartStore.getState().addItem(product, variant, 1);
   render(<PanierScreen />);
@@ -101,16 +110,16 @@ it('retire la ligne via la corbeille', () => {
   expect(useCartStore.getState().items).toHaveLength(0);
 });
 
-it('annonce que les frais dépendent de l’adresse, sans les estimer', () => {
-  // Le panier ne connaît pas encore la zone de livraison. Annoncer un montant
-  // ici reviendrait à promettre un total qui changerait au paiement — ce que
-  // le contrat partagé décrit comme « la pire chose qui puisse arriver à la
-  // confiance ».
+it('annonce que les frais dépendent de la zone, sans les ajouter au total', () => {
+  // Le site n'encaisse aucun frais en ligne : sa page de commande écrit
+  // « À confirmer ». Le panier reprend cette formulation et n'ajoute donc rien
+  // au total — promettre un montant qui changerait au paiement serait la pire
+  // chose pour la confiance.
   useCartStore.getState().addItem(product, variant, 2); // 12 000 F
   render(<PanierScreen />);
 
-  expect(screen.getByText(/frais de livraison s’affichent/i)).toBeTruthy();
-  expect(screen.getByText('À calculer')).toBeTruthy();
+  expect(screen.getByText(/frais de livraison sont confirmés/i)).toBeTruthy();
+  expect(screen.getByText('Applicable selon la zone')).toBeTruthy();
 });
 
 it('ne promet aucune gratuité sur un gros panier', () => {

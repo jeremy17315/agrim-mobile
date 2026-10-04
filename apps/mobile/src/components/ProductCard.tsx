@@ -4,6 +4,7 @@ import { Image, Pressable, StyleSheet, View } from 'react-native';
 
 import { Icon, Pill, Text } from '@/components/ui';
 import { formatXof } from '@/lib/format';
+import { resolveProductImageUrl } from '@/lib/productImage';
 import { palette, radius, shadow, spacing } from '@/theme/tokens';
 
 export type ProductCardProps = {
@@ -33,7 +34,8 @@ export function ProductCard({ product, onPress }: ProductCardProps) {
     cheapestVariant.originalPrice !== cheapestVariant.price;
   const outOfStock = available.length === 0;
   const [photoCassée, setPhotoCassée] = useState(false);
-  const photo = product.imageUrl && !photoCassée ? product.imageUrl : null;
+  const imageUrl = resolveProductImageUrl(product.imageUrl);
+  const photo = imageUrl && !photoCassée ? imageUrl : null;
 
   return (
     <Pressable

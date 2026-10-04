@@ -1,137 +1,158 @@
-import {
-  COMPANY,
-  MOBILE_MONEY_PROVIDERS,
-  PAYMENT_METHODS,
-  type MobileMoneyProvider,
-  type PaymentMethod,
-} from '@agrim/contracts';
+import { phoneSchema, type MobileMoneyProvider } from '@agrim/contracts';
 import { randomUUID } from 'expo-crypto';
 import { useRouter } from 'expo-router';
-import { useMemo, useRef, useState } from 'react';
-import { Linking, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useRef, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ApiError, describeError } from '@/api/errors';
-import { useAddresses, useCreateOrder } from '@/api/orders';
-import { initiatePayment } from '@/api/payments';
-import { EmptyState, ErrorState, Skeleton } from '@/components/states';
-import { Banner, Button, Card, Icon, Text } from '@/components/ui';
+import {
+  useCreateGuestOrder,
+  useDeliveryZones,
+  useGuestCartQuote,
+} from '@/api/orders';
+import { CheckoutProgress } from '@/components/CheckoutProgress';
+import { EmptyState } from '@/components/states';
+import { Banner, Button, Card, Icon, Input, Text } from '@/components/ui';
+import { callMobileSupport } from '@/lib/contact';
 import { formatXof } from '@/lib/format';
+import { saveGuestPaymentAccess } from '@/lib/guestPayment';
+import { useIsOnline } from '@/lib/network';
 import { useCartStore, useCartTotals } from '@/store/cart';
-import { palette, radius, shadow, spacing } from '@/theme/tokens';
+import { palette, spacing } from '@/theme/tokens';
 
-/**
- * Validation de commande.
- *
- * Le total affiché ici reste indicatif : c'est le serveur qui recalcule les
- * montants à partir de ses propres prix. En cas d'écart (un tarif a changé
- * depuis l'ajout au panier), c'est le montant serveur qui s'impose et
- * l'écran de confirmation l'affiche.
- */
+/** Le site propose ces deux parcours ; aucun ne demande de compte invité. */
+type GuestPaymentMethod = 'CASH_ON_DELIVERY' | 'MOBILE_MONEY';
 
-const PAYMENT_LABELS: Record<PaymentMethod, { label: string; hint: string }> = {
-  CASH_ON_DELIVERY: {
-    label: 'Paiement à la livraison',
-    hint: 'Réglez en espèces au livreur',
-  },
-  MOBILE_MONEY: {
-    label: 'Mobile Money',
-    hint: 'Wave, Orange Money, MTN, Moov',
-  },
-  CARD: {
-    label: 'Carte bancaire',
-    hint: 'Bientôt disponible',
-  },
-};
-
-const AVAILABLE_METHODS: PaymentMethod[] = [
-  'CASH_ON_DELIVERY',
-  'MOBILE_MONEY',
+const PROVIDERS: { value: MobileMoneyProvider; label: string }[] = [
+  { value: 'ORANGE_MONEY', label: 'Orange Money' },
+  { value: 'MTN_MOMO', label: 'MTN MoMo' },
+  { value: 'MOOV_MONEY', label: 'Moov Money' },
+  { value: 'WAVE', label: 'Wave' },
 ];
 
-const OPERATEUR_LIBELLES: Record<MobileMoneyProvider, string> = {
-  WAVE: 'Wave',
-  ORANGE_MONEY: 'Orange Money',
-  MTN_MOMO: 'MTN MoMo',
-  MOOV_MONEY: 'Moov Money',
-};
-
+/**
+ * Checkout invité aligné sur le site : coordonnées, choix de règlement,
+ * paiement sécurisé éventuel. Les prix, stocks et frais restent calculés côté
+ * serveur — l'invité ne crée toujours ni compte ni mot de passe.
+ */
 export default function CommandeScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-
-  const items = useCartStore((s) => s.items);
-  const clearCart = useCartStore((s) => s.clear);
+  const isOnline = useIsOnline();
+  const items = useCartStore((state) => state.items);
+  const clearCart = useCartStore((state) => state.clear);
   const totals = useCartTotals();
+  const createOrder = useCreateGuestOrder();
+  const quote = useGuestCartQuote();
+  const zones = useDeliveryZones();
 
-  const addresses = useAddresses();
-  const createOrder = useCreateOrder();
-
-  const [addressId, setAddressId] = useState<string | null>(null);
+  const [customerName, setCustomerName] = useState('');
+  const [phone, setPhone] = useState('');
+  // Le client CHOISIT sa zone, il ne la tape plus : une zone tapée à la main
+  // se trompait de délai, et le site, lui, propose une liste fermée.
+  const [zone, setZone] = useState('');
+  const [landmark, setLandmark] = useState('');
+  const [codePromo, setCodePromo] = useState('');
   const [paymentMethod, setPaymentMethod] =
-    useState<PaymentMethod>('CASH_ON_DELIVERY');
-  const [operateur, setOperateur] = useState<MobileMoneyProvider>('WAVE');
-  const [submitError, setSubmitError] = useState<string | null>(null);
-
-  /**
-   * Clé d'idempotence stable pour CETTE tentative de commande. Si le réseau
-   * coupe et que l'utilisateur retente, le serveur reconnaît la clé et renvoie
-   * la commande déjà créée au lieu d'en créer une seconde.
-   */
+    useState<GuestPaymentMethod>('CASH_ON_DELIVERY');
+  const [mobileMoneyProvider, setMobileMoneyProvider] =
+    useState<MobileMoneyProvider>('ORANGE_MONEY');
+  const [error, setError] = useState<string | null>(null);
   const idempotencyKey = useRef(randomUUID());
 
-  const selectedAddress = useMemo(() => {
-    const list = addresses.data ?? [];
-    if (addressId) return list.find((a) => a.id === addressId) ?? null;
-    return list.find((a) => a.isDefault) ?? list[0] ?? null;
-  }, [addresses.data, addressId]);
+  /** Zone choisie + précisions éventuelles : le serveur résout la zone depuis
+   * ce texte, exactement comme le site le fait depuis la ville choisie. */
+  function deliveryLocation(selectedZone = zone): string {
+    const details = landmark.trim();
+    if (!selectedZone) return details;
+    return details ? `${selectedZone} — ${details}` : selectedZone;
+  }
+
+  /** Même devis serveur que le site : prix, remises et total exacts, sans
+   * créer d'ordre ni réserver de stock. Les frais de livraison, eux, ne sont
+   * jamais chiffrés — le site dit « À confirmer », on dit pareil. */
+  const refreshQuote = async (location = deliveryLocation()) => {
+    const city = location.trim();
+    if (!isOnline || city.length < 2 || items.length === 0) return;
+    try {
+      await quote.mutateAsync({
+        city,
+        items: items.map((item) => ({
+          variantId: item.variantId,
+          quantity: item.quantity,
+        })),
+        codePromo: codePromo.trim() ? codePromo.trim() : undefined,
+        phone: phone.trim() ? phone.trim() : undefined,
+      });
+    } catch {
+      // Le bouton de commande reste le contrôle définitif : une erreur de
+      // devis ne doit pas effacer la saisie ni masquer le paiement à la livraison.
+    }
+  };
 
   const submit = async () => {
-    if (!selectedAddress || items.length === 0) return;
-    setSubmitError(null);
+    const name = customerName.trim();
+    const location = deliveryLocation().trim();
+    const parsedPhone = phoneSchema.safeParse(phone);
 
+    if (name.length < 2) {
+      setError('Indiquez votre nom.');
+      return;
+    }
+    if (!parsedPhone.success) {
+      setError('Indiquez un numéro ivoirien valide.');
+      return;
+    }
+    if (zone.length === 0) {
+      setError('Choisissez votre zone de livraison.');
+      return;
+    }
+    if (items.length === 0 || !isOnline) return;
+
+    setError(null);
     try {
       const order = await createOrder.mutateAsync({
-        addressId: selectedAddress.id,
-        items: items.map((i) => ({
-          variantId: i.variantId,
-          quantity: i.quantity,
+        customerName: name,
+        phone: parsedPhone.data,
+        deliveryLocation: location,
+        items: items.map((item) => ({
+          variantId: item.variantId,
+          quantity: item.quantity,
         })),
         paymentMethod,
         mobileMoneyProvider:
-          paymentMethod === 'MOBILE_MONEY' ? operateur : undefined,
+          paymentMethod === 'MOBILE_MONEY' ? mobileMoneyProvider : undefined,
+        codePromo: codePromo.trim() ? codePromo.trim() : undefined,
         idempotencyKey: idempotencyKey.current,
       });
 
-      // Le panier n'est vidé qu'APRÈS confirmation serveur : en cas d'échec,
-      // l'utilisateur retrouve ses articles.
-      clearCart();
-
+      // Le panier est vidé uniquement quand la commande existe. Pour le
+      // Mobile Money, la capacité temporaire est stockée AVANT de quitter vers
+      // l'opérateur afin que le retour dans l'app puisse vérifier le statut.
       if (paymentMethod === 'MOBILE_MONEY') {
-        try {
-          const paiement = await initiatePayment(order.reference);
-          if (paiement.checkoutUrl) {
-            await Linking.openURL(paiement.checkoutUrl);
-          }
-        } catch {
-          // La commande existe : on envoie au suivi, le client pourra relancer.
+        if (!order.paymentAccessToken) {
+          throw new Error(
+            'La session de paiement est indisponible. Réessayez.',
+          );
         }
+        await saveGuestPaymentAccess(order.reference, order.paymentAccessToken);
       }
-
-      // Un seul écran de récapitulatif dans l'application : le suivi. Le
-      // paramètre `nouvelle` déclenche le message de confirmation.
-      router.replace(`/commandes/${order.reference}?nouvelle=1`);
-    } catch (error) {
-      setSubmitError(describeError(error));
-
-      // On ne renouvelle la clé QUE si le serveur a explicitement rejeté la
-      // demande (stock, adresse, validation) : le panier va changer, c'est une
-      // nouvelle commande. En cas d'échec réseau ou serveur, la commande a
-      // peut-être été enregistrée sans que la réponse nous parvienne : garder
-      // la même clé permet de retenter sans risquer un doublon.
-      const rejectedByServer =
-        error instanceof ApiError && error.status >= 400 && error.status < 500;
-      if (rejectedByServer) {
+      clearCart();
+      router.replace(
+        paymentMethod === 'MOBILE_MONEY'
+          ? `/paiement/${order.reference}`
+          : `/confirmation/${order.reference}?payment=CASH_ON_DELIVERY`,
+      );
+    } catch (cause) {
+      setError(describeError(cause));
+      // Un refus métier signifie que le client va corriger son panier. Pour
+      // une coupure réseau, la même clé est conservée contre un doublon.
+      if (
+        cause instanceof ApiError &&
+        cause.status >= 400 &&
+        cause.status < 500
+      ) {
         idempotencyKey.current = randomUUID();
       }
     }
@@ -139,15 +160,15 @@ export default function CommandeScreen() {
 
   if (items.length === 0) {
     return (
-      <View style={[styles.screen, { paddingTop: insets.top + spacing.md }]}>
-        <Header onBack={() => router.back()} title="Commander" />
+      <View style={[styles.screen, { paddingTop: insets.top + spacing.lg }]}>
+        <Header onBack={() => router.back()} />
         <EmptyState
           icon="shopping-cart"
           title="Votre panier est vide"
-          message="Ajoutez des articles avant de commander."
+          message="Ajoutez un produit avant de commander."
           action={
             <Button
-              label="Voir le catalogue"
+              label="Voir les produits"
               variant="outline"
               size="sm"
               fullWidth={false}
@@ -162,153 +183,174 @@ export default function CommandeScreen() {
   return (
     <View style={styles.screen}>
       <View style={{ paddingTop: insets.top + spacing.md }}>
-        <Header onBack={() => router.back()} title="Commander" />
+        <Header onBack={() => router.back()} />
       </View>
-
+      <View style={styles.progress}>
+        <CheckoutProgress step={2} />
+      </View>
       <ScrollView contentContainerStyle={styles.content}>
-        {submitError ? (
+        <View style={styles.intro}>
+          <Text variant="micro" color="green" style={styles.stepLabel}>
+            ÉTAPE 2 SUR 4
+          </Text>
+          <Text variant="h1">Livraison</Text>
+          <Text variant="body" color="muted">
+            Indiquez où notre équipe doit vous livrer. Aucun compte nécessaire.
+          </Text>
+        </View>
+
+        {!isOnline ? (
+          <View style={styles.offlineSupport}>
+            <Banner
+              tone="warning"
+              message="Pas de connexion Internet. Vous pouvez appeler AGRIM pour commander."
+              icon={<Icon name="wifi-off" size={15} color="#8A5310" />}
+            />
+            <Button
+              label="APPELER AGRIM · 07 00 05 04 52"
+              variant="outline"
+              size="sm"
+              fullWidth={false}
+              onPress={() => void callMobileSupport()}
+              icon={<Icon name="phone" size={15} color="green" />}
+            />
+          </View>
+        ) : null}
+        {error ? (
           <Banner
             tone="danger"
-            message={submitError}
-            icon={<Icon name="triangle-alert" size={14} color="danger" />}
+            message={error}
+            icon={<Icon name="triangle-alert" size={15} color="danger" />}
           />
         ) : null}
 
-        {/* Adresse ------------------------------------------------------- */}
-        <View style={styles.section}>
-          <Text variant="micro" color="muted">
-            ADRESSE DE LIVRAISON
-          </Text>
-
-          {addresses.isPending ? (
-            <Skeleton height={78} />
-          ) : addresses.isError ? (
-            <ErrorState
-              error={addresses.error}
-              onRetry={() => void addresses.refetch()}
-            />
-          ) : (addresses.data?.length ?? 0) === 0 ? (
-            <Card style={styles.emptyAddress}>
+        <Card style={styles.form}>
+          <View style={styles.formHeading}>
+            <View style={styles.formIcon}>
+              <Icon name="map-pin" size={17} color="green" />
+            </View>
+            <View style={styles.flex}>
+              <Text variant="h3">Vos coordonnées de livraison</Text>
               <Text variant="caption" color="muted">
-                Aucune adresse enregistrée. Ajoutez-en une pour être livré.
+                Le livreur vous contactera si nécessaire.
               </Text>
-              <Button
-                label="Ajouter une adresse"
-                variant="outline"
-                size="sm"
-                icon={<Icon name="plus" size={14} color="green" />}
-                onPress={() => router.push('/commande/adresse')}
-              />
-            </Card>
-          ) : (
-            <>
-              {addresses.data.map((address) => {
-                const active = selectedAddress?.id === address.id;
+            </View>
+          </View>
+          <Input
+            label="Nom"
+            value={customerName}
+            onChangeText={setCustomerName}
+            placeholder="Votre nom"
+            autoCapitalize="words"
+            editable={!createOrder.isPending}
+          />
+          <Input
+            label="Numéro de téléphone"
+            value={phone}
+            onChangeText={setPhone}
+            placeholder="07 00 00 00 00"
+            keyboardType="phone-pad"
+            textContentType="telephoneNumber"
+            editable={!createOrder.isPending}
+          />
+          <View style={styles.zoneBlock}>
+            <Text variant="caption" color="muted">
+              Zone de livraison
+            </Text>
+            <View style={styles.zoneList}>
+              {(zones.data?.zones ?? []).map((option) => {
+                const active = zone === option.label;
                 return (
                   <Pressable
-                    key={address.id}
-                    onPress={() => setAddressId(address.id)}
+                    key={option.value}
+                    onPress={() => {
+                      setZone(option.label);
+                      // `setZone` est asynchrone : passer la valeur choisie
+                      // évite un devis sur la zone précédente au premier clic.
+                      void refreshQuote(deliveryLocation(option.label));
+                    }}
                     accessibilityRole="radio"
                     accessibilityState={{ selected: active }}
-                    accessibilityLabel={`Livrer à ${address.label}, ${address.city}`}
-                    style={[styles.address, active && styles.addressActive]}
+                    accessibilityLabel={`Livrer à ${option.label}`}
+                    disabled={createOrder.isPending}
+                    style={[styles.zone, active && styles.zoneActive]}
                   >
-                    <View style={styles.addressHead}>
-                      <Icon
-                        name={active ? 'circle-check' : 'circle'}
-                        size={17}
-                        color={active ? 'green' : 'muted'}
-                      />
-                      <Text variant="bodyStrong" style={styles.flex}>
-                        {address.label}
-                      </Text>
-                      {address.isDefault ? (
-                        <Text variant="micro" color="green">
-                          PAR DÉFAUT
-                        </Text>
-                      ) : null}
-                    </View>
-                    <Text variant="caption" color="body">
-                      {[address.commune, address.city]
-                        .filter(Boolean)
-                        .join(', ')}
+                    <Icon
+                      name="map-pin"
+                      size={15}
+                      color={active ? 'white' : 'green'}
+                    />
+                    <Text
+                      variant="caption"
+                      style={{ color: active ? palette.white : palette.body }}
+                    >
+                      {option.label}
+                      {option.delai ? ` · ${option.delai}` : ''}
                     </Text>
-                    {address.landmark ? (
-                      <Text variant="caption" color="muted">
-                        Repère : {address.landmark}
-                      </Text>
-                    ) : null}
                   </Pressable>
                 );
               })}
+            </View>
+          </View>
+          <Input
+            label="Précisions pour le livreur (facultatif)"
+            value={landmark}
+            onChangeText={setLandmark}
+            placeholder="Ex. Cocody Angré, près de la pharmacie"
+            autoCapitalize="sentences"
+            editable={!createOrder.isPending}
+            onBlur={() => void refreshQuote()}
+            multiline
+            style={styles.location}
+          />
+          <Input
+            label="Code promo (facultatif)"
+            value={codePromo}
+            onChangeText={setCodePromo}
+            placeholder="Ex. BIENVENUE10"
+            autoCapitalize="characters"
+            editable={!createOrder.isPending}
+            onBlur={() => void refreshQuote()}
+            hint="Vérifié par AGRIM au moment du devis."
+          />
+        </Card>
 
-              <Pressable
-                onPress={() => router.push('/commande/adresse')}
-                accessibilityRole="button"
-                style={styles.addAddress}
-              >
-                <Icon name="plus" size={15} color="green" />
-                <Text variant="caption" color="green">
-                  Ajouter une autre adresse
-                </Text>
-              </Pressable>
-            </>
-          )}
-        </View>
-
-        {/* Paiement ------------------------------------------------------ */}
-        <View style={styles.section}>
+        <View style={styles.paymentSection}>
           <Text variant="micro" color="muted">
-            MOYEN DE PAIEMENT
+            MODE DE PAIEMENT
           </Text>
-          {PAYMENT_METHODS.map((method) => {
-            const enabled = AVAILABLE_METHODS.includes(method);
-            const active = paymentMethod === method;
-            return (
-              <Pressable
-                key={method}
-                disabled={!enabled}
-                onPress={() => setPaymentMethod(method)}
-                accessibilityRole="radio"
-                accessibilityState={{ selected: active, disabled: !enabled }}
-                accessibilityLabel={PAYMENT_LABELS[method].label}
-                style={[
-                  styles.address,
-                  active && styles.addressActive,
-                  !enabled && styles.disabled,
-                ]}
-              >
-                <View style={styles.addressHead}>
-                  <Icon
-                    name={active ? 'circle-check' : 'circle'}
-                    size={17}
-                    color={active ? 'green' : 'muted'}
-                  />
-                  <Text variant="bodyStrong" style={styles.flex}>
-                    {PAYMENT_LABELS[method].label}
-                  </Text>
-                </View>
-                <Text variant="caption" color="muted">
-                  {PAYMENT_LABELS[method].hint}
-                </Text>
-              </Pressable>
-            );
-          })}
+          <PaymentChoice
+            active={paymentMethod === 'CASH_ON_DELIVERY'}
+            icon="banknote"
+            title="Paiement à la livraison"
+            detail="Réglez votre commande à la réception."
+            onPress={() => setPaymentMethod('CASH_ON_DELIVERY')}
+          />
+          <PaymentChoice
+            active={paymentMethod === 'MOBILE_MONEY'}
+            icon="smartphone"
+            title="Payer maintenant par Mobile Money"
+            detail="Validation sécurisée chez l’opérateur."
+            onPress={() => setPaymentMethod('MOBILE_MONEY')}
+          />
           {paymentMethod === 'MOBILE_MONEY' ? (
-            <View style={styles.operateurs}>
-              {MOBILE_MONEY_PROVIDERS.map((code) => {
-                const actif = operateur === code;
+            <View style={styles.providerList}>
+              {PROVIDERS.map((provider) => {
+                const active = mobileMoneyProvider === provider.value;
                 return (
                   <Pressable
-                    key={code}
-                    onPress={() => setOperateur(code)}
+                    key={provider.value}
+                    onPress={() => setMobileMoneyProvider(provider.value)}
                     accessibilityRole="radio"
-                    accessibilityState={{ selected: actif }}
-                    accessibilityLabel={OPERATEUR_LIBELLES[code]}
-                    style={[styles.operateur, actif && styles.addressActive]}
+                    accessibilityState={{ selected: active }}
+                    accessibilityLabel={`Payer avec ${provider.label}`}
+                    style={[styles.provider, active && styles.providerActive]}
                   >
-                    <Text variant="caption" color={actif ? 'green' : 'body'}>
-                      {OPERATEUR_LIBELLES[code]}
+                    <Text
+                      variant="caption"
+                      style={{ color: active ? palette.green : palette.body }}
+                    >
+                      {provider.label}
                     </Text>
                   </Pressable>
                 );
@@ -317,59 +359,65 @@ export default function CommandeScreen() {
           ) : null}
         </View>
 
-        {/* Récapitulatif ------------------------------------------------- */}
-        <View style={styles.section}>
-          <Text variant="micro" color="muted">
-            RÉCAPITULATIF
-          </Text>
-          <Card style={styles.summary}>
-            {items.map((item) => (
-              <View key={item.variantId} style={styles.summaryLine}>
-                <Text variant="caption" color="body" style={styles.flex}>
-                  {item.quantity} × {item.productName} ({item.variantLabel})
-                </Text>
-                <Text variant="caption">
-                  {formatXof(item.unitPrice * item.quantity)}
-                </Text>
-              </View>
-            ))}
-
-            <View style={styles.separator} />
-
-            <View style={styles.summaryLine}>
-              <Text variant="caption" color="muted">
-                Sous-total
-              </Text>
-              <Text variant="bodyStrong">{formatXof(totals.subtotal)}</Text>
-            </View>
-            <View style={styles.summaryLine}>
-              <Text variant="caption" color="muted">
-                Livraison
-              </Text>
-              <Text
-                variant="bodyStrong"
-                color={totals.deliveryFee === 0 ? 'green' : 'ink'}
-              >
-                {totals.deliveryFee === 0
-                  ? 'Offerte'
-                  : formatXof(totals.deliveryFee)}
-              </Text>
-            </View>
-
-            <View style={styles.separator} />
-
-            <View style={styles.summaryLine}>
-              <Text variant="h3">Total</Text>
-              <Text variant="h1" color="green">
-                {formatXof(totals.total)}
-              </Text>
-            </View>
-
-            <Text variant="micro" color="muted">
-              Montant définitif confirmé par {COMPANY.name} à la validation.
+        <Card style={styles.summary}>
+          <View style={styles.summaryLine}>
+            <Text variant="bodyStrong">
+              {items.length} article{items.length > 1 ? 's' : ''}
             </Text>
-          </Card>
-        </View>
+            <Text variant="h2" color="green">
+              {formatXof(quote.data?.subtotal ?? totals.subtotal)}
+            </Text>
+          </View>
+          {quote.data ? (
+            <>
+              {/* Le site affiche « À confirmer » et n'ajoute AUCUN montant :
+                  on reprend son libellé mot pour mot. */}
+              <SummaryLine
+                label="Livraison"
+                value={quote.data.delivery.message}
+              />
+              <Text variant="caption" color="muted">
+                {quote.data.delivery.libelle} · délai estimé :{' '}
+                {quote.data.delivery.delai}
+              </Text>
+              {quote.data.remise > 0 ? (
+                <SummaryLine
+                  label={
+                    quote.data.promoCode
+                      ? `Remise ${quote.data.promoCode}`
+                      : 'Remises appliquées'
+                  }
+                  value={`− ${formatXof(quote.data.remise)}`}
+                />
+              ) : null}
+              <View style={styles.summaryDivider} />
+              <SummaryLine
+                label="Total à payer"
+                value={formatXof(quote.data.total)}
+                strong
+              />
+              {quote.data.promoMessage ? (
+                <Banner
+                  tone="warning"
+                  message={quote.data.promoMessage}
+                  icon={
+                    <Icon name="triangle-alert" size={15} color="#8A5310" />
+                  }
+                />
+              ) : null}
+              <Text variant="caption" color="muted">
+                Devis serveur pour {quote.data.zone}. Le total est revérifié à
+                la création de la commande ; les frais de livraison sont
+                confirmés par téléphone.
+              </Text>
+            </>
+          ) : (
+            <Text variant="caption" color="muted">
+              Choisissez votre zone pour obtenir le total exact. Les frais de
+              livraison sont confirmés par téléphone.
+            </Text>
+          )}
+        </Card>
       </ScrollView>
 
       <View
@@ -377,34 +425,105 @@ export default function CommandeScreen() {
       >
         <Button
           label={
-            createOrder.isPending ? 'Validation…' : 'Confirmer ma commande'
+            !isOnline
+              ? 'Connexion nécessaire'
+              : createOrder.isPending
+                ? 'Commande en cours…'
+                : paymentMethod === 'MOBILE_MONEY'
+                  ? 'CONTINUER VERS LE PAIEMENT'
+                  : 'CONFIRMER LA COMMANDE'
           }
-          disabled={createOrder.isPending || !selectedAddress}
-          icon={<Icon name="check" size={16} color="white" />}
+          disabled={!isOnline || createOrder.isPending}
           onPress={() => void submit()}
+          icon={
+            isOnline ? (
+              <Icon name="circle-check" size={18} color="white" />
+            ) : undefined
+          }
         />
-        {!selectedAddress && !addresses.isPending ? (
-          <Text variant="micro" color="muted" center>
-            Choisissez une adresse de livraison pour continuer.
-          </Text>
-        ) : null}
       </View>
     </View>
   );
 }
 
-function Header({ onBack, title }: { onBack: () => void; title: string }) {
+function SummaryLine({
+  label,
+  value,
+  strong = false,
+}: {
+  label: string;
+  value: string;
+  strong?: boolean;
+}) {
+  return (
+    <View style={styles.summaryLine}>
+      <Text
+        variant={strong ? 'h3' : 'caption'}
+        color={strong ? 'ink' : 'muted'}
+      >
+        {label}
+      </Text>
+      <Text
+        variant={strong ? 'h2' : 'bodyStrong'}
+        color={strong ? 'green' : 'ink'}
+      >
+        {value}
+      </Text>
+    </View>
+  );
+}
+
+function PaymentChoice({
+  active,
+  icon,
+  title,
+  detail,
+  onPress,
+}: {
+  active: boolean;
+  icon: 'banknote' | 'smartphone';
+  title: string;
+  detail: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="radio"
+      accessibilityLabel={title}
+      accessibilityState={{ selected: active }}
+      style={[styles.paymentChoice, active && styles.paymentChoiceActive]}
+    >
+      <View style={[styles.paymentIcon, active && styles.paymentIconActive]}>
+        <Icon name={icon} size={18} color={active ? 'white' : 'green'} />
+      </View>
+      <View style={styles.flex}>
+        <Text variant="h3" color={active ? 'green' : 'ink'}>
+          {title}
+        </Text>
+        <Text variant="caption" color="muted">
+          {detail}
+        </Text>
+      </View>
+      <View style={[styles.radio, active && styles.radioActive]}>
+        {active ? <View style={styles.radioDot} /> : null}
+      </View>
+    </Pressable>
+  );
+}
+
+function Header({ onBack }: { onBack: () => void }) {
   return (
     <View style={styles.header}>
       <Pressable
         onPress={onBack}
         accessibilityRole="button"
-        accessibilityLabel="Retour"
+        accessibilityLabel="Retour au panier"
         hitSlop={12}
       >
-        <Icon name="arrow-left" size={19} color="ink" />
+        <Icon name="arrow-left" size={20} color="ink" />
       </Pressable>
-      <Text variant="h3">{title}</Text>
+      <Text variant="h3">Commande</Text>
     </View>
   );
 }
@@ -418,63 +537,107 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingBottom: spacing.md,
   },
+  progress: { paddingHorizontal: spacing.lg, paddingBottom: spacing.sm },
   content: {
     padding: spacing.lg,
-    gap: spacing.xl,
+    gap: spacing.lg,
     paddingBottom: spacing.xxxl,
   },
-  section: { gap: spacing.sm },
+  intro: { gap: spacing.xs },
+  stepLabel: { letterSpacing: 1.4 },
+  offlineSupport: { gap: spacing.sm, alignItems: 'flex-start' },
   flex: { flex: 1 },
-
-  address: {
-    gap: 3,
-    padding: spacing.md,
-    borderRadius: radius.md,
-    borderWidth: 1.5,
-    borderColor: palette.line,
-    backgroundColor: palette.card,
-  },
-  addressActive: { borderColor: palette.green, backgroundColor: '#FCFEFB' },
-  addressHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  disabled: { opacity: 0.5 },
-  emptyAddress: { gap: spacing.md, alignItems: 'flex-start' },
-  addAddress: {
-    flexDirection: 'row',
+  form: { gap: spacing.md, padding: spacing.lg },
+  formHeading: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  formIcon: {
+    width: 38,
+    height: 38,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: spacing.sm,
-    paddingVertical: spacing.md,
+    borderRadius: 19,
+    backgroundColor: palette.greenSoft,
   },
-  operateurs: {
+  location: { minHeight: 82, paddingTop: spacing.md },
+  zoneBlock: { gap: spacing.sm },
+  zoneList: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  zone: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-  },
-  operateur: {
-    paddingVertical: spacing.sm,
+    alignItems: 'center',
+    gap: spacing.xs,
     paddingHorizontal: spacing.md,
-    borderRadius: radius.md,
+    paddingVertical: spacing.sm,
+    borderRadius: 14,
+    backgroundColor: palette.card,
+    borderWidth: 1,
+    borderColor: palette.line,
+  },
+  zoneActive: { borderColor: palette.green, backgroundColor: palette.green },
+  paymentSection: { gap: spacing.sm },
+  paymentChoice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    padding: spacing.md,
+    borderRadius: 14,
+    backgroundColor: palette.card,
     borderWidth: 1.5,
     borderColor: palette.line,
-    backgroundColor: palette.card,
   },
-
+  paymentChoiceActive: {
+    borderColor: palette.green,
+    backgroundColor: palette.greenSoft,
+  },
+  paymentIcon: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 18,
+    backgroundColor: palette.greenSoft,
+  },
+  paymentIconActive: { backgroundColor: palette.green },
+  radio: {
+    width: 20,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: palette.line,
+  },
+  radioActive: { borderColor: palette.green },
+  radioDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: palette.green,
+  },
+  providerList: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  provider: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: 14,
+    backgroundColor: palette.card,
+    borderWidth: 1,
+    borderColor: palette.line,
+  },
+  providerActive: {
+    borderColor: palette.green,
+    backgroundColor: palette.greenSoft,
+  },
   summary: { gap: spacing.sm },
+  summaryDivider: { height: 1, backgroundColor: palette.line },
   summaryLine: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: spacing.md,
   },
-  separator: { height: 1, backgroundColor: palette.line },
-
   footer: {
-    gap: spacing.sm,
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
     backgroundColor: palette.card,
     borderTopWidth: 1,
     borderTopColor: palette.line,
-    ...shadow.floating,
   },
 });

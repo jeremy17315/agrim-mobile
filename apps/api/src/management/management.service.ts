@@ -53,6 +53,8 @@ const managedOrderSelect = {
   status: true,
   total: true,
   createdAt: true,
+  guestName: true,
+  guestPhone: true,
   user: { select: { firstName: true, lastName: true, phone: true } },
   address: { select: { city: true } },
   items: { select: { quantity: true } },
@@ -66,6 +68,8 @@ const managedOrderSelect = {
 } as const;
 
 type ManagedOrderRow = {
+  guestName: string | null;
+  guestPhone: string | null;
   user: { firstName: string; lastName: string; phone: string };
   address: { city: string | null } | null;
   items: { quantity: number }[];
@@ -78,12 +82,13 @@ type ManagedOrderRow = {
 
 /** Aplatit les relations pour coller au contrat partagé. */
 function toManagedOrder(row: ManagedOrderRow) {
-  const { user, address, items, delivery, ...rest } = row;
+  const { user, address, items, delivery, guestName, guestPhone, ...rest } =
+    row;
   const deliveryFailed = delivery?.status === 'FAILED';
   return {
     ...rest,
-    customerName: `${user.firstName} ${user.lastName}`,
-    customerPhone: user.phone,
+    customerName: guestName ?? `${user.firstName} ${user.lastName}`,
+    customerPhone: guestPhone ?? user.phone,
     city: address?.city ?? null,
     itemCount: items.reduce((sum, item) => sum + item.quantity, 0),
     // Une course échouée conserve son `courierId` — c'est la trace de qui a
@@ -159,7 +164,9 @@ export class ManagementService {
       this.prisma.db.order.count({
         where: { status: 'PENDING', createdAt: { lt: staleBefore } },
       }),
-      this.prisma.db.user.count({ where: { role: 'CLIENT', isActive: true } }),
+      this.prisma.db.user.count({
+        where: { role: 'CLIENT', isActive: true, isGuest: false },
+      }),
       this.prisma.db.product.count({ where: { isActive: true } }),
       // Les livreurs actifs et leur charge : « disponible » se déduit de
       // l'absence de course en cours, il ne se déclare pas.
@@ -297,13 +304,14 @@ export class ManagementService {
       });
     }
 
-    const { user, address, items, delivery, ...rest } = order;
+    const { user, address, items, delivery, guestName, guestPhone, ...rest } =
+      order;
     return {
       ...rest,
       items,
       address,
-      customerName: `${user.firstName} ${user.lastName}`,
-      customerPhone: user.phone,
+      customerName: guestName ?? `${user.firstName} ${user.lastName}`,
+      customerPhone: guestPhone ?? user.phone,
       city: address?.city ?? null,
       itemCount: items.reduce((sum, item) => sum + item.quantity, 0),
       hasCourier: Boolean(delivery?.courierId),

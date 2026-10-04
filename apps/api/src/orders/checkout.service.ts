@@ -6,14 +6,11 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import {
-  computeCartTotals,
-  computeDeliveryFee,
-  resolveDeliveryZone,
-} from '@agrim/contracts';
+import { computeCartTotals, resolveDeliveryZone } from '@agrim/contracts';
 import { Prisma } from '../../generated/prisma/client';
 import { estP2002 } from '../common/prisma/prisma-erreur';
 import { promosActives } from '../common/pricing/effective-price';
+import { SitePricingService } from '../site-pricing/site-pricing.service';
 import { readDeliveryGrid } from './delivery-grid';
 
 import {
@@ -23,7 +20,9 @@ import {
 } from '../common/stock/reserve-stock';
 import { kickOutboxDrain } from '../jobs/outbox-drain';
 import { PrismaService } from '../prisma/prisma.service';
+import { SieveSession } from '../sieve/model';
 import type { CreateOrderDto } from './dto/create-order.dto';
+import type { GuestOrderCustomer } from './orders.service';
 import { formatOrderReference } from './order-reference';
 
 /** Projection publique d'une commande (identique au service actuel). */
@@ -35,6 +34,8 @@ const orderSelect = {
   deliveryFee: true,
   total: true,
   note: true,
+  guestName: true,
+  guestPhone: true,
   createdAt: true,
   items: {
     select: {
@@ -78,10 +79,93 @@ const IDEMPOTENCY_TTL_DAYS = 7;
  */
 @Injectable()
 export class CheckoutService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly pricing: SitePricingService,
+    private readonly sieveSession: SieveSession,
+  ) {}
 
-  async create(userId: string, dto: CreateOrderDto) {
-    const requestHash = this.fingerprint(userId, dto);
+  /**
+   * Préparation HORS transaction : adresse, zone, remises.
+   *
+   * Tout ce qui peut appeler le réseau — le calculateur du site — se passe
+   * ici, avant d'ouvrir la transaction : un appel tenu sous verrou retiendrait
+   * les verrous PostgreSQL pendant toute la latence du site.
+   */
+  private async prepare(
+    userId: string,
+    dto: CreateOrderDto,
+    guest?: GuestOrderCustomer,
+  ): Promise<{ remise: number }> {
+    const address = await this.prisma.db.address.findFirst({
+      where: { id: dto.addressId, userId },
+      select: { id: true, city: true },
+    });
+    if (!address) {
+      throw new NotFoundException({
+        code: 'ADDRESS_NOT_FOUND',
+        message: 'Cette adresse de livraison est introuvable.',
+      });
+    }
+
+    // Grille du site : elle nomme la zone et son délai. Aucun montant n'en
+    // est tiré — le site n'encaisse aucun frais en ligne.
+    const grid = await readDeliveryGrid(this.prisma.db);
+    const zone = resolveDeliveryZone(address.city, grid);
+
+    // ── Scratch d'instructions de livraison (Sieve) ──────────────────────
+    //
+    // Un scrape Sieve prépare d'éventuelles instructions de livraison
+    // (code postal, points de repère, accès particulier) avant que le
+    // client ne les confirme. Le run est préservé et pollé par le
+    // driver de commande ; au moment où la commande est validée,
+    // `GET /sieve/scrapes/:session_id` donne la derniere état.
+    //
+    // Pilotage désactivé ⇒ pas d'appel : le driver renvoie une session
+    // `error` et la commande continue avec la grille de zone du site,
+    // sans aucune divergence avec la règle « le SITE fait foi ».
+    if (this.sieveSession.hasKey()) {
+      try {
+        await this.sieveSession.create({
+          instruction:
+            `Récupérer les instructions de livraison pour la livraison à ${address.city}`,
+          status: 'queued',
+        });
+      } catch {
+        // La persistance de la session est un repli logique ; son échec
+        // n'empêche pas la commande de passer — la grille de zone reste.
+      }
+    }
+
+    const variants = await this.prisma.db.productVariant.findMany({
+      where: { id: { in: dto.items.map((i) => i.variantId) } },
+      select: { id: true, sourceRef: true },
+    });
+    const refs = new Map(variants.map((v) => [v.id, v.sourceRef]));
+
+    const remise = await this.pricing.remise({
+      items: dto.items.map((item) => ({
+        sourceRef: refs.get(item.variantId) ?? null,
+        quantity: item.quantity,
+      })),
+      zone,
+      mode: 'domicile',
+      codePromo: dto.codePromo,
+      phone: guest?.phone,
+    });
+
+    return { remise: remise.status === 'ok' ? remise.remise : 0 };
+  }
+
+  async create(
+    userId: string,
+    dto: CreateOrderDto,
+    guest?: GuestOrderCustomer,
+  ) {
+    const requestHash = this.fingerprint(userId, dto, guest);
+
+    // Réseau AVANT verrous : voir `prepare`.
+    const preflight = await this.prepare(userId, dto, guest);
 
     // `isReplay` distingue une création fraîche d'un rejeu : on ne notifie
     // qu'une fois, à la création — le rejeu renvoie la commande d'origine
@@ -101,7 +185,7 @@ export class CheckoutService {
           });
         }
         isReplay = true;
-        return this.replay(tx, dto.idempotencyKey, userId);
+        return this.replay(tx, dto.idempotencyKey, userId, guest);
       }
 
       if (dto.paymentMethod === 'MOBILE_MONEY' && !dto.mobileMoneyProvider) {
@@ -115,7 +199,10 @@ export class CheckoutService {
       // ferait ligne par ligne et laisserait passer un dépassement.
       const merged = new Map<string, number>();
       for (const item of dto.items) {
-        merged.set(item.variantId, (merged.get(item.variantId) ?? 0) + item.quantity);
+        merged.set(
+          item.variantId,
+          (merged.get(item.variantId) ?? 0) + item.quantity,
+        );
       }
 
       // ── Livraison : l'adresse appartient au client, la grille à la maison ──
@@ -143,7 +230,13 @@ export class CheckoutService {
       // relecture entre-temps qui pourrait voir un autre monde que le verrou.
       const promotions = await tx.promotion.findMany({
         where: { variantId: { in: [...merged.keys()] }, isActive: true },
-        select: { isActive: true, variantId: true, priceXof: true, startsAt: true, endsAt: true },
+        select: {
+          isActive: true,
+          variantId: true,
+          priceXof: true,
+          startsAt: true,
+          endsAt: true,
+        },
       });
       // Règle de prix UNIQUE (common/pricing) : checkout, catalogue et
       // lectures publiques tranchent la promotion de la même façon — un
@@ -167,20 +260,12 @@ export class CheckoutService {
         };
       });
 
-      const grid = await readDeliveryGrid(tx);
-      const weightKg =
-        lines.reduce((sum, l) => sum + l.weightGrams * l.quantity, 0) / 1000;
-      const deliveryFee = computeDeliveryFee(
-        {
-          zone: resolveDeliveryZone(address.city, grid),
-          mode: 'domicile',
-          weightKg,
-        },
-        grid,
-      );
       const totals = computeCartTotals(
         lines.map((l) => ({ unitPrice: l.unitPrice, quantity: l.quantity })),
-        { deliveryFee },
+        // Remise décidée par le site, lue avant la transaction. Les frais de
+        // livraison, eux, ne sont JAMAIS additionnés : le site n'en facture
+        // aucun en ligne.
+        { remise: preflight.remise },
       );
 
       // Compteur annuel atomique AVANT la réservation : la référence existe
@@ -235,6 +320,8 @@ export class CheckoutService {
             deliveryFee: totals.deliveryFee,
             total: totals.total,
             note: dto.note ?? null,
+            guestName: guest?.name ?? null,
+            guestPhone: guest?.phone ?? null,
             idempotencyKey: dto.idempotencyKey,
             items: {
               create: lines.map((l) => ({
@@ -246,7 +333,9 @@ export class CheckoutService {
                 lineTotal: l.unitPrice * l.quantity,
               })),
             },
-            events: { create: { status: 'PENDING', actorId: userId } },
+            events: {
+              create: { status: 'PENDING', actorId: guest ? null : userId },
+            },
             payment: {
               create: {
                 method: dto.paymentMethod,
@@ -259,11 +348,9 @@ export class CheckoutService {
           select: orderSelect,
         });
       } catch (erreur) {
-        if (
-          estP2002(erreur)
-        ) {
+        if (estP2002(erreur)) {
           isReplay = true;
-          return this.replay(tx, dto.idempotencyKey, userId);
+          return this.replay(tx, dto.idempotencyKey, userId, guest);
         }
         throw erreur;
       }
@@ -271,17 +358,19 @@ export class CheckoutService {
       // L'événement naît AVEC la commande, dans la même transaction : aucun
       // ordre créé sans son événement, aucune notification perdue en silence.
       // (la diffusion elle-même reste post-commit — outbox, jamais en ligne)
-      await tx.outboxEvent.create({
-        data: {
-          type: 'ORDER_CREATED',
-          payload: {
-            orderId: order.id,
-            reference: order.reference,
-            userId,
-            total: order.total,
-          } as Prisma.InputJsonValue,
-        },
-      });
+      if (!guest) {
+        await tx.outboxEvent.create({
+          data: {
+            type: 'ORDER_CREATED',
+            payload: {
+              orderId: order.id,
+              reference: order.reference,
+              userId,
+              total: order.total,
+            } as Prisma.InputJsonValue,
+          },
+        });
+      }
 
       await tx.idempotencyRecord.create({
         data: {
@@ -290,7 +379,9 @@ export class CheckoutService {
           requestHash,
           responseStatus: 201,
           responseBody: { reference: order.reference } as Prisma.InputJsonValue,
-          expiresAt: new Date(now.getTime() + IDEMPOTENCY_TTL_DAYS * 86_400_000),
+          expiresAt: new Date(
+            now.getTime() + IDEMPOTENCY_TTL_DAYS * 86_400_000,
+          ),
         },
       });
 
@@ -302,7 +393,7 @@ export class CheckoutService {
     // tente de le diffuser immédiatement sans jamais bloquer la réponse,
     // et le cron `outbox-drain` reste le filet. Un rejeu, lui, ne kick pas :
     // l'événement d'origine a déjà été diffusé.
-    if (!isReplay) kickOutboxDrain();
+    if (!isReplay && !guest) kickOutboxDrain();
 
     return created;
   }
@@ -312,27 +403,45 @@ export class CheckoutService {
     tx: Prisma.TransactionClient,
     idempotencyKey: string,
     userId: string,
+    guest?: GuestOrderCustomer,
   ) {
     const order = await tx.order.findUnique({
       where: { idempotencyKey },
-      select: { id: true, userId: true },
+      select: { id: true, userId: true, guestPhone: true },
     });
-    if (!order || order.userId !== userId) {
+    const belongsToCaller =
+      order?.userId === userId ||
+      (guest !== undefined && order?.guestPhone === guest.phone);
+    if (!order || !belongsToCaller) {
       throw new ConflictException({
         code: 'IDEMPOTENCY_KEY_CONFLICT',
         message: 'Cette commande ne peut pas être rejouée.',
       });
     }
-    return tx.order.findUniqueOrThrow({ where: { id: order.id }, select: orderSelect });
+    return tx.order.findUniqueOrThrow({
+      where: { id: order.id },
+      select: orderSelect,
+    });
   }
-
 
   /** Empreinte stable du couple (utilisateur, intention) : l'ordre des
    * lignes ne doit pas transformer un rejeu en conflit. */
-  private fingerprint(userId: string, dto: CreateOrderDto): string {
+  private fingerprint(
+    userId: string,
+    dto: CreateOrderDto,
+    guest?: GuestOrderCustomer,
+  ): string {
     const canonical = {
-      userId,
-      addressId: dto.addressId,
+      // Un invité obtient un profil technique neuf à chaque tentative : son
+      // identité métier est donc le téléphone, pas cet identifiant interne.
+      customer: guest
+        ? {
+            guestName: guest.name,
+            guestPhone: guest.phone,
+            deliveryLocation: guest.deliveryLocation,
+          }
+        : { userId },
+      addressId: guest ? null : dto.addressId,
       paymentMethod: dto.paymentMethod,
       mobileMoneyProvider: dto.mobileMoneyProvider ?? null,
       note: dto.note ?? null,

@@ -1,4 +1,5 @@
 import {
+  cleanProductName,
   computeCartTotals,
   type CartTotals,
   type Product,
@@ -51,6 +52,8 @@ export type CartLineItem = {
   productId: string;
   productSlug: string;
   productName: string;
+  /** Photo mémorisée pour garder un panier lisible sans nouvelle requête. */
+  productImageUrl?: string | null;
   variantLabel: string;
   weightGrams: number;
   /** Prix connu au moment de l'ajout — à revalider côté serveur. */
@@ -117,7 +120,10 @@ export const useCartStore = create<CartState>()(
             variantId: variant.id,
             productId: product.id,
             productSlug: product.slug,
-            productName: product.name,
+            // La marque ne fait pas partie du nom : on la retire à l'entrée
+            // dans le panier pour qu'il reste lisible même hors ligne.
+            productName: cleanProductName(product.name),
+            productImageUrl: product.imageUrl,
             variantLabel: variant.label,
             weightGrams: variant.weightGrams,
             unitPrice: variant.price,
@@ -227,15 +233,18 @@ export function selectItemCount(state: Pick<CartState, 'items'>): number {
 }
 
 /**
- * Totaux du panier, frais de livraison NON compris.
+ * Totaux du panier — AUCUN frais de livraison, jamais.
  *
- * `deliveryFee: 0` n'est pas une promesse de gratuité : c'est l'absence
- * d'information. Le montant facturé est celui que le serveur calcule.
+ * Le site n'encaisse aucun frais en ligne, de la mise au panier jusqu'au
+ * paiement : son tiroir affiche « Applicable selon la zone », son récapitulatif
+ * « À confirmer », et son total reste le sous-total. Ce sélecteur ne fait donc
+ * qu'additionner les lignes, exactement comme le contrat le dit depuis le
+ * 2 octobre 2026. Une remise, elle, viendrait du serveur (calculateur du site)
+ * et non d'ici.
  */
 export function selectTotals(state: Pick<CartState, 'items'>): CartTotals {
   return computeCartTotals(
     state.items.map((i) => ({ unitPrice: i.unitPrice, quantity: i.quantity })),
-    { deliveryFee: 0 },
   );
 }
 

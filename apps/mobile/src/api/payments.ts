@@ -33,10 +33,43 @@ export function initiatePayment(reference: string): Promise<PaymentInitiate> {
   });
 }
 
+const guestPaymentHeaders = (token: string) => ({
+  'X-Guest-Payment-Token': token,
+});
+
+/** Même initiation que le site, mais derrière une capacité temporaire plutôt
+ * qu'un compte ou un JWT : le client invité reste un invité. */
+export function initiateGuestPayment(
+  reference: string,
+  token: string,
+): Promise<PaymentInitiate> {
+  return apiRequest({
+    method: 'POST',
+    path: `/payments/guest/orders/${reference}/initiate`,
+    schema: initiateSchema,
+    isPublic: true,
+    headers: guestPaymentHeaders(token),
+  });
+}
+
 export function fetchPaymentStatus(reference: string, signal?: AbortSignal) {
   return apiRequest({
     path: `/payments/orders/${reference}`,
     schema: statusSchema,
+    signal,
+  });
+}
+
+export function fetchGuestPaymentStatus(
+  reference: string,
+  token: string,
+  signal?: AbortSignal,
+) {
+  return apiRequest({
+    path: `/payments/guest/orders/${reference}`,
+    schema: statusSchema,
+    isPublic: true,
+    headers: guestPaymentHeaders(token),
     signal,
   });
 }
@@ -50,6 +83,14 @@ export function useInitiatePayment() {
         queryKey: orderKeys.detail(result.reference),
       });
     },
+    retry: false,
+  });
+}
+
+export function useInitiateGuestPayment() {
+  return useMutation({
+    mutationFn: ({ reference, token }: { reference: string; token: string }) =>
+      initiateGuestPayment(reference, token),
     retry: false,
   });
 }
@@ -91,6 +132,20 @@ export function usePaymentStatus(reference: string, enabled = false) {
     enabled: enabled && reference.length > 0,
     // Le `staleTime` global est d'une minute : adapté à un catalogue, bien trop
     // long pour un paiement que l'on suit à la seconde. Neutralisé ici seulement.
+    staleTime: 0,
+    refetchInterval: (query) =>
+      PAYMENT_IN_FLIGHT.includes(query.state.data?.status ?? '')
+        ? PAYMENT_POLL_MS
+        : false,
+  });
+}
+
+/** Suivi du même paiement pour un invité, autorisé par sa capacité temporaire. */
+export function useGuestPaymentStatus(reference: string, token: string | null) {
+  return useQuery({
+    queryKey: ['guest-payment', reference],
+    queryFn: ({ signal }) => fetchGuestPaymentStatus(reference, token!, signal),
+    enabled: reference.length > 0 && token !== null,
     staleTime: 0,
     refetchInterval: (query) =>
       PAYMENT_IN_FLIGHT.includes(query.state.data?.status ?? '')

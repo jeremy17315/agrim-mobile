@@ -4,6 +4,7 @@ import {
   paginated,
   type Address,
   type CreateAddressInput,
+  type GuestOrderInput,
   type MobileMoneyProvider,
   type Order,
   type PaymentMethod,
@@ -76,6 +77,13 @@ const orderDetailSchema = z.object({
 });
 export type OrderDetail = z.infer<typeof orderDetailSchema>;
 
+/** Réponse du checkout public : une capacité de paiement n'est renvoyée que
+ * pour une commande Mobile Money invitée, jamais pour un compte connecté. */
+const guestOrderResponseSchema = orderDetailSchema.extend({
+  paymentAccessToken: z.string().min(20).optional(),
+});
+export type GuestOrderDetail = z.infer<typeof guestOrderResponseSchema>;
+
 const paginatedOrdersSchema = paginated(orderSummarySchema);
 
 export const orderKeys = {
@@ -134,6 +142,131 @@ export type CreateOrderPayload = {
   note?: string;
 };
 
+/** Checkout public : trois informations de livraison, aucun compte. */
+export type CreateGuestOrderPayload = GuestOrderInput;
+
+/**
+ * La livraison telle qu'elle est PRÉSENTÉÉE : un libellé et un délai, jamais
+ * un montant à additionner. Le site n'encaisse aucun frais en ligne — sa
+ * page `/commander` affiche « À confirmer » et laisse le total intact.
+ */
+const deliveryQuoteSchema = z.object({
+  mode: z.enum(['domicile', 'retrait']),
+  zone: z.string(),
+  libelle: z.string(),
+  delai: z.string(),
+  statut: z.enum(['A_CONFIRMER', 'GRATUIT']),
+  message: z.string(),
+  frais: z.number().int(),
+});
+
+const cartQuoteSchema = z.object({
+  subtotal: z.number().int(),
+  /** Remise décidée par le site (volume, grossiste, code promo). */
+  remise: z.number().int().default(0),
+  /** `unavailable` : le calculateur est injoignable ⇒ aucune remise. */
+  remiseStatus: z.enum(['ok', 'unavailable']).default('unavailable'),
+  promoCode: z.string().nullable().default(null),
+  promoMessage: z.string().nullable().default(null),
+  delivery: deliveryQuoteSchema,
+  /** Toujours 0 : aucun frais n'est encaissé en ligne. */
+  deliveryFee: z.number().int(),
+  total: z.number().int(),
+  currency: z.literal('XOF'),
+  zone: z.string(),
+});
+export type CartQuote = z.infer<typeof cartQuoteSchema>;
+
+/* --------------------------- Zones de livraison ------------------------- */
+
+/**
+ * Zones proposées au checkout. Elles viennent du site (grille officielle) ;
+ * cette copie n'est qu'un repli si l'API n'est pas joignable, calquée sur la
+ * grille du site. Choisir une zone évite une faute de frappe qui changerait
+ * le délai annoncé.
+ */
+export const DELIVERY_ZONE_FALLBACK = [
+  { value: 'yamoussoukro', label: 'Yamoussoukro', delai: '24 h' },
+  { value: 'abidjan', label: 'Abidjan', delai: '48 h' },
+  { value: 'bouake', label: 'Bouaké', delai: '48 h' },
+  { value: 'autre', label: 'Autre ville', delai: '72 h' },
+] as const;
+
+const deliveryZoneSchema = z.object({
+  value: z.string(),
+  label: z.string(),
+  delai: z.string().default(''),
+  frais: z.number().int().default(0),
+});
+const deliveryZonesSchema = z.object({
+  zones: z.array(deliveryZoneSchema).min(1),
+  defaultZone: z.string(),
+  retrait: z
+    .object({ libelle: z.string(), delai: z.string(), frais: z.number().int() })
+    .optional(),
+});
+export type DeliveryZoneOption = z.infer<typeof deliveryZoneSchema>;
+
+export function fetchDeliveryZones(signal?: AbortSignal) {
+  return apiRequest({
+    path: '/cart/delivery-zones',
+    schema: deliveryZonesSchema,
+    isPublic: true,
+    signal,
+  });
+}
+
+export const deliveryKeys = {
+  all: ['delivery'] as const,
+  zones: () => [...deliveryKeys.all, 'zones'] as const,
+};
+
+/**
+ * Zones de livraison, avec repli local. Une API antérieure à cet endpoint (404)
+ * ou une coupure réseau ne doivent pas priver le client du choix de zone : le
+ * repli reproduit la grille du site, et le devis serveur reste seul à décider
+ * du délai réel.
+ */
+export function useDeliveryZones() {
+  return useQuery({
+    queryKey: deliveryKeys.zones(),
+    queryFn: ({ signal }) => fetchDeliveryZones(signal),
+    staleTime: 60 * 60 * 1000,
+    placeholderData: {
+      zones: DELIVERY_ZONE_FALLBACK.map((z) => ({ ...z, frais: 0 })),
+      defaultZone: 'autre',
+    },
+  });
+}
+
+export function quoteGuestCart(payload: {
+  items: { variantId: string; quantity: number }[];
+  city: string;
+  /** Code promo à faire valider par le calculateur du site. */
+  codePromo?: string;
+  phone?: string;
+}): Promise<CartQuote> {
+  return apiRequest({
+    method: 'POST',
+    path: '/cart/quote',
+    body: payload,
+    schema: cartQuoteSchema,
+    isPublic: true,
+  });
+}
+
+export function createGuestOrder(
+  payload: CreateGuestOrderPayload,
+): Promise<GuestOrderDetail> {
+  return apiRequest({
+    method: 'POST',
+    path: '/orders/guest',
+    body: payload,
+    schema: guestOrderResponseSchema,
+    isPublic: true,
+  });
+}
+
 export function createOrder(payload: CreateOrderPayload): Promise<OrderDetail> {
   return apiRequest({
     method: 'POST',
@@ -183,6 +316,26 @@ export function useOrder(reference: string) {
     queryKey: orderKeys.detail(reference),
     queryFn: ({ signal }) => fetchOrder(reference, signal),
     enabled: reference.length > 0,
+  });
+}
+
+export function useGuestCartQuote() {
+  return useMutation({
+    mutationFn: quoteGuestCart,
+    // Le devis n'écrit rien et peut être relancé quand la zone évolue.
+    retry: false,
+  });
+}
+
+export function useCreateGuestOrder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: createGuestOrder,
+    onSuccess: (order) => {
+      queryClient.setQueryData(orderKeys.detail(order.reference), order);
+    },
+    // La clé d'idempotence reste stable dans l'écran tant que le client retente.
+    retry: false,
   });
 }
 

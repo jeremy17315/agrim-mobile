@@ -9,7 +9,12 @@ import { ProductReviews } from '@/components/ProductReviews';
 import { ErrorState, Skeleton } from '@/components/states';
 import { Banner, Button, Card, Icon, Pill, Text } from '@/components/ui';
 import { formatWeight, formatXof } from '@/lib/format';
-import { MAX_QUANTITY_PER_LINE, useCartStore } from '@/store/cart';
+import { resolveProductImageUrl } from '@/lib/productImage';
+import {
+  MAX_QUANTITY_PER_LINE,
+  useCartItemCount,
+  useCartStore,
+} from '@/store/cart';
 import { palette, radius, shadow, spacing } from '@/theme/tokens';
 
 /**
@@ -26,9 +31,11 @@ export default function ProductScreen() {
 
   const product = useProduct(slug ?? '');
   const addItem = useCartStore((s) => s.addItem);
+  const itemCount = useCartItemCount();
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [quantity, setQuantity] = useState(1);
+  const [failedImage, setFailedImage] = useState<string | null>(null);
   // Confirmation brève après l'ajout : le client doit voir que son geste a
   // abouti sans quitter la fiche.
   const [justAdded, setJustAdded] = useState(false);
@@ -44,6 +51,8 @@ export default function ProductScreen() {
   );
 
   const variants = useMemo(() => product.data?.variants ?? [], [product.data]);
+  const imageUrl = resolveProductImageUrl(product.data?.imageUrl);
+  const hasProductImage = imageUrl !== null && failedImage !== imageUrl;
 
   // Par défaut : le premier format réellement disponible.
   const selected: ProductVariant | undefined =
@@ -78,16 +87,29 @@ export default function ProductScreen() {
           accessibilityRole="button"
           accessibilityLabel="Retour"
           hitSlop={12}
-          style={styles.backButton}
+          style={styles.headerButton}
         >
           <Icon name="arrow-left" size={19} color="ink" />
         </Pressable>
-        <Text variant="h3" numberOfLines={1} style={styles.headerTitle}>
-          {product.data?.name ?? 'Produit'}
-        </Text>
+        <Pressable
+          onPress={() => router.push('/panier')}
+          accessibilityRole="button"
+          accessibilityLabel="Ouvrir le panier"
+          hitSlop={12}
+          style={styles.headerButton}
+        >
+          <Icon name="shopping-bag" size={18} color="green" />
+          {itemCount > 0 ? (
+            <View style={styles.cartCount}>
+              <Text variant="micro" style={styles.cartCountText}>
+                {itemCount > 9 ? '9+' : itemCount}
+              </Text>
+            </View>
+          ) : null}
+        </Pressable>
       </View>
 
-      {product.isError ? (
+      {product.isError && !product.data ? (
         <ErrorState
           error={product.error}
           onRetry={() => void product.refetch()}
@@ -103,11 +125,12 @@ export default function ProductScreen() {
         <>
           <ScrollView contentContainerStyle={styles.content}>
             <View style={styles.hero}>
-              {product.data.imageUrl ? (
+              {hasProductImage ? (
                 <Image
-                  source={{ uri: product.data.imageUrl }}
+                  source={{ uri: imageUrl! }}
                   style={styles.heroPhoto}
-                  resizeMode="cover"
+                  resizeMode="contain"
+                  onError={() => setFailedImage(imageUrl)}
                 />
               ) : (
                 <>
@@ -127,7 +150,22 @@ export default function ProductScreen() {
             </View>
 
             <View style={styles.section}>
-              <Text variant="h1">{product.data.name}</Text>
+              <View style={styles.productHeading}>
+                <View style={styles.productTitle}>
+                  <Text variant="micro" color="green">
+                    {product.data.brand}
+                  </Text>
+                  <Text variant="h1">{product.data.name}</Text>
+                </View>
+                <View style={styles.priceBox}>
+                  <Text variant="micro" color="muted">
+                    DÈS
+                  </Text>
+                  <Text variant="h2" color="green">
+                    {selected ? formatXof(selected.price) : '—'}
+                  </Text>
+                </View>
+              </View>
               {product.data.shortDescription ? (
                 <Text variant="body" color="body">
                   {product.data.shortDescription}
@@ -153,6 +191,7 @@ export default function ProductScreen() {
                       onPress={() => {
                         setSelectedId(variant.id);
                         setQuantity(1);
+                        setJustAdded(false);
                       }}
                       accessibilityRole="radio"
                       accessibilityState={{ selected: active, disabled }}
@@ -304,12 +343,22 @@ export default function ProductScreen() {
             </View>
             <View style={styles.footerAction}>
               <Button
-                label={canOrder ? 'Ajouter au panier' : 'Indisponible'}
+                label={
+                  justAdded
+                    ? 'VOIR MON PANIER'
+                    : canOrder
+                      ? 'AJOUTER AU PANIER'
+                      : 'INDISPONIBLE'
+                }
                 disabled={!canOrder}
-                onPress={handleAdd}
+                onPress={justAdded ? () => router.push('/panier') : handleAdd}
                 icon={
                   canOrder ? (
-                    <Icon name="shopping-cart" size={16} color="white" />
+                    <Icon
+                      name={justAdded ? 'shopping-bag' : 'shopping-cart'}
+                      size={16}
+                      color="white"
+                    />
                   ) : undefined
                 }
               />
@@ -326,15 +375,36 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.md,
+    justifyContent: 'space-between',
     paddingHorizontal: spacing.lg,
     paddingBottom: spacing.md,
-    backgroundColor: palette.card,
-    borderBottomWidth: 1,
-    borderBottomColor: palette.line,
+    backgroundColor: palette.bg,
   },
-  backButton: { padding: 2 },
-  headerTitle: { flex: 1 },
+  headerButton: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 20,
+    backgroundColor: palette.card,
+    borderWidth: 1,
+    borderColor: palette.line,
+  },
+  cartCount: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    minWidth: 17,
+    height: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+    borderRadius: radius.pill,
+    backgroundColor: palette.green,
+    borderWidth: 1.5,
+    borderColor: palette.bg,
+  },
+  cartCountText: { color: palette.white, fontSize: 8 },
   loading: { padding: spacing.lg, gap: spacing.md },
   content: {
     padding: spacing.lg,
@@ -342,7 +412,7 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.xxxl,
   },
   hero: {
-    height: 168,
+    height: 260,
     borderRadius: radius.xl,
     backgroundColor: palette.goldSoft,
     alignItems: 'center',
@@ -350,9 +420,17 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
     overflow: 'hidden',
   },
-  heroPhoto: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
+  heroPhoto: { width: '100%', height: '100%', padding: spacing.md },
   heroBadge: { position: 'absolute', top: spacing.sm, left: spacing.sm },
   section: { gap: spacing.sm },
+  productHeading: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+  },
+  productTitle: { flex: 1, gap: 4 },
+  priceBox: { alignItems: 'flex-end', gap: 2 },
   formats: { flexDirection: 'row', gap: spacing.sm },
   format: {
     flex: 1,

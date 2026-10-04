@@ -8,7 +8,6 @@ import {
 } from '@nestjs/common';
 import {
   computeCartTotals,
-  computeDeliveryFee,
   isCancellableByClient,
   resolveDeliveryZone,
 } from '@agrim/contracts';
@@ -20,6 +19,9 @@ import { recordStockMovement } from '../common/stock/stock-movement';
 import { CatalogSyncService } from '../catalog-sync/catalog-sync.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { SitePricingService } from '../site-pricing/site-pricing.service';
+import { SieveSession, type SieveSessionRow } from '../sieve/model';
+import { SieveScrapeService } from '../sieve/sieve.service';
 import type { CreateOrderDto } from './dto/create-order.dto';
 import { formatOrderReference } from './order-reference';
 import { CheckoutService } from './checkout.service';
@@ -33,6 +35,8 @@ const orderSelect = {
   deliveryFee: true,
   total: true,
   note: true,
+  guestName: true,
+  guestPhone: true,
   createdAt: true,
   items: {
     select: {
@@ -67,6 +71,13 @@ const orderSelect = {
   },
 } as const;
 
+/** Coordonnées immuables d'une commande passée depuis le checkout public. */
+export type GuestOrderCustomer = {
+  name: string;
+  phone: string;
+  deliveryLocation: string;
+};
+
 @Injectable()
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
@@ -76,6 +87,9 @@ export class OrdersService {
     private readonly notifications: NotificationsService,
     private readonly catalog: CatalogSyncService,
     private readonly checkout: CheckoutService,
+    private readonly pricing: SitePricingService,
+    private readonly sieveSession: SieveSession,
+    private readonly sieveScrape: SieveScrapeService,
   ) {}
 
   /**
@@ -87,22 +101,29 @@ export class OrdersService {
    *     paiement sont écrits ensemble ou pas du tout.
    *  3. `idempotencyKey` rend l'opération rejouable sans doublon.
    */
-  async create(userId: string, dto: CreateOrderDto) {
+  async create(
+    userId: string,
+    dto: CreateOrderDto,
+    guest?: GuestOrderCustomer,
+  ) {
     // Bascule SSOT (docs/refonte/08, phase 4) : quand cette base possède le
     // stock, la création passe par le checkout transactionnel local — plus
     // aucune réservation distante. Défaut `site` : le comportement établi
     // ci-dessous reste seul en production jusqu'à la bascule assumée.
     if (currentStockMode() === 'local') {
-      return this.checkout.create(userId, dto);
+      return this.checkout.create(userId, dto, guest);
     }
 
     // Rejouer une requête perdue ne doit jamais créer une seconde commande.
     const replayed = await this.prisma.db.order.findUnique({
       where: { idempotencyKey: dto.idempotencyKey },
-      select: { id: true, userId: true },
+      select: { id: true, userId: true, guestPhone: true },
     });
     if (replayed) {
-      if (replayed.userId !== userId) {
+      const belongsToCaller =
+        replayed.userId === userId ||
+        (guest !== undefined && replayed.guestPhone === guest.phone);
+      if (!belongsToCaller) {
         throw new ConflictException({
           code: 'IDEMPOTENCY_KEY_CONFLICT',
           message: 'Cette commande ne peut pas être rejouée.',
@@ -217,7 +238,8 @@ export class OrdersService {
     // sans quoi une panne du site fermerait la boutique de l'application.
     if (cotation.status === 'ok') {
       const retirees = variants.filter(
-        (v) => v.sourceRef && cotation.prices.get(v.sourceRef)?.vendable === false,
+        (v) =>
+          v.sourceRef && cotation.prices.get(v.sourceRef)?.vendable === false,
       );
       if (retirees.length > 0) {
         throw new BadRequestException({
@@ -255,44 +277,96 @@ export class OrdersService {
       };
     });
 
-    // ── Frais de livraison : la grille du SITE fait foi ────────────────────
+    // ── Livraison : DESCRIPTIF, jamais montant ────────────────────────────
     //
-    // Décision métier du 29 août 2026. Avant, cette API appliquait un forfait
-    // de 1 000 F écrit en dur, quand le site facturait 3 500 F pour Abidjan :
-    // le même trajet coûtait deux prix selon l'écran ouvert par le client.
+    // Le site n'encaisse aucun frais en ligne (vérifié sur son calculateur
+    // `POST /api/panier/calculer` : `frais_livraison: 0`,
+    // `livraison_a_confirmer: true`) : de la mise au panier jusqu'au paiement,
+    // le total payable reste le sous-total moins les remises. La grille ne
+    // sert donc plus qu'à nommer la zone et donner son délai.
     //
-    // Rien n'est calculé ici : la zone, le tarif et le seuil de gratuité
-    // viennent tous du site. C'est le seul moyen qu'un changement de tarif
-    // n'ait qu'un endroit où se faire.
+    // Si la grille n'a jamais pu être lue, on ne devine rien — pas un délai,
+    // pas un tarif : le refus vaut mieux qu'une information inventée.
     const grid = await this.catalog.deliveryGrid();
     if (!grid) {
-      // On ne devine pas un montant. Facturer un tarif inventé serait pire
-      // qu'un refus : le client paierait un prix qui n'est celui de personne.
       throw new ServiceUnavailableException({
         code: 'DELIVERY_GRID_UNAVAILABLE',
         message:
-          'Les frais de livraison sont momentanément indisponibles. Réessayez dans un instant.',
+          'Les informations de livraison sont momentanément indisponibles. Réessayez dans un instant.',
       });
     }
 
-    const weightKg =
-      lines.reduce((sum, l) => sum + l.weightGrams * l.quantity, 0) / 1000;
+    const zone = resolveDeliveryZone(address.city, grid);
+    // ── Scratch d'instructions de livraison (Sieve) ──────────────────────
+    //
+    // Un scrape Sieve prépare d'éventuelles instructions de livraison
+    // (code postal, points de repère, accès particulier) avant que le
+    // client ne les confirme. Le run est préservé et pollé par le
+    // driver de commande ; au moment où la commande est validée,
+    // `GET /sieve/scrapes/:session_id` donne la derniere état.
+    //
+    // Pilotage désactivé ⇒ pas d'appel : le driver renvoie une session
+    // `error` et la commande continue avec la grille de zone du site,
+    // sans aucune divergence avec la règle « le SITE fait foi ».
+    let scrapeSession: SieveSessionRow | null = null;
+    if (this.sieveSession.hasKey()) {
+      try {
+        scrapeSession = await this.sieveSession.create({
+          instruction:
+            `Récupérer les instructions de livraison pour la livraison au client ${address.city}`,
+          status: 'queued',
+        });
+      } catch {
+        // La persistance de la session est un pli logique ; son échec
+        // n'empêche pas la commande de passer — la grille zone reste.
+        this.logger.warn('Sieve session write failed; continuing without scrape');
+      }
+    }
 
-    const deliveryFee = computeDeliveryFee(
-      {
-        zone: resolveDeliveryZone(address.city, grid),
-        // Le retrait sur place n'est pas encore proposé par l'application :
-        // toute commande mobile est une livraison à domicile. Le jour où il
-        // le sera, c'est ce paramètre qui changera, pas le calcul.
-        mode: 'domicile',
-        weightKg,
-      },
-      grid,
-    );
+    // Si un run est préservé, on le démarre avec les URLs de cible de la
+    // livraison (adresse + points de repère). Le run est relu par le
+    // driver : `SieveScrapeService.pollStatus(session.run_id)` donne l'état
+    // et `SieveScrapeService.fetchMessages(run_id)` les turns finaux.
+    if (scrapeSession) {
+      try {
+        void this.sieveScrape.start(
+          `Récupérer les instructions de livraison pour la livraison au client ${address.city}`,
+          [`https://maps.google.com/?q=${encodeURIComponent(address.city)}`],
+          ['city', 'postal_code', 'district', 'landmark', 'instructions'],
+          'delivery_instructions',
+          'delivery_instructions_output.json',
+          'flat',
+          'regular',
+        );
+        // Reconciliation back into the persisted session: le run_id du
+        // contract (scrape.usesieve.com) est ce `session.run_id`.
+        await this.sieveSession.updateStatus(scrapeSession.id, 'running');
+      } catch {
+        // Un échec d'activation du run à l'issue du checkout (réseau, 5xx)
+        // revient au driver de commande pour relance ; le client ne voit
+        // rien et le fret reste celui du site (règle d'or).
+        this.logger.warn('Sieve run failed to start; driver will retry or mark error');
+      }
+    }
+    // ── Remises : LE SITE les calcule, AVANT la transaction ──────────────
+    //
+    // Un appel réseau tenu sous verrou PostgreSQL retiendrait les verrous
+    // pendant toute la latence : la remise est donc demandée ici, avant
+    // d'ouvrir la transaction, puis appliquée à l'intérieur.
+    const remise = await this.pricing.remise({
+      items: variants.map((v) => ({
+        sourceRef: v.sourceRef,
+        quantity: merged.get(v.id) ?? 0,
+      })),
+      zone,
+      mode: 'domicile',
+      codePromo: dto.codePromo,
+      phone: guest?.phone,
+    });
 
     const totals = computeCartTotals(
       lines.map((l) => ({ unitPrice: l.unitPrice, quantity: l.quantity })),
-      { deliveryFee },
+      { remise: remise.status === 'ok' ? remise.remise : 0 },
     );
 
     // ── Réservation du stock auprès du SITE ───────────────────────────────
@@ -379,40 +453,44 @@ export class OrdersService {
         }
 
         const order = await tx.order.create({
-        data: {
-          reference,
-          userId,
-          addressId: dto.addressId,
-          status: 'PENDING',
-          subtotal: totals.subtotal,
-          deliveryFee: totals.deliveryFee,
-          total: totals.total,
-          note: dto.note ?? null,
-          idempotencyKey: dto.idempotencyKey,
-          items: {
-            create: lines.map((l) => ({
-              variantId: l.variantId,
-              productName: l.productName,
-              variantLabel: l.variantLabel,
-              unitPrice: l.unitPrice,
-              quantity: l.quantity,
-              lineTotal: l.unitPrice * l.quantity,
-            })),
-          },
-          events: {
-            create: { status: 'PENDING', actorId: userId },
-          },
-          payment: {
-            create: {
-              method: dto.paymentMethod,
-              provider: dto.mobileMoneyProvider ?? null,
-              amount: totals.total,
-              // Le paiement à la livraison est en attente jusqu'à la remise ;
-              // aucun statut ne peut être décidé par le client.
-              status: 'PENDING',
+          data: {
+            reference,
+            userId,
+            addressId: dto.addressId,
+            status: 'PENDING',
+            subtotal: totals.subtotal,
+            deliveryFee: totals.deliveryFee,
+            total: totals.total,
+            note: dto.note ?? null,
+            guestName: guest?.name ?? null,
+            guestPhone: guest?.phone ?? null,
+            idempotencyKey: dto.idempotencyKey,
+            items: {
+              create: lines.map((l) => ({
+                variantId: l.variantId,
+                productName: l.productName,
+                variantLabel: l.variantLabel,
+                unitPrice: l.unitPrice,
+                quantity: l.quantity,
+                lineTotal: l.unitPrice * l.quantity,
+              })),
+            },
+            events: {
+              // Une commande invitée n'a pas d'auteur authentifié : lui attribuer
+              // le profil technique brouillerait l'audit.
+              create: { status: 'PENDING', actorId: guest ? null : userId },
+            },
+            payment: {
+              create: {
+                method: dto.paymentMethod,
+                provider: dto.mobileMoneyProvider ?? null,
+                amount: totals.total,
+                // Le paiement à la livraison est en attente jusqu'à la remise ;
+                // aucun statut ne peut être décidé par le client.
+                status: 'PENDING',
+              },
             },
           },
-        },
           select: orderSelect,
         });
 
@@ -427,9 +505,12 @@ export class OrdersService {
         // gagnante — la libérer rendrait au rayon le stock d'une vente réelle.
         const gagnante = await this.prisma.db.order.findUnique({
           where: { idempotencyKey: dto.idempotencyKey },
-          select: { id: true, userId: true },
+          select: { id: true, userId: true, guestPhone: true },
         });
-        if (gagnante && gagnante.userId === userId) {
+        const belongsToCaller =
+          gagnante?.userId === userId ||
+          (guest !== undefined && gagnante?.guestPhone === guest.phone);
+        if (gagnante && belongsToCaller) {
           return this.prisma.db.order.findUniqueOrThrow({
             where: { id: gagnante.id },
             select: orderSelect,
@@ -462,15 +543,42 @@ export class OrdersService {
       );
     }
 
-    // Hors transaction, pour la même raison que l'annulation.
-    await this.notifications.notify({
-      userId,
-      type: 'ORDER_CREATED',
-      reference: created.reference,
-      orderId: created.id,
-    });
+    // Hors transaction, pour la même raison que l'annulation. Une commande
+    // invitée ne possède ni compte ni jeton de notification : l'équipe voit
+    // son vrai numéro directement dans la file de préparation.
+    if (!guest) {
+      await this.notifications.notify({
+        userId,
+        type: 'ORDER_CREATED',
+        reference: created.reference,
+        orderId: created.id,
+      });
+    }
 
     return created;
+  }
+
+  /**
+   * Rejoue un checkout invité quand la réponse réseau a été perdue. Le numéro
+   * fait partie du contrôle : une clé aléatoire ne donne jamais accès à la
+   * commande d'un autre client.
+   */
+  async findGuestReplay(idempotencyKey: string, phone: string) {
+    const order = await this.prisma.db.order.findUnique({
+      where: { idempotencyKey },
+      select: { id: true, guestPhone: true },
+    });
+    if (!order) return null;
+    if (order.guestPhone !== phone) {
+      throw new ConflictException({
+        code: 'IDEMPOTENCY_KEY_CONFLICT',
+        message: 'Cette commande ne peut pas être rejouée.',
+      });
+    }
+    return this.prisma.db.order.findUniqueOrThrow({
+      where: { id: order.id },
+      select: orderSelect,
+    });
   }
 
   /** Historique du client : liste allégée, sans les lignes. */

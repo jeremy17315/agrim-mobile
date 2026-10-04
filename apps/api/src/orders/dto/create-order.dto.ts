@@ -72,4 +72,17 @@ export class CreateOrderDto {
   @IsString()
   @MaxLength(500)
   note?: string;
+
+  /**
+   * Code promo, transmis tel quel au calculateur du SITE.
+   *
+   * Cette API ne sait pas si un code est valide : elle le relaie et applique
+   * la remise que le site a retournée. Un code inventé ici reviendrait à
+   * s'auto-attribuer une remise.
+   */
+  @ApiPropertyOptional({ example: 'BIENVENUE10' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  codePromo?: string;
 }

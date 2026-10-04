@@ -150,6 +150,9 @@ model User {
   passwordHash String
   role         Role    @default(CLIENT)
   isActive     Boolean @default(true)
+  /// Profil technique créé pour une commande invitée. Il ne permet aucune
+  /// connexion et n'est jamais compté comme un compte client.
+  isGuest      Boolean @default(false)
 
   // Parrainage (section 33). `referralCode` est attribué à l'inscription de
   // TOUS les comptes (pas seulement CLIENT), pour rester simple. Le crédit
@@ -179,6 +182,7 @@ model User {
   updatedAt DateTime @updatedAt
 
   @@index([role])
+  @@index([role, isGuest])
   @@index([referredById])
 }
 
@@ -242,9 +246,8 @@ model Category {
   sortOrder   Int       @default(0)
   products    Product[]
 
-  /// Code de la gamme côté SITE (EBE, DIE, DJA, DV, ROY, SIK).
-  /// C'est la clé de synchronisation : renommer une gamme dans le back
-  /// office du site ne doit pas créer une catégorie en double ici.
+  /// Code de l'unique gamme commerciale côté SITE (`BELIER_DOR`).
+  /// Il préserve l'identité de la catégorie lors des synchronisations.
   sourceCode String? @unique @db.VarChar(16)
 
   createdAt DateTime @default(now())
@@ -257,7 +260,7 @@ model Product {
   name             String  @db.VarChar(120)
   shortDescription String? @db.VarChar(200)
   description      String? @db.VarChar(2000)
-  brand            String  @default("RIZ BOAGNI") @db.VarChar(80)
+  brand            String  @default("Bélier d’Or") @db.VarChar(80)
   imageUrl         String?
   isFeatured       Boolean @default(false)
   isActive         Boolean @default(true)
@@ -267,7 +270,8 @@ model Product {
   variants   ProductVariant[]
   reviews    ProductReview[]
 
-  /// Code de la gamme côté SITE — même rôle que Category.sourceCode.
+  /// Code historique du produit dans le champ réseau `gammes` du SITE.
+  /// Il évite de dupliquer un produit quand son nom ou son slug évolue.
   sourceCode String? @unique @db.VarChar(16)
 
   createdAt DateTime @default(now())
@@ -427,6 +431,12 @@ model Order {
   user      User        @relation(fields: [userId], references: [id])
   status    OrderStatus @default(PENDING)
 
+  /// Coordonnées figées pour une commande passée sans compte. Elles vivent sur
+  /// la commande, jamais dans un « compte invité » réutilisable, afin que le
+  /// personnel voie immédiatement qui joindre sans créer d'identifiants.
+  guestName  String? @db.VarChar(160)
+  guestPhone String? @db.VarChar(20)
+
   // Prix figés au moment de la commande (ne suivent pas le catalogue).
   subtotal    Int
   deliveryFee Int
@@ -449,6 +459,7 @@ model Order {
 
   @@index([userId, status])
   @@index([status, createdAt])
+  @@index([guestPhone])
 }
 
 model OrderItem {
@@ -867,6 +878,19 @@ model IdempotencyRecord {
 /// Un seul endroit répond à « ce client a-t-il été prévenu ? » — quel que soit
 /// le canal. Une panne d'agrégateur y laisse une ligne FAILED consultable et
 /// rejouable, jamais un silence.
+model SieveSession {
+  id          String   @id @default(uuid()) @db.Uuid
+  instruction String   @db.VarChar(2000)
+  status      String   @default("queued") @db.VarChar(20)
+  error       String?  @db.VarChar(1000)
+  turns       String?  @db.Text
+  updatedAt   DateTime @updatedAt
+
+  /// The run may have consumed credits before the driver wrote this row: a
+  /// crash here means the driver must resume polling this session, not start.
+  @@index([status, updatedAt])
+}
+
 model MessageLog {
   id       String @id @default(uuid()) @db.Uuid
   /// PUSH|WHATSAPP|SMS|EMAIL

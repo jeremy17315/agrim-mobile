@@ -1,7 +1,7 @@
 /**
  * Seed AGRIM-Mobile.
  *
- * Contient les données AGRIM réelles connues (gammes, formats, contacts, prix
+ * Contient les données AGRIM réelles connues (gamme, produits, formats, contacts, prix
  * — alignés sur agrimsarl.ci) et des valeurs PROVISOIRES clairement
  * identifiées (stocks, frais de livraison) issues de @agrim/contracts.
  * Modifier les valeurs métier là-bas, pas ici.
@@ -10,10 +10,10 @@ import 'dotenv/config';
 import * as argon2 from 'argon2';
 
 import {
+  BELIER_PRODUCTS,
+  BELIER_PRODUCT_PRICING,
   COMPANY,
   PACK_FORMATS,
-  RICE_PRICING,
-  RICE_RANGES,
 } from '@agrim/contracts';
 import { prisma } from '../src/prisma/prisma.client';
 import { generateReferralCode } from '../src/referrals/referrals.service';
@@ -21,7 +21,7 @@ import { generateReferralCode } from '../src/referrals/referrals.service';
 /** Mots de passe de DÉVELOPPEMENT uniquement. */
 const DEV_PASSWORD = 'Agrim2026!';
 
-type RangeSlug = keyof typeof RICE_PRICING;
+type BelierProductSlug = keyof typeof BELIER_PRODUCT_PRICING;
 
 async function main() {
   console.log('🌾  Seed AGRIM-Mobile…');
@@ -153,32 +153,32 @@ async function main() {
     },
   });
 
-  /* ── Catalogue : 6 gammes × 4 formats ─────────────────────────────────
+  /* ── Catalogue : 1 gamme Bélier d’Or, 5 produits × 4 formats ──────────
      AMORÇAGE SEULEMENT. Depuis l'audit de cohérence (août 2026), le
      catalogue appartient au SITE et arrive par CatalogSyncService : ces
      valeurs ne servent qu'à faire démarrer une base vide, et la première
      synchronisation les remplace par celles du site. */
-  for (const range of RICE_RANGES) {
-    const category = await prisma.category.create({
-      data: {
-        slug: range.slug,
-        name: range.name,
-        description: range.description,
-        sortOrder: range.sortOrder,
-      },
-    });
+  const belierDor = await prisma.category.create({
+    data: {
+      slug: 'belier-dor',
+      name: COMPANY.brandName,
+      description: COMPANY.brandSignature,
+      sortOrder: 1,
+    },
+  });
 
-    const pricing = RICE_PRICING[range.slug as RangeSlug];
+  for (const product of BELIER_PRODUCTS) {
+    const pricing = BELIER_PRODUCT_PRICING[product.slug as BelierProductSlug];
 
     await prisma.product.create({
       data: {
-        slug: range.slug,
-        name: `${COMPANY.brandName} ${range.name}`,
-        shortDescription: range.description,
-        description: `${range.description}. ${COMPANY.brandSignature}. Cultivé et transformé en ${COMPANY.country}.`,
+        slug: product.slug,
+        name: product.name,
+        shortDescription: product.description,
+        description: `${product.description}. ${COMPANY.brandSignature}. Cultivé et transformé en ${COMPANY.country}.`,
         brand: COMPANY.brandName,
-        categoryId: category.id,
-        isFeatured: range.sortOrder <= 2,
+        categoryId: belierDor.id,
+        isFeatured: product.sortOrder <= 2,
         variants: {
           create: PACK_FORMATS.map((f) => {
             const grid = pricing[f.weightGrams as keyof typeof pricing];
@@ -187,7 +187,7 @@ async function main() {
             // qui finirait par être ignorée.
             const isBigFormat = f.weightGrams >= 22500;
             return {
-              sku: `BOAGNI-${range.slug.toUpperCase()}-${f.weightGrams}`,
+              sku: `BELIER-${product.slug.toUpperCase()}-${f.weightGrams}`,
               label: f.label,
               weightGrams: f.weightGrams,
               price: grid.price,

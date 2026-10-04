@@ -1,11 +1,11 @@
 /**
- * Synchronisation du catalogue depuis le SITE — AGRIM / RIZ BOAGNI.
+ * Synchronisation du catalogue depuis le SITE — AGRIM / Bélier d’Or.
  *
  * Décision d'architecture (audit de cohérence, août 2026)
  * ──────────────────────────────────────────────────────
  * Le site et l'application sont deux interfaces d'un même commerce. Le
  * catalogue n'a donc qu'un seul propriétaire : le SITE, dont le back office
- * « Catalogue Produit » gère gammes, formats, prix, promotions et stocks.
+ * « Catalogue Produit » gère produits, formats, prix, promotions et stocks.
  *
  * Cette API en garde une COPIE locale — ses paniers et ses commandes
  * référencent les variantes par clé étrangère, elle ne peut pas lire le
@@ -24,14 +24,18 @@
  * 3. **La clé est la référence du site**, pas le nom ni le sku, qui peuvent
  *    être corrigés dans le back office sans rien casser.
  */
-import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { DeliveryGrid } from '@agrim/contracts';
+import { cleanProductName, COMPANY, type DeliveryGrid } from '@agrim/contracts';
 
 import { PrismaService } from '../prisma/prisma.service';
 
-/** Une gamme, telle que le site l'expose. */
-interface SourceRange {
+/** Un produit commercial, exposé dans le champ historique `gammes` du site. */
+interface SourceProductDefinition {
   code: string;
   nom: string;
   slug: string;
@@ -83,7 +87,9 @@ interface SourceCatalog {
   genere_le: string;
   marque: string;
   devise: string;
-  gammes: SourceRange[];
+  // Le champ historique du site s’appelle `gammes`, mais chaque entrée est
+  // un produit commercial (Royal Grains, Djassa…), pas une catégorie.
+  gammes: SourceProductDefinition[];
   produits: SourceProduct[];
   total: number;
 }
@@ -103,7 +109,7 @@ export interface SyncReport {
   ok: boolean;
   source: string;
   generatedAt: string | null;
-  ranges: { created: number; updated: number; deactivated: number };
+  products: { created: number; updated: number; deactivated: number };
   variants: { created: number; updated: number; deactivated: number };
   skipped: string[];
   errors: string[];
@@ -132,24 +138,22 @@ function estVendable(produit: SourceProduct): boolean {
 }
 
 /**
- * Rattachement des gammes du site aux gammes DÉJÀ présentes ici.
+ * Rattachement des produits du site aux produits DÉJÀ présents ici.
  *
- * Nécessaire une seule fois : au premier passage, les catégories locales
- * n'ont pas encore de `sourceCode`. Sans cette table, la synchronisation
- * créerait six gammes en double — et les commandes existantes pointeraient
- * sur les anciennes.
- *
- * `dietetique` est l'ancienne gamme unique, scindée depuis en Complet et
- * Violet côté site : elle est rattachée à Complet et conserve donc ses
- * variantes, ses identifiants et ses commandes.
+ * Nécessaire une seule fois : au premier passage, les produits locaux n'ont
+ * pas encore de `sourceCode`. Sans cette table, la synchronisation créerait
+ * des produits en double — et les commandes existantes pointeraient sur les
+ * anciens. Les dénominations diététiques historiques sont gardées comme alias
+ * de migration vers Riz noir et Riz violet.
  */
 const LEGACY_SLUGS: Record<string, string[]> = {
   EBE: ['ebene-dor', 'ebene-d-or'],
-  DIE: ['dietetique-complet', 'dietetique'],
+  DIE: ['riz-noir', 'dietetique-complet', 'dietetique'],
   DJA: ['djassa'],
-  DV: ['dietetique-violet'],
+  DV: ['riz-violet', 'dietetique-violet'],
+  NOI: ['riz-noir', 'dietetique-complet', 'dietetique'],
   ROY: ['royal-grains', 'royal-grain'],
-  SIK: ['sika'],
+  VIO: ['riz-violet', 'dietetique-violet'],
 };
 
 /**
@@ -233,10 +237,9 @@ export class CatalogSyncService {
   }
 
   private async fetchGrid(): Promise<DeliveryGrid | null> {
-    const base = (this.config.get<string>('SITE_INTEGRATION_URL') ?? '').replace(
-      /\/+$/,
-      '',
-    );
+    const base = (
+      this.config.get<string>('SITE_INTEGRATION_URL') ?? ''
+    ).replace(/\/+$/, '');
     const token = this.config.get<string>('SITE_INTEGRATION_TOKEN') ?? '';
     if (!base || !token) return this.lastKnownGrid();
 
@@ -252,7 +255,10 @@ export class CatalogSyncService {
       if (!response.ok) return this.lastKnownGrid();
 
       const payload = (await response.json()) as {
-        zones?: Record<string, { libelle: string; frais: number; delai: string }>;
+        zones?: Record<
+          string,
+          { libelle: string; frais: number; delai: string }
+        >;
         zone_par_defaut?: string;
         retrait?: { libelle: string; frais: number; delai: string };
         livraison_offerte_seuil_kg?: number;
@@ -261,7 +267,9 @@ export class CatalogSyncService {
       // Une grille sans zones n'est pas une grille : la refuser vaut mieux que
       // de facturer zéro à tout le monde.
       if (!payload.zones || Object.keys(payload.zones).length === 0) {
-        this.logger.warn('Grille de livraison vide : ancienne grille conservée.');
+        this.logger.warn(
+          'Grille de livraison vide : ancienne grille conservée.',
+        );
         return this.lastKnownGrid();
       }
 
@@ -305,10 +313,9 @@ export class CatalogSyncService {
     | { status: 'refused'; message: string; details: unknown }
     | { status: 'unavailable' }
   > {
-    const base = (this.config.get<string>('SITE_INTEGRATION_URL') ?? '').replace(
-      /\/+$/,
-      '',
-    );
+    const base = (
+      this.config.get<string>('SITE_INTEGRATION_URL') ?? ''
+    ).replace(/\/+$/, '');
     const token = this.config.get<string>('SITE_INTEGRATION_TOKEN') ?? '';
     if (!base || !token) return { status: 'unavailable' };
 
@@ -474,10 +481,9 @@ export class CatalogSyncService {
     const surcharge = this.config.get<string>('CATALOG_SOURCE_URL') ?? '';
     if (surcharge) return surcharge;
 
-    const base = (this.config.get<string>('SITE_INTEGRATION_URL') ?? '').replace(
-      /\/+$/,
-      '',
-    );
+    const base = (
+      this.config.get<string>('SITE_INTEGRATION_URL') ?? ''
+    ).replace(/\/+$/, '');
     return base ? `${base}/api/integration/catalogue` : '';
   }
 
@@ -513,10 +519,9 @@ export class CatalogSyncService {
         >;
       }
   > {
-    const base = (this.config.get<string>('SITE_INTEGRATION_URL') ?? '').replace(
-      /\/+$/,
-      '',
-    );
+    const base = (
+      this.config.get<string>('SITE_INTEGRATION_URL') ?? ''
+    ).replace(/\/+$/, '');
     const token = this.config.get<string>('SITE_INTEGRATION_TOKEN') ?? '';
     if (!base || !token || references.length === 0) {
       return { status: 'disabled' };
@@ -623,7 +628,7 @@ export class CatalogSyncService {
       ok: false,
       source: this.sourceUrl,
       generatedAt: null,
-      ranges: { created: 0, updated: 0, deactivated: 0 },
+      products: { created: 0, updated: 0, deactivated: 0 },
       variants: { created: 0, updated: 0, deactivated: 0 },
       skipped: [],
       errors: [],
@@ -633,22 +638,36 @@ export class CatalogSyncService {
     const catalogue = await this.fetchSource();
     rapport.generatedAt = catalogue.genere_le ?? null;
 
-    const categoryParCode = new Map<string, string>();
+    let belierCategoryId: string;
+    try {
+      belierCategoryId = await this.upsertBelierCategory();
+    } catch (error) {
+      // Sans l'unique gamme commerciale, aucune référence ne peut être
+      // rattachée proprement. On ne désactive surtout rien sur ce passage.
+      rapport.errors.push(`gamme Bélier d’Or : ${(error as Error).message}`);
+      rapport.durationMs = Date.now() - debut;
+      return rapport;
+    }
+
     const productParCode = new Map<string, string>();
 
-    // ── 1. Les gammes ────────────────────────────────────────────────────
-    for (const gamme of catalogue.gammes) {
+    // ── 1. Les produits ───────────────────────────────────────────────────
+    // Le contrat historique du site nomme ce tableau `gammes`, mais chacune
+    // de ses entrées est un produit (Royal Grains, Djassa…), rangé ici dans
+    // l'unique gamme Bélier d’Or.
+    for (const productDefinition of catalogue.gammes) {
       try {
-        const { categoryId, productId, created } = await this.upsertRange(
-          gamme,
-          catalogue.marque,
+        const { productId, created } = await this.upsertProduct(
+          productDefinition,
+          belierCategoryId,
         );
-        categoryParCode.set(gamme.code, categoryId);
-        productParCode.set(gamme.code, productId);
-        if (created) rapport.ranges.created += 1;
-        else rapport.ranges.updated += 1;
-      } catch (erreur) {
-        rapport.errors.push(`gamme ${gamme.code} : ${(erreur as Error).message}`);
+        productParCode.set(productDefinition.code, productId);
+        if (created) rapport.products.created += 1;
+        else rapport.products.updated += 1;
+      } catch (error) {
+        rapport.errors.push(
+          `produit ${productDefinition.code} : ${(error as Error).message}`,
+        );
       }
     }
 
@@ -658,13 +677,17 @@ export class CatalogSyncService {
     for (const produit of catalogue.produits) {
       const productId = productParCode.get(produit.gamme_code);
       if (!productId) {
-        // La gamme a échoué plus haut : on saute la référence plutôt que de
+        // Le produit a échoué plus haut : on saute la référence plutôt que de
         // la rattacher à un produit arbitraire.
         rapport.skipped.push(produit.reference);
         continue;
       }
       try {
-        const created = await this.upsertVariant(productId, produit, options.syncStock === true);
+        const created = await this.upsertVariant(
+          productId,
+          produit,
+          options.syncStock === true,
+        );
         referencesVues.add(produit.reference);
         if (created) rapport.variants.created += 1;
         else rapport.variants.updated += 1;
@@ -687,9 +710,8 @@ export class CatalogSyncService {
     //   C'est le cas des données de démarrage : le seed crée un catalogue
     //   d'exemple sans rattachement. Tant que cette branche manquait, elles
     //   survivaient à chaque synchronisation et cohabitaient avec le vrai
-    //   catalogue : l'application vendait une gamme entière inexistante et un
-    //   format « 900 g » sur cinq gammes, avec des stocks inventés. Un client
-    //   pouvait commander ce qui n'existe pas.
+    //   catalogue : l'application vendait un produit inexistant et un format
+    //   « 900 g » inventé. Un client pouvait commander ce qui n'existe pas.
     //
     // Le rattachement se fait par `sourceRef` PUIS par (produit, poids) : une
     // variante du seed qui correspond à une référence réelle est adoptée et
@@ -713,17 +735,16 @@ export class CatalogSyncService {
       rapport.variants.deactivated = retirees.count;
     }
 
-    // ── 4. Les gammes que le site ne propose pas ─────────────────────────
-    // Sans cette etape, une gamme retiree du catalogue resterait affichee en
-    // RAYON VIDE : `products.list()` ne filtre que sur `isActive`, et n'inclut
-    // que les variantes disponibles. Une gamme dont toutes les variantes
-    // viennent d'etre desactivees s'afficherait donc sans rien a vendre.
+    // ── 4. Les produits que le site ne propose pas ───────────────────────
+    // Sans cette étape, un produit retiré resterait affiché avec un rayon
+    // vide. Les catégories restent en base pour l'historique, mais l'app ne
+    // montre que celles qui portent encore un produit actif.
     //
-    // Meme rattachement que pour les variantes — `sourceCode` — et memes deux
+    // Même rattachement que pour les variantes — `sourceCode` — et mêmes deux
     // garde-fous : ni catalogue vide, ni synchronisation partielle.
     const codesVus = [...productParCode.keys()];
     if (codesVus.length > 0 && rapport.errors.length === 0) {
-      const gammesRetirees = await this.prisma.db.product.updateMany({
+      const productsRetired = await this.prisma.db.product.updateMany({
         where: {
           OR: [
             { sourceCode: { not: null, notIn: codesVus } },
@@ -733,15 +754,15 @@ export class CatalogSyncService {
         },
         data: { isActive: false },
       });
-      rapport.ranges.deactivated = gammesRetirees.count;
+      rapport.products.deactivated = productsRetired.count;
     }
 
     rapport.ok = rapport.errors.length === 0;
     rapport.durationMs = Date.now() - debut;
 
     const resume =
-      `gammes ${rapport.ranges.created}+/${rapport.ranges.updated}~/` +
-      `${rapport.ranges.deactivated}- · ` +
+      `produits ${rapport.products.created}+/${rapport.products.updated}~/` +
+      `${rapport.products.deactivated}- · ` +
       `variantes ${rapport.variants.created}+/${rapport.variants.updated}~/` +
       `${rapport.variants.deactivated}- · ${rapport.durationMs} ms`;
     if (rapport.ok) this.logger.log(`Catalogue synchronisé : ${resume}`);
@@ -750,71 +771,75 @@ export class CatalogSyncService {
     return rapport;
   }
 
-  /**
-   * Une gamme du site = une Category + un Product ici.
-   *
-   * Le rattachement se fait dans cet ordre : `sourceCode` (les fois
-   * suivantes), puis les slugs historiques (la première fois), puis le slug
-   * du site (gamme réellement nouvelle).
-   */
-  private async upsertRange(
-    gamme: SourceRange,
-    marque: string,
-  ): Promise<{ categoryId: string; productId: string; created: boolean }> {
-    const slugsCandidats = [
-      gamme.slug,
-      ...(LEGACY_SLUGS[gamme.code] ?? []),
-    ];
-
-    const categorieExistante =
-      (await this.prisma.db.category.findFirst({ where: { sourceCode: gamme.code } })) ??
-      (await this.prisma.db.category.findFirst({ where: { slug: { in: slugsCandidats } } }));
-
-    const donneesCategorie = {
-      slug: gamme.slug,
-      name: gamme.nom,
-      description: gamme.description_courte || gamme.description || null,
-      sortOrder: gamme.ordre,
-      sourceCode: gamme.code,
-      ...(gamme.image_url ? { imageUrl: gamme.image_url } : {}),
+  /** Crée ou corrige l'unique gamme commerciale visible dans l'application. */
+  private async upsertBelierCategory(): Promise<string> {
+    const existing =
+      (await this.prisma.db.category.findFirst({
+        where: { sourceCode: 'BELIER_DOR' },
+      })) ??
+      (await this.prisma.db.category.findFirst({
+        where: { slug: 'belier-dor' },
+      }));
+    const data = {
+      slug: 'belier-dor',
+      name: COMPANY.brandName,
+      description: COMPANY.brandSignature,
+      sortOrder: 1,
+      sourceCode: 'BELIER_DOR',
     };
-
-    const category = categorieExistante
+    const category = existing
       ? await this.prisma.db.category.update({
-          where: { id: categorieExistante.id },
-          data: donneesCategorie,
+          where: { id: existing.id },
+          data,
         })
-      : await this.prisma.db.category.create({ data: donneesCategorie });
+      : await this.prisma.db.category.create({ data });
+    return category.id;
+  }
 
-    const produitExistant =
-      (await this.prisma.db.product.findFirst({ where: { sourceCode: gamme.code } })) ??
-      (await this.prisma.db.product.findFirst({ where: { slug: { in: slugsCandidats } } }));
+  /**
+   * Une entrée `gammes` du contrat historique du site représente un produit
+   * commercial. Ses références associées deviennent les formats de ce produit.
+   */
+  private async upsertProduct(
+    productDefinition: SourceProductDefinition,
+    categoryId: string,
+  ): Promise<{ productId: string; created: boolean }> {
+    const candidateSlugs = [
+      productDefinition.slug,
+      ...(LEGACY_SLUGS[productDefinition.code] ?? []),
+    ];
+    const existing =
+      (await this.prisma.db.product.findFirst({
+        where: { sourceCode: productDefinition.code },
+      })) ??
+      (await this.prisma.db.product.findFirst({
+        where: { slug: { in: candidateSlugs } },
+      }));
 
-    const donneesProduit = {
-      slug: gamme.slug,
-      name: `${marque} ${gamme.nom}`,
-      shortDescription: gamme.description_courte || null,
-      description: gamme.description || null,
-      brand: marque,
-      categoryId: category.id,
-      isActive: gamme.actif,
-      isFeatured: gamme.ordre <= 2,
-      sourceCode: gamme.code,
-      ...(gamme.image_url ? { imageUrl: gamme.image_url } : {}),
+    const data = {
+      slug: productDefinition.slug,
+      // La marque est retirée du nom : le site la préfixe ou la suffixe selon
+      // les fiches, l'application l'affiche déjà une seule fois (en-tête).
+      name: cleanProductName(productDefinition.nom),
+      shortDescription: productDefinition.description_courte || null,
+      description: productDefinition.description || null,
+      brand: COMPANY.brandName,
+      categoryId,
+      isActive: productDefinition.actif,
+      isFeatured: productDefinition.ordre <= 2,
+      sourceCode: productDefinition.code,
+      ...(productDefinition.image_url
+        ? { imageUrl: productDefinition.image_url }
+        : {}),
     };
-
-    const product = produitExistant
+    const product = existing
       ? await this.prisma.db.product.update({
-          where: { id: produitExistant.id },
-          data: donneesProduit,
+          where: { id: existing.id },
+          data,
         })
-      : await this.prisma.db.product.create({ data: donneesProduit });
+      : await this.prisma.db.product.create({ data });
 
-    return {
-      categoryId: category.id,
-      productId: product.id,
-      created: !produitExistant,
-    };
+    return { productId: product.id, created: !existing };
   }
 
   /**
@@ -905,17 +930,18 @@ export class CatalogSyncService {
     // le compilateur ne sait pas restreindre ici, et l'on se retrouverait à
     // comparer des `unknown`. Nommer la forme attendue rend aussi la
     // comparaison ci-dessous lisible sans remonter à la requête.
-    const locales: LocalVariant[] = await this.prisma.db.productVariant.findMany({
-      select: {
-        sourceRef: true,
-        sku: true,
-        label: true,
-        weightGrams: true,
-        price: true,
-        originalPrice: true,
-        isAvailable: true,
-      },
-    });
+    const locales: LocalVariant[] =
+      await this.prisma.db.productVariant.findMany({
+        select: {
+          sourceRef: true,
+          sku: true,
+          label: true,
+          weightGrams: true,
+          price: true,
+          originalPrice: true,
+          isAvailable: true,
+        },
+      });
 
     const parReference = new Map<string, LocalVariant>(
       locales
@@ -944,7 +970,11 @@ export class CatalogSyncService {
         }
       };
       compare('price', produit.prix, locale.price);
-      compare('originalPrice', produit.prix_barre ?? null, locale.originalPrice);
+      compare(
+        'originalPrice',
+        produit.prix_barre ?? null,
+        locale.originalPrice,
+      );
       compare('label', produit.format, locale.label);
       compare('weightGrams', produit.poids_grammes, locale.weightGrams);
       compare('isAvailable', estVendable(produit), locale.isAvailable);

@@ -2,13 +2,20 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Image, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { fetchProducts, catalogKeys } from '@/api/catalog';
+import { OfflineBanner } from '@/components/OfflineBanner';
 import { usePushRegistration } from '@/lib/usePushRegistration';
+import { startNetworkMonitoring } from '@/lib/network';
+import {
+  persistCatalogCache,
+  restoreCatalogCache,
+} from '@/lib/queryPersistence';
 import { useAuthStore } from '@/store/auth';
-import { palette } from '@/theme/tokens';
+import { palette, spacing } from '@/theme/tokens';
 
 /**
  * Racine de l'application.
@@ -32,6 +39,7 @@ export default function RootLayout() {
       }),
   );
 
+  const [catalogHydrated, setCatalogHydrated] = useState(false);
   const hydrated = useAuthStore((s) => s.hydrated);
   const isAuthenticated = useAuthStore((s) => s.accessToken !== null);
   // L'espace livreur n'a de sens que pour un livreur. Ce guard masque l'onglet
@@ -53,8 +61,45 @@ export default function RootLayout() {
   const restore = useAuthStore((s) => s.restore);
 
   useEffect(() => {
+    startNetworkMonitoring();
     void restore();
   }, [restore]);
+
+  useEffect(() => {
+    let active = true;
+    let stopPersisting: () => void = () => undefined;
+
+    // Le cache est relu AVANT de monter les écrans : hors ligne, le catalogue
+    // existant s'affiche directement au lieu d'être remplacé par une erreur.
+    void restoreCatalogCache(queryClient).finally(() => {
+      if (!active) return;
+      stopPersisting = persistCatalogCache(queryClient);
+      setCatalogHydrated(true);
+    });
+
+    return () => {
+      active = false;
+      stopPersisting();
+    };
+  }, [queryClient]);
+
+  useEffect(() => {
+    if (!catalogHydrated) return;
+
+    // Conserver jusqu'à 100 références rend la recherche et les fiches produit
+    // réellement utiles lors de la prochaine coupure réseau. Le serveur borne
+    // lui-même cette valeur à 100.
+    void queryClient
+      .prefetchQuery({
+        queryKey: catalogKeys.products({ limit: 100 }),
+        queryFn: ({ signal }) => fetchProducts({ limit: 100 }, signal),
+        staleTime: 10 * 60 * 1000,
+      })
+      .catch(() => {
+        // Hors ligne, React Query conserve le cache relu ci-dessus et attend
+        // le retour du réseau pour rafraîchir le catalogue.
+      });
+  }, [catalogHydrated, queryClient]);
 
   // Jeton de notification : lié à la session, pas à un écran.
   usePushRegistration();
@@ -64,55 +109,67 @@ export default function RootLayout() {
       <QueryClientProvider client={queryClient}>
         <SafeAreaProvider>
           <StatusBar style="dark" />
-          {hydrated ? (
-            <Stack
-              screenOptions={{
-                headerShown: false,
-                contentStyle: { backgroundColor: palette.bg },
-              }}
-            >
-              {/*
-                Le catalogue reste consultable sans compte : obliger à s'inscrire
-                avant même de voir les produits ferait fuir des clients.
-                Seul le tunnel de commande exige une session.
-              */}
-              <Stack.Screen name="(tabs)" />
-              <Stack.Screen name="produit/[slug]" />
-
-              <Stack.Protected guard={!isAuthenticated}>
-                <Stack.Screen name="(auth)" />
-              </Stack.Protected>
-
-              <Stack.Protected guard={isAuthenticated}>
+          <View style={styles.app}>
+            <OfflineBanner />
+            {hydrated && catalogHydrated ? (
+              <Stack
+                screenOptions={{
+                  headerShown: false,
+                  contentStyle: { backgroundColor: palette.bg },
+                }}
+              >
+                {/* Le parcours d'achat est public : l'authentification reste
+                    réservée aux espaces historiques et aux rôles internes. */}
+                <Stack.Screen name="(tabs)" />
+                <Stack.Screen name="produit/[slug]" />
                 <Stack.Screen name="commande" />
-                <Stack.Screen name="commandes" />
-                <Stack.Screen name="notifications" />
-                <Stack.Screen name="parrainage" />
-              </Stack.Protected>
+                <Stack.Screen name="paiement/[reference]" />
+                <Stack.Screen name="confirmation/[reference]" />
 
-              <Stack.Protected guard={isAuthenticated && isCourier}>
-                <Stack.Screen name="tournee" />
-              </Stack.Protected>
+                <Stack.Protected guard={!isAuthenticated}>
+                  <Stack.Screen name="(auth)" />
+                </Stack.Protected>
 
-              <Stack.Protected guard={isAuthenticated && isProducer}>
-                <Stack.Screen name="exploitation" />
-              </Stack.Protected>
+                <Stack.Protected guard={isAuthenticated}>
+                  <Stack.Screen name="commandes" />
+                  <Stack.Screen name="notifications" />
+                  <Stack.Screen name="parrainage" />
+                </Stack.Protected>
 
-              <Stack.Protected guard={isAuthenticated && isExecutive}>
-                <Stack.Screen name="direction" />
-              </Stack.Protected>
+                <Stack.Protected guard={isAuthenticated && isCourier}>
+                  <Stack.Screen name="tournee" />
+                </Stack.Protected>
 
-              <Stack.Protected guard={isAuthenticated && isManager}>
-                <Stack.Screen name="gestion" />
-              </Stack.Protected>
-            </Stack>
-          ) : (
-            // Session en cours de restauration : afficher les écrans maintenant
-            // provoquerait une redirection visible dès que le token est retrouvé.
-            <View style={styles.splash}>
-              <ActivityIndicator color={palette.green} />
-            </View>
-          )}
+                <Stack.Protected guard={isAuthenticated && isProducer}>
+                  <Stack.Screen name="exploitation" />
+                </Stack.Protected>
+
+                <Stack.Protected guard={isAuthenticated && isExecutive}>
+                  <Stack.Screen name="direction" />
+                </Stack.Protected>
+
+                <Stack.Protected guard={isAuthenticated && isManager}>
+                  <Stack.Screen name="gestion" />
+                </Stack.Protected>
+              </Stack>
+            ) : (
+              // Session et cache catalogue en cours de restauration : afficher
+              // les écrans maintenant provoquerait une erreur ou une redirection
+              // visible dès que les données locales sont retrouvées.
+              <View style={styles.splash} accessibilityLabel="Chargement AGRIM">
+                <Image
+                  source={require('../assets/logo-agrim.png')}
+                  style={styles.splashLogo}
+                  resizeMode="contain"
+                  accessibilityLabel="Logo AGRIM"
+                />
+                <Text style={styles.splashCompany}>
+                  PRÉPARATION DE L’APPLICATION
+                </Text>
+                <ActivityIndicator color={palette.green} />
+              </View>
+            )}
+          </View>
         </SafeAreaProvider>
       </QueryClientProvider>
     </ErrorBoundary>
@@ -120,10 +177,20 @@ export default function RootLayout() {
 }
 
 const styles = StyleSheet.create({
+  app: { flex: 1 },
   splash: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    gap: spacing.sm,
     backgroundColor: palette.bg,
+  },
+  splashLogo: { width: 228, height: 92 },
+  splashCompany: {
+    color: palette.muted,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.5,
+    marginBottom: spacing.lg,
   },
 });
