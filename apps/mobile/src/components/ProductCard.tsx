@@ -1,4 +1,4 @@
-import { cleanProductName, type Product } from '@agrim/contracts';
+import type { Product } from '@agrim/contracts';
 import { useState } from 'react';
 import { Image, Pressable, StyleSheet, View } from 'react-native';
 
@@ -40,7 +40,7 @@ export function ProductCard({ product, onPress }: ProductCardProps) {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${cleanProductName(product.name)}, à partir de ${
+      accessibilityLabel={`${product.name}, à partir de ${
         cheapest === null ? 'prix indisponible' : formatXof(cheapest)
       }`}
       onPress={() => onPress?.(product)}
@@ -74,7 +74,7 @@ export function ProductCard({ product, onPress }: ProductCardProps) {
 
       <View style={styles.body}>
         <Text variant="h3" numberOfLines={2}>
-          {cleanProductName(product.name)}
+          {product.name}
         </Text>
         {product.shortDescription ? (
           <Text variant="caption" color="muted" numberOfLines={2}>

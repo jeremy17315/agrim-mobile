@@ -1,4 +1,4 @@
-import { cleanProductName, type Product } from '@agrim/contracts';
+import { type Product } from '@agrim/contracts';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
@@ -20,11 +20,10 @@ import {
 } from '@/components/states';
 import { Button, Card, Icon, Text } from '@/components/ui';
 import { formatWeight, formatXof } from '@/lib/format';
-import { useIsOnline } from '@/lib/network';
 import { resolveProductImageUrl } from '@/lib/productImage';
 import { useDebouncedValue } from '@/lib/useDebouncedValue';
 import { useCartItemCount, useCartStore, useCartTotals } from '@/store/cart';
-import { palette, radius, spacing, typography } from '@/theme/tokens';
+import { palette, radius, shadow, spacing, typography } from '@/theme/tokens';
 
 /**
  * Vitrine compacte du catalogue : recherche, produits, cartes et ajout rapide.
@@ -37,8 +36,7 @@ export default function CatalogueScreen() {
   const params = useLocalSearchParams<{ category?: string }>();
   const addItem = useCartStore((state) => state.addItem);
   const itemCount = useCartItemCount();
-  const totals = useCartTotals();
-  const isOnline = useIsOnline();
+  const cartTotals = useCartTotals();
 
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState<string | undefined>(params.category);
@@ -177,10 +175,12 @@ export default function CatalogueScreen() {
         <FlatList
           data={items}
           keyExtractor={(item) => item.id}
-          style={styles.listGrow}
           numColumns={2}
           columnWrapperStyle={styles.row}
-          contentContainerStyle={styles.list}
+          contentContainerStyle={[
+            styles.list,
+            itemCount > 0 && styles.listWithCartShortcut,
+          ]}
           ListHeaderComponent={
             <View style={styles.listHeading}>
               <Text variant="h2">Nos produits</Text>
@@ -206,35 +206,27 @@ export default function CatalogueScreen() {
         />
       )}
 
-      {/* Raccourci de commande : depuis le catalogue, le client ajoute puis
-          commande sans transiter par l'écran du panier — le récapitulatif vit
-          déjà sur l'écran « Commande ». Trois gestes suffisent : « + »,
-          « Commander », puis « CONFIRMER LA COMMANDE ». */}
       {itemCount > 0 ? (
         <View
           style={[
-            styles.checkoutBar,
-            { paddingBottom: insets.bottom + spacing.md },
+            styles.cartShortcut,
+            { paddingBottom: insets.bottom + spacing.sm },
           ]}
         >
-          <View style={styles.checkoutMeta}>
+          <View style={styles.cartShortcutTotal}>
             <Text variant="micro" color="muted">
-              {itemCount} ARTICLE{itemCount > 1 ? 'S' : ''} · SOUS-TOTAL
+              {itemCount} ARTICLE{itemCount > 1 ? 'S' : ''}
             </Text>
             <Text variant="h3" color="green">
-              {formatXof(totals.subtotal)}
+              {formatXof(cartTotals.subtotal)}
             </Text>
           </View>
-          <View style={styles.checkoutAction}>
+          <View style={styles.cartShortcutAction}>
             <Button
-              label={isOnline ? 'Commander' : 'Connexion nécessaire'}
-              disabled={!isOnline}
-              onPress={() => router.push('/commande')}
-              icon={
-                isOnline ? (
-                  <Icon name="arrow-right" size={16} color="white" />
-                ) : undefined
-              }
+              label="VOIR LE PANIER"
+              size="sm"
+              onPress={() => router.push('/panier')}
+              icon={<Icon name="shopping-bag" size={16} color="white" />}
             />
           </View>
         </View>
@@ -263,7 +255,7 @@ function QuickProductCard({
       <Pressable
         onPress={onOpen}
         accessibilityRole="button"
-        accessibilityLabel={`Voir ${cleanProductName(product.name)}`}
+        accessibilityLabel={`Voir ${product.name}`}
         style={styles.productPressable}
       >
         <View style={styles.productVisual}>
@@ -271,7 +263,7 @@ function QuickProductCard({
             <Image
               source={{ uri: imageUrl }}
               style={styles.productImage}
-              resizeMode="cover"
+              resizeMode="contain"
               onError={() => setImageBroken(true)}
             />
           ) : (
@@ -287,7 +279,7 @@ function QuickProductCard({
         </View>
         <View style={styles.productBody}>
           <Text variant="h3" numberOfLines={2}>
-            {cleanProductName(product.name)}
+            {product.name}
           </Text>
           <Text variant="caption" color="muted" numberOfLines={1}>
             {variant
@@ -311,7 +303,7 @@ function QuickProductCard({
           <Pressable
             onPress={onAdd}
             accessibilityRole="button"
-            accessibilityLabel={`Ajouter ${cleanProductName(product.name)} au panier`}
+            accessibilityLabel={`Ajouter ${product.name} au panier`}
             style={styles.addButton}
           >
             <Icon name="plus" size={18} color="white" />
@@ -390,19 +382,6 @@ const styles = StyleSheet.create({
     borderColor: palette.bg,
   },
   cartCountText: { color: palette.white, fontSize: 8 },
-  listGrow: { flex: 1 },
-  checkoutBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md,
-    backgroundColor: palette.card,
-    borderTopWidth: 1,
-    borderTopColor: palette.line,
-  },
-  checkoutMeta: { gap: 2 },
-  checkoutAction: { flex: 1 },
   searchBox: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -430,6 +409,7 @@ const styles = StyleSheet.create({
   },
   chipActive: { backgroundColor: palette.green, borderColor: palette.green },
   list: { padding: spacing.lg, paddingTop: spacing.sm, gap: spacing.md },
+  listWithCartShortcut: { paddingBottom: 106 },
   listHeading: {
     flexDirection: 'row',
     alignItems: 'baseline',
@@ -441,10 +421,11 @@ const styles = StyleSheet.create({
   productCard: { overflow: 'hidden' },
   productPressable: { gap: spacing.sm },
   productVisual: {
-    height: 132,
+    height: 148,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
+    padding: spacing.sm,
     backgroundColor: palette.goldSoft,
   },
   productImage: { width: '100%', height: '100%' },
@@ -475,4 +456,20 @@ const styles = StyleSheet.create({
     backgroundColor: palette.gold,
   },
   popularText: { color: palette.greenDeep, fontSize: 8 },
+  cartShortcut: {
+    position: 'absolute',
+    right: spacing.lg,
+    bottom: 0,
+    left: spacing.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingTop: spacing.sm,
+    backgroundColor: palette.card,
+    borderTopLeftRadius: radius.lg,
+    borderTopRightRadius: radius.lg,
+    ...shadow.floating,
+  },
+  cartShortcutTotal: { flex: 1, gap: 2, paddingLeft: spacing.md },
+  cartShortcutAction: { minWidth: 158 },
 });

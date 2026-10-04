@@ -1,8 +1,4 @@
-import {
-  cleanProductName,
-  SELLING_POINTS,
-  type ProductVariant,
-} from '@agrim/contracts';
+import { SELLING_POINTS, type ProductVariant } from '@agrim/contracts';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, View } from 'react-native';
@@ -133,7 +129,7 @@ export default function ProductScreen() {
                 <Image
                   source={{ uri: imageUrl! }}
                   style={styles.heroPhoto}
-                  resizeMode="cover"
+                  resizeMode="contain"
                   onError={() => setFailedImage(imageUrl)}
                 />
               ) : (
@@ -159,7 +155,7 @@ export default function ProductScreen() {
                   <Text variant="micro" color="green">
                     {product.data.brand}
                   </Text>
-                  <Text variant="h1">{cleanProductName(product.data.name)}</Text>
+                  <Text variant="h1">{product.data.name}</Text>
                 </View>
                 <View style={styles.priceBox}>
                   <Text variant="micro" color="muted">
@@ -195,6 +191,7 @@ export default function ProductScreen() {
                       onPress={() => {
                         setSelectedId(variant.id);
                         setQuantity(1);
+                        setJustAdded(false);
                       }}
                       accessibilityRole="radio"
                       accessibilityState={{ selected: active, disabled }}
@@ -346,12 +343,22 @@ export default function ProductScreen() {
             </View>
             <View style={styles.footerAction}>
               <Button
-                label={canOrder ? 'Ajouter au panier' : 'Indisponible'}
+                label={
+                  justAdded
+                    ? 'VOIR MON PANIER'
+                    : canOrder
+                      ? 'AJOUTER AU PANIER'
+                      : 'INDISPONIBLE'
+                }
                 disabled={!canOrder}
-                onPress={handleAdd}
+                onPress={justAdded ? () => router.push('/panier') : handleAdd}
                 icon={
                   canOrder ? (
-                    <Icon name="shopping-cart" size={16} color="white" />
+                    <Icon
+                      name={justAdded ? 'shopping-bag' : 'shopping-cart'}
+                      size={16}
+                      color="white"
+                    />
                   ) : undefined
                 }
               />
@@ -413,7 +420,7 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
     overflow: 'hidden',
   },
-  heroPhoto: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
+  heroPhoto: { width: '100%', height: '100%', padding: spacing.md },
   heroBadge: { position: 'absolute', top: spacing.sm, left: spacing.sm },
   section: { gap: spacing.sm },
   productHeading: {

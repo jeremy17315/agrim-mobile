@@ -101,7 +101,7 @@ beforeEach(() => {
 it('ajoute le format sélectionné au panier', () => {
   render(<ProductScreen />);
 
-  fireEvent.press(screen.getByText('Ajouter au panier'));
+  fireEvent.press(screen.getByText('AJOUTER AU PANIER'));
 
   const items = useCartStore.getState().items;
   expect(items).toHaveLength(1);
@@ -116,7 +116,7 @@ it('respecte le format choisi et la quantité saisie', () => {
   fireEvent.press(screen.getByLabelText(/^5 kg/));
   fireEvent.press(screen.getByLabelText('Augmenter la quantité'));
   fireEvent.press(screen.getByLabelText('Augmenter la quantité'));
-  fireEvent.press(screen.getByText('Ajouter au panier'));
+  fireEvent.press(screen.getByText('AJOUTER AU PANIER'));
 
   const [line] = useCartStore.getState().items;
   expect(line?.variantId).toBe('v-5000');
@@ -124,25 +124,26 @@ it('respecte le format choisi et la quantité saisie', () => {
   expect(line?.unitPrice).toBe(6000);
 });
 
-it('remet la quantité à 1 après l’ajout et confirme visuellement', () => {
+it('propose le panier dès l’ajout, sans perdre la confirmation visuelle', () => {
   render(<ProductScreen />);
 
   fireEvent.press(screen.getByLabelText('Augmenter la quantité'));
-  fireEvent.press(screen.getByText('Ajouter au panier'));
+  fireEvent.press(screen.getByText('AJOUTER AU PANIER'));
 
   expect(screen.getByText('Ajouté au panier.')).toBeTruthy();
+  expect(screen.getByText('VOIR MON PANIER')).toBeTruthy();
   expect(useCartStore.getState().items[0]?.quantity).toBe(2);
-
-  // Un second ajout ne doit pas réutiliser l'ancienne quantité.
-  fireEvent.press(screen.getByText('Ajouter au panier'));
-  expect(useCartStore.getState().items[0]?.quantity).toBe(3);
 });
 
 it('cumule sur la même ligne plutôt que de dupliquer le format', () => {
   render(<ProductScreen />);
 
-  fireEvent.press(screen.getByText('Ajouter au panier'));
-  fireEvent.press(screen.getByText('Ajouter au panier'));
+  fireEvent.press(screen.getByText('AJOUTER AU PANIER'));
+  // Choisir de nouveau le format signifie que le client continue ses achats,
+  // ce qui remet l'action principale sur « ajouter ».
+  fireEvent.press(screen.getByLabelText(/^5 kg/));
+  fireEvent.press(screen.getByLabelText(/^900 g/));
+  fireEvent.press(screen.getByText('AJOUTER AU PANIER'));
 
   expect(useCartStore.getState().items).toHaveLength(1);
   expect(useCartStore.getState().items[0]?.quantity).toBe(2);
@@ -158,8 +159,8 @@ it('n’ajoute rien depuis un format en rupture', () => {
   });
   render(<ProductScreen />);
 
-  expect(screen.getByText('Indisponible')).toBeTruthy();
-  expect(screen.queryByText('Ajouter au panier')).toBeNull();
+  expect(screen.getByText('INDISPONIBLE')).toBeTruthy();
+  expect(screen.queryByText('AJOUTER AU PANIER')).toBeNull();
   expect(useCartStore.getState().items).toHaveLength(0);
 });
 
@@ -181,7 +182,5 @@ it('affiche le prix barré du format sélectionné', () => {
   render(<ProductScreen />);
 
   // Apparaît à la fois dans le sélecteur de format et le pied de page.
-  expect(
-    screen.getAllByText(`1${NB}400${NB}F`).length,
-  ).toBeGreaterThan(0);
+  expect(screen.getAllByText(`1${NB}400${NB}F`).length).toBeGreaterThan(0);
 });

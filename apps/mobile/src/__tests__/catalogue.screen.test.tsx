@@ -1,6 +1,8 @@
 import type { Category, Product } from '@agrim/contracts';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 
+import { useCartStore } from '@/store/cart';
+
 import CatalogueScreen from '../../app/(tabs)/catalogue';
 
 /**
@@ -101,6 +103,7 @@ beforeEach(() => {
   jest.useFakeTimers();
   jest.clearAllMocks();
   productCalls.length = 0;
+  useCartStore.setState({ items: [], hydrated: true });
   mockCategories = initialCategories.map((category) => ({ ...category }));
   mockParams = {};
   mockProducts = listing([product()]);
@@ -118,6 +121,18 @@ it('affiche la grille et le nombre de résultats', () => {
 
   expect(screen.getByText('1 produit')).toBeTruthy();
   expect(screen.getByText('RIZ BOAGNI Royal Grains')).toBeTruthy();
+});
+
+it('propose le panier après un ajout rapide, sans quitter le catalogue', () => {
+  render(<CatalogueScreen />);
+
+  fireEvent.press(
+    screen.getByLabelText('Ajouter RIZ BOAGNI Royal Grains au panier'),
+  );
+
+  expect(screen.getByText('VOIR LE PANIER')).toBeTruthy();
+  fireEvent.press(screen.getByText('VOIR LE PANIER'));
+  expect(mockPush).toHaveBeenCalledWith('/panier');
 });
 
 it('masque le sélecteur lorsque Bélier d’Or est l’unique gamme', () => {
