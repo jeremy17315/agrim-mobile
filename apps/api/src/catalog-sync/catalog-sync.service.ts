@@ -30,7 +30,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { COMPANY, type DeliveryGrid } from '@agrim/contracts';
+import { cleanProductName, COMPANY, type DeliveryGrid } from '@agrim/contracts';
 
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -818,7 +818,9 @@ export class CatalogSyncService {
 
     const data = {
       slug: productDefinition.slug,
-      name: productDefinition.nom,
+      // La marque est retirée du nom : le site la préfixe ou la suffixe selon
+      // les fiches, l'application l'affiche déjà une seule fois (en-tête).
+      name: cleanProductName(productDefinition.nom),
       shortDescription: productDefinition.description_courte || null,
       description: productDefinition.description || null,
       brand: COMPANY.brandName,

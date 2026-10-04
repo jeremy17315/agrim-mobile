@@ -1,4 +1,4 @@
-import { COMPANY } from '@agrim/contracts';
+import { cleanProductName, COMPANY } from '@agrim/contracts';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
@@ -215,12 +215,12 @@ function CartLine({
       <View style={styles.lineBody}>
         <View style={styles.lineHead}>
           <Text variant="h3" numberOfLines={2} style={styles.flex}>
-            {item.productName}
+            {cleanProductName(item.productName)}
           </Text>
           <Pressable
             onPress={onRemove}
             accessibilityRole="button"
-            accessibilityLabel={`Retirer ${item.productName} ${item.variantLabel}`}
+            accessibilityLabel={`Retirer ${cleanProductName(item.productName)} ${item.variantLabel}`}
             hitSlop={10}
           >
             <Icon name="trash-2" size={15} color="muted" />
@@ -284,7 +284,7 @@ function CartThumbnail({
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={`Voir ${item.productName}`}
+      accessibilityLabel={`Voir ${cleanProductName(item.productName)}`}
       style={styles.thumb}
     >
       {photo ? (

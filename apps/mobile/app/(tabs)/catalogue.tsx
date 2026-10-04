@@ -1,4 +1,4 @@
-import { type Product } from '@agrim/contracts';
+import { cleanProductName, type Product } from '@agrim/contracts';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
@@ -263,7 +263,7 @@ function QuickProductCard({
       <Pressable
         onPress={onOpen}
         accessibilityRole="button"
-        accessibilityLabel={`Voir ${product.name}`}
+        accessibilityLabel={`Voir ${cleanProductName(product.name)}`}
         style={styles.productPressable}
       >
         <View style={styles.productVisual}>
@@ -287,7 +287,7 @@ function QuickProductCard({
         </View>
         <View style={styles.productBody}>
           <Text variant="h3" numberOfLines={2}>
-            {product.name}
+            {cleanProductName(product.name)}
           </Text>
           <Text variant="caption" color="muted" numberOfLines={1}>
             {variant
@@ -311,7 +311,7 @@ function QuickProductCard({
           <Pressable
             onPress={onAdd}
             accessibilityRole="button"
-            accessibilityLabel={`Ajouter ${product.name} au panier`}
+            accessibilityLabel={`Ajouter ${cleanProductName(product.name)} au panier`}
             style={styles.addButton}
           >
             <Icon name="plus" size={18} color="white" />

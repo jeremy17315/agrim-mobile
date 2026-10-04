@@ -1,4 +1,5 @@
 import {
+  cleanProductName,
   computeCartTotals,
   type CartTotals,
   type Product,
@@ -119,7 +120,9 @@ export const useCartStore = create<CartState>()(
             variantId: variant.id,
             productId: product.id,
             productSlug: product.slug,
-            productName: product.name,
+            // La marque ne fait pas partie du nom : on la retire à l'entrée
+            // dans le panier pour qu'il reste lisible même hors ligne.
+            productName: cleanProductName(product.name),
             productImageUrl: product.imageUrl,
             variantLabel: variant.label,
             weightGrams: variant.weightGrams,

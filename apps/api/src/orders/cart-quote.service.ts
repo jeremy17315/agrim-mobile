@@ -52,6 +52,27 @@ export class CartQuoteService {
     private readonly pricing: SitePricingService,
   ) {}
 
+  /**
+   * Zones de livraison telles que le site les publie.
+   *
+   * Le client CHOISIT sa zone au lieu de la taper : un texte libre se trompait
+   * de zone (et donc de délai) plus souvent qu'il ne servait. La liste reste
+   * celle du site — aucune zone n'est écrite en dur ici.
+   */
+  async zones() {
+    const grid = await readDeliveryGrid(this.prisma.db);
+    return {
+      zones: Object.entries(grid.zones).map(([value, zone]) => ({
+        value,
+        label: zone.libelle,
+        delai: zone.delai,
+        frais: zone.frais,
+      })),
+      defaultZone: grid.zoneParDefaut,
+      retrait: grid.retrait,
+    };
+  }
+
   async quote(dto: CartQuoteDto) {
     // Quantités fusionnées par variante : « 2 + 3 » est « 5 », pas deux
     // lignes — même règle que le checkout, même montant affiché.

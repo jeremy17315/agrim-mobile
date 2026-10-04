@@ -3,6 +3,7 @@ export * from './schemas';
 export * from './cart-totals';
 export * from './delivery';
 export * from './company';
+export * from './product-name';
 export * from './analytics';
 export * from './management';
 export * from './notifications';

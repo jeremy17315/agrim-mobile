@@ -6,7 +6,11 @@ import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ApiError, describeError } from '@/api/errors';
-import { useCreateGuestOrder, useGuestCartQuote } from '@/api/orders';
+import {
+  useCreateGuestOrder,
+  useDeliveryZones,
+  useGuestCartQuote,
+} from '@/api/orders';
 import { EmptyState } from '@/components/states';
 import { Banner, Button, Card, Icon, Input, Text } from '@/components/ui';
 import { formatXof } from '@/lib/format';
@@ -39,10 +43,14 @@ export default function CommandeScreen() {
   const totals = useCartTotals();
   const createOrder = useCreateGuestOrder();
   const quote = useGuestCartQuote();
+  const zones = useDeliveryZones();
 
   const [customerName, setCustomerName] = useState('');
   const [phone, setPhone] = useState('');
-  const [deliveryLocation, setDeliveryLocation] = useState('');
+  // Le client CHOISIT sa zone, il ne la tape plus : une zone tapée à la main
+  // se trompait de délai, et le site, lui, propose une liste fermée.
+  const [zone, setZone] = useState('');
+  const [landmark, setLandmark] = useState('');
   const [codePromo, setCodePromo] = useState('');
   const [paymentMethod, setPaymentMethod] =
     useState<GuestPaymentMethod>('CASH_ON_DELIVERY');
@@ -51,11 +59,19 @@ export default function CommandeScreen() {
   const [error, setError] = useState<string | null>(null);
   const idempotencyKey = useRef(randomUUID());
 
+  /** Zone choisie + précisions éventuelles : le serveur résout la zone depuis
+   * ce texte, exactement comme le site le fait depuis la ville choisie. */
+  function deliveryLocation(): string {
+    const details = landmark.trim();
+    if (!zone) return details;
+    return details ? `${zone} — ${details}` : zone;
+  }
+
   /** Même devis serveur que le site : prix, remises et total exacts, sans
    * créer d'ordre ni réserver de stock. Les frais de livraison, eux, ne sont
    * jamais chiffrés — le site dit « À confirmer », on dit pareil. */
   const refreshQuote = async () => {
-    const city = deliveryLocation.trim();
+    const city = deliveryLocation().trim();
     if (!isOnline || city.length < 2 || items.length === 0) return;
     try {
       await quote.mutateAsync({
@@ -75,7 +91,7 @@ export default function CommandeScreen() {
 
   const submit = async () => {
     const name = customerName.trim();
-    const location = deliveryLocation.trim();
+    const location = deliveryLocation().trim();
     const parsedPhone = phoneSchema.safeParse(phone);
 
     if (name.length < 2) {
@@ -86,8 +102,8 @@ export default function CommandeScreen() {
       setError('Indiquez un numéro ivoirien valide.');
       return;
     }
-    if (location.length < 2) {
-      setError('Indiquez votre zone ou lieu de livraison.');
+    if (zone.length === 0) {
+      setError('Choisissez votre zone de livraison.');
       return;
     }
     if (items.length === 0 || !isOnline) return;
@@ -222,10 +238,47 @@ export default function CommandeScreen() {
             textContentType="telephoneNumber"
             editable={!createOrder.isPending}
           />
+          <View style={styles.zoneBlock}>
+            <Text variant="caption" color="muted">
+              Zone de livraison
+            </Text>
+            <View style={styles.zoneList}>
+              {(zones.data?.zones ?? []).map((option) => {
+                const active = zone === option.label;
+                return (
+                  <Pressable
+                    key={option.value}
+                    onPress={() => {
+                      setZone(option.label);
+                      void refreshQuote();
+                    }}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: active }}
+                    accessibilityLabel={`Livrer à ${option.label}`}
+                    disabled={createOrder.isPending}
+                    style={[styles.zone, active && styles.zoneActive]}
+                  >
+                    <Icon
+                      name="map-pin"
+                      size={15}
+                      color={active ? 'white' : 'green'}
+                    />
+                    <Text
+                      variant="caption"
+                      style={{ color: active ? palette.white : palette.body }}
+                    >
+                      {option.label}
+                      {option.delai ? ` · ${option.delai}` : ''}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
           <Input
-            label="Zone / lieu de livraison"
-            value={deliveryLocation}
-            onChangeText={setDeliveryLocation}
+            label="Précisions pour le livreur (facultatif)"
+            value={landmark}
+            onChangeText={setLandmark}
             placeholder="Ex. Cocody Angré, près de la pharmacie"
             autoCapitalize="sentences"
             editable={!createOrder.isPending}
@@ -337,8 +390,8 @@ export default function CommandeScreen() {
             </>
           ) : (
             <Text variant="caption" color="muted">
-              Saisissez votre zone puis quittez le champ pour obtenir le total
-              exact. Les frais de livraison sont confirmés par téléphone.
+              Choisissez votre zone pour obtenir le total exact. Les frais de
+              livraison sont confirmés par téléphone.
             </Text>
           )}
         </Card>
@@ -480,6 +533,20 @@ const styles = StyleSheet.create({
     backgroundColor: palette.greenSoft,
   },
   location: { minHeight: 82, paddingTop: spacing.md },
+  zoneBlock: { gap: spacing.sm },
+  zoneList: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  zone: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: 14,
+    backgroundColor: palette.card,
+    borderWidth: 1,
+    borderColor: palette.line,
+  },
+  zoneActive: { borderColor: palette.green, backgroundColor: palette.green },
   paymentSection: { gap: spacing.sm },
   paymentChoice: {
     flexDirection: 'row',

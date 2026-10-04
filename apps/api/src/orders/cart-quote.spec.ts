@@ -295,6 +295,28 @@ describe('CartQuoteService — le serveur calcule, le client affiche', () => {
   });
 });
 
+describe('CartQuoteService — les zones proposées au client', () => {
+  it('expose les zones de la grille du site, sans en écrire aucune en dur', async () => {
+    const { service } = harnais({});
+
+    const proposees = await service.zones();
+
+    expect(proposees.zones).toEqual([
+      { value: 'abidjan', label: 'Abidjan', delai: '24-48h', frais: 1000 },
+      { value: 'interieur', label: 'Intérieur', delai: '3-5 jours', frais: 2500 },
+    ]);
+    expect(proposees.defaultZone).toBe('interieur');
+  });
+
+  it('sans grille connue ⇒ 503, jamais une liste inventée', async () => {
+    const { service } = harnais({ grille: null });
+
+    await expect(service.zones()).rejects.toMatchObject(
+      codeErreur('DELIVERY_GRID_UNAVAILABLE'),
+    );
+  });
+});
+
 describe('CartQuoteService — contract de service', () => {
   it('ne réserve aucun stock : aucune écriture, le devis est réentrant', async () => {
     const { service, db } = harnais({ variants: [variante({ stock: 3 })] });

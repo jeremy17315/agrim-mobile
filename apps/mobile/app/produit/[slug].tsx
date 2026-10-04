@@ -1,4 +1,8 @@
-import { SELLING_POINTS, type ProductVariant } from '@agrim/contracts';
+import {
+  cleanProductName,
+  SELLING_POINTS,
+  type ProductVariant,
+} from '@agrim/contracts';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, View } from 'react-native';
@@ -155,7 +159,7 @@ export default function ProductScreen() {
                   <Text variant="micro" color="green">
                     {product.data.brand}
                   </Text>
-                  <Text variant="h1">{product.data.name}</Text>
+                  <Text variant="h1">{cleanProductName(product.data.name)}</Text>
                 </View>
                 <View style={styles.priceBox}>
                   <Text variant="micro" color="muted">

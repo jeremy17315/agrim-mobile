@@ -42,6 +42,17 @@ jest.mock('@/api/orders', () => ({
     mutateAsync: jest.fn(),
     data: undefined,
   }),
+  useDeliveryZones: () => ({
+    data: {
+      zones: [
+        { value: 'yamoussoukro', label: 'Yamoussoukro', delai: '24 h', frais: 0 },
+        { value: 'abidjan', label: 'Abidjan', delai: '48 h', frais: 0 },
+        { value: 'bouake', label: 'Bouaké', delai: '48 h', frais: 0 },
+        { value: 'autre', label: 'Autre ville', delai: '72 h', frais: 0 },
+      ],
+      defaultZone: 'autre',
+    },
+  }),
 }));
 
 const mockSaveGuestPaymentAccess = jest.fn().mockResolvedValue(undefined);
@@ -83,10 +94,8 @@ const fillDelivery = () => {
     screen.getByLabelText('Numéro de téléphone'),
     '07 00 00 00 01',
   );
-  fireEvent.changeText(
-    screen.getByLabelText('Zone / lieu de livraison'),
-    'Cocody Angré, près de la pharmacie',
-  );
+  // Le client CHOISIT sa zone désormais, il ne la tape plus.
+  fireEvent.press(screen.getByLabelText('Livrer à Abidjan'));
 };
 
 beforeEach(() => {
@@ -108,7 +117,7 @@ it('commande sans compte, adresse enregistrée ni prix envoyé par le client', a
   expect(payload).toMatchObject({
     customerName: 'Awa Koné',
     phone: '0700000001',
-    deliveryLocation: 'Cocody Angré, près de la pharmacie',
+    deliveryLocation: 'Abidjan',
     items: [{ variantId: variant.id, quantity: 2 }],
   });
   expect(JSON.stringify(payload)).not.toContain('addressId');
@@ -158,7 +167,7 @@ it('demande seulement les trois informations de livraison, sans adresse enregist
 
   expect(screen.getByLabelText('Nom')).toBeTruthy();
   expect(screen.getByLabelText('Numéro de téléphone')).toBeTruthy();
-  expect(screen.getByLabelText('Zone / lieu de livraison')).toBeTruthy();
+  expect(screen.getByLabelText('Livrer à Abidjan')).toBeTruthy();
   expect(screen.queryByText(/Ajouter une adresse/i)).toBeNull();
   expect(screen.getByText(/Mobile Money/i)).toBeTruthy();
 });

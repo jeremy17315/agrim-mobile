@@ -1,0 +1,757 @@
+diff --git a/.env.example b/.env.example
+index f6e203c..3b9dfcc 100644
+--- a/.env.example
++++ b/.env.example
+@@ -46,6 +46,17 @@ STORAGE_PUBLIC_URL=http://127.0.0.1:3000/files
+ # true  : envoi reel. Cote mobile, le push distant exige un dev build.
+ PUSH_ENABLED=false
+ 
++# --- Paiement CinetPay (nouvelle API, septembre 2026) ------------
++# MEMES identifiants que le site : RB_CINETPAY_API_KEY et
++# RB_CINETPAY_API_PASSWORD y correspondent un pour un. L'ancienne API
++# (CINETPAY_SITE_ID + CINETPAY_SECRET) n'existe plus dans les comptes recents.
++# PAYMENT_PROVIDER=cinetpay
++# CINETPAY_API_KEY=
++# CINETPAY_API_PASSWORD=
++# Hote : api.cinetpay.co en production, api.cinetpay.net pour le bac a sable.
++# L'API refuse de demarrer en production sur le bac a sable.
++# CINETPAY_BASE_URL=https://api.cinetpay.co
++
+ # --- Integration avec le SITE ------------------------------------
+ # Le site rend DEUX services a cette API, sous la meme adresse et le meme
+ # jeton :
+@@ -62,7 +73,10 @@ PUSH_ENABLED=false
+ # pas mode de production.
+ #
+ # SITE_INTEGRATION_TOKEN doit valoir exactement RB_SYNC_TOKEN cote site.
+-SITE_INTEGRATION_URL=https://agrim-zuxe.onrender.com
++# ATTENTION : depuis septembre 2026, le site de production vit sur LWS, sous
++# un SOUS-DOSSIER. L'ancienne adresse Render sert une AUTRE base : la pointer
++# ferait vendre a d'anciens prix, avec d'anciens stocks.
++SITE_INTEGRATION_URL=https://agrimsarl.ci/riz-boagni
+ SITE_INTEGRATION_TOKEN=CHANGEME_sync
+ CATALOG_SYNC_INTERVAL_MINUTES=15
+ 
+diff --git a/apps/api/prisma/schema.prisma b/apps/api/prisma/schema.prisma
+index b99b30b..828496f 100644
+--- a/apps/api/prisma/schema.prisma
++++ b/apps/api/prisma/schema.prisma
+@@ -5,6 +5,10 @@
+ generator client {
+   provider = "prisma-client-js"
+   output   = "../generated/prisma"
++  // « native » suffit en local. L'hébergement cPanel de LWS tourne sous
++  // CloudLinux (base RHEL) : sans ce second moteur, l'application démarre
++  // puis échoue à la première requête (« Query engine not found »).
++  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+ }
+ 
+ datasource db {
+diff --git a/apps/api/src/config/env.validation.ts b/apps/api/src/config/env.validation.ts
+index 1f3ddbb..3552208 100644
+--- a/apps/api/src/config/env.validation.ts
++++ b/apps/api/src/config/env.validation.ts
+@@ -9,6 +9,11 @@ const envSchema = z.object({
+   NODE_ENV: z
+     .enum(['development', 'staging', 'production', 'test'])
+     .default('development'),
++  /**
++   * Port d'écoute. Passenger (cPanel/LWS) impose le sien via `PORT` : le
++   * respecter est la condition pour que le serveur voie l'application. En
++   * local, API_PORT reste maître.
++   */
+   API_PORT: z.coerce.number().int().positive().default(3000),
+   API_GLOBAL_PREFIX: z.string().default('api/v1'),
+   DATABASE_URL: z.string().min(1),
+@@ -66,9 +71,22 @@ const envSchema = z.object({
+     .enum(['true', 'false'])
+     .default('false'),
+ 
++  /**
++   * CinetPay — nouvelle API (septembre 2026), identique au site.
++   *
++   * `CINETPAY_SITE_ID` et `CINETPAY_SECRET` ont disparu avec l'ancienne API
++   * v2 : les comptes récents ne délivrent qu'une clé et un mot de passe, et
++   * l'authentification passe par OAuth. Les mêmes valeurs que côté site
++   * (RB_CINETPAY_API_KEY / RB_CINETPAY_API_PASSWORD) sont attendues ici.
++   */
+   CINETPAY_API_KEY: z.string().default(''),
+-  CINETPAY_SITE_ID: z.string().default(''),
+-  CINETPAY_SECRET: z.string().default(''),
++  CINETPAY_API_PASSWORD: z.string().default(''),
++  /**
++   * Hôte de l'API. `api.cinetpay.co` en production, `api.cinetpay.net` pour
++   * le bac à sable. Le défaut vise la production : pointer le bac à sable
++   * par inadvertance encaisse dans le vide.
++   */
++  CINETPAY_BASE_URL: z.string().default('https://api.cinetpay.co'),
+ 
+   PAYDUNYA_MASTER_KEY: z.string().default(''),
+   PAYDUNYA_PRIVATE_KEY: z.string().default(''),
+@@ -195,5 +213,33 @@ export function validateEnv(raw: Record<string, unknown>): AppEnv {
+     );
+   }
+ 
++  // CinetPay : les deux identifiants, pas un seul. Avec la clé sans le mot de
++  // passe, la configuration passait pour valide, l'authentification OAuth
++  // échouait, et chaque client lisait « paiement indisponible » sans que rien
++  // n'explique pourquoi.
++  if (
++    env.PAYMENT_PROVIDER === 'cinetpay' &&
++    !(env.CINETPAY_API_KEY && env.CINETPAY_API_PASSWORD)
++  ) {
++    throw new Error(
++      'CINETPAY_API_KEY et CINETPAY_API_PASSWORD sont tous deux requis avec ' +
++        '« cinetpay » (mêmes valeurs que RB_CINETPAY_* côté site).',
++    );
++  }
++
++  // Le bac à sable en production encaisse dans le vide : le client croit
++  // avoir payé, rien n'arrive. Averti au démarrage plutôt que découvert à la
++  // première commande.
++  if (
++    env.NODE_ENV === 'production' &&
++    env.PAYMENT_PROVIDER === 'cinetpay' &&
++    env.CINETPAY_BASE_URL.includes('api.cinetpay.net')
++  ) {
++    throw new Error(
++      'CINETPAY_BASE_URL pointe le bac à sable (api.cinetpay.net) en ' +
++        'production : aucun paiement ne serait réellement encaissé.',
++    );
++  }
++
+   return env;
+ }
+diff --git a/apps/api/src/main.ts b/apps/api/src/main.ts
+index 8cfffbc..3879458 100644
+--- a/apps/api/src/main.ts
++++ b/apps/api/src/main.ts
+@@ -17,7 +17,10 @@ async function bootstrap(): Promise<void> {
+   });
+   const config = app.get(ConfigService);
+ 
+-  const port = config.getOrThrow<number>('API_PORT');
++  // Passenger (hébergement cPanel) fournit le port par `PORT` et n'écoute
++  // rien d'autre. Sans cette priorité, l'application démarre sur 3000 et le
++  // serveur répond « 503 » sans un mot d'explication.
++  const port = Number(process.env.PORT) || config.getOrThrow<number>('API_PORT');
+   const prefix = config.getOrThrow<string>('API_GLOBAL_PREFIX');
+   const isProd = config.get<string>('NODE_ENV') === 'production';
+ 
+diff --git a/apps/api/src/payments/http-json.ts b/apps/api/src/payments/http-json.ts
+index be4c95d..7698dbf 100644
+--- a/apps/api/src/payments/http-json.ts
++++ b/apps/api/src/payments/http-json.ts
+@@ -63,6 +63,56 @@ export async function postJson(
+   }
+ }
+ 
++/**
++ * GET JSON — même traitement d'erreurs que `postJson`.
++ *
++ * La nouvelle API CinetPay relit une transaction par `GET /v1/payment/{id}` :
++ * sans cette fonction, il faudrait détourner un POST, ce que l'API refuse.
++ */
++export async function getJson(
++  url: string,
++  headers: Record<string, string> = {},
++  timeoutSeconds = 20,
++): Promise<Record<string, unknown>> {
++  const controller = new AbortController();
++  const timer = setTimeout(() => controller.abort(), timeoutSeconds * 1000);
++
++  let response: Response;
++  try {
++    response = await fetch(url, {
++      method: 'GET',
++      headers: { Accept: 'application/json', ...headers },
++      signal: controller.signal,
++    });
++  } catch (error) {
++    const reason =
++      error instanceof Error && error.name === 'AbortError'
++        ? `délai de ${timeoutSeconds}s dépassé`
++        : 'connexion impossible';
++    throw new PaymentGatewayError(
++      `Fournisseur de paiement injoignable (${reason}).`,
++    );
++  } finally {
++    clearTimeout(timer);
++  }
++
++  const raw = await response.text();
++
++  if (!response.ok) {
++    throw new PaymentGatewayError(
++      `Réponse ${response.status} du fournisseur : ${raw.slice(0, 400)}`,
++    );
++  }
++
++  try {
++    return JSON.parse(raw) as Record<string, unknown>;
++  } catch {
++    throw new PaymentGatewayError(
++      'Réponse illisible du fournisseur de paiement.',
++    );
++  }
++}
++
+ /** Lecture défensive : les agrégateurs changent le type d'un champ sans prévenir. */
+ export function readString(source: unknown, key: string): string {
+   if (typeof source !== 'object' || source === null) return '';
+diff --git a/apps/api/src/payments/payment.provider.ts b/apps/api/src/payments/payment.provider.ts
+index 88573c8..c416dfa 100644
+--- a/apps/api/src/payments/payment.provider.ts
++++ b/apps/api/src/payments/payment.provider.ts
+@@ -25,6 +25,14 @@ export interface PaymentIntent {
+   amountXof: number;
+   customerName: string;
+   customerPhone: string;
++  /**
++   * Exigée par la nouvelle API CinetPay (`client_email`). Facultative dans le
++   * modèle : un client peut s'inscrire sans e-mail, et les autres pilotes ne
++   * la demandent pas. Le pilote CinetPay refuse alors le paiement avec un
++   * message en français plutôt que de laisser l'agrégateur répondre en
++   * anglais sur un champ manquant.
++   */
++  customerEmail?: string | null;
+   /** `null` pour un paiement par carte : l'agrégateur laisse alors le choix. */
+   provider: 'ORANGE_MONEY' | 'MTN_MOMO' | 'MOOV_MONEY' | 'WAVE' | null;
+ }
+diff --git a/apps/api/src/payments/payments.service.ts b/apps/api/src/payments/payments.service.ts
+index 521528d..029c8b4 100644
+--- a/apps/api/src/payments/payments.service.ts
++++ b/apps/api/src/payments/payments.service.ts
+@@ -134,7 +134,7 @@ export class PaymentsService {
+         payment: {
+           select: { id: true, method: true, provider: true, status: true },
+         },
+-        user: { select: { firstName: true, lastName: true, phone: true } },
++        user: { select: { firstName: true, lastName: true, phone: true, email: true } },
+       },
+     });
+ 
+@@ -185,6 +185,7 @@ export class PaymentsService {
+         amountXof: order.total,
+         customerName: `${order.user.firstName} ${order.user.lastName}`.trim(),
+         customerPhone: order.user.phone,
++        customerEmail: order.user.email,
+         provider: order.payment!.provider,
+       }),
+     );
+diff --git a/apps/api/src/payments/providers/cinetpay.provider.ts b/apps/api/src/payments/providers/cinetpay.provider.ts
+index d0495ad..2e6769b 100644
+--- a/apps/api/src/payments/providers/cinetpay.provider.ts
++++ b/apps/api/src/payments/providers/cinetpay.provider.ts
+@@ -1,14 +1,28 @@
+ /**
+  * CinetPay — agrégateur Wave / Orange / MTN / Moov (Côte d'Ivoire).
+  *
+- * Portage fidèle de `paiement.py` du site web, corrections de production
+- * comprises. Les commentaires « Leçon » signalent un bug réel déjà payé.
++ * Portage de la NOUVELLE API CinetPay, celle qu'utilise déjà le site
++ * (`backend/app/paiement.py`). Septembre 2026 : l'ancien connecteur parlait
++ * encore à `api-checkout.cinetpay.com/v2` avec `apikey` + `site_id` +
++ * `secret`. Ces identifiants n'existent plus dans les comptes récents :
++ * AGRIM ne dispose que d'une clé et d'un mot de passe d'API. Site et
++ * application partagent désormais les mêmes identifiants et le même hôte.
++ *
++ * Ce qui change :
++ *   1. authentification OAuth — POST /v1/oauth/login rend un jeton porteur,
++ *      gardé en cache jusqu'à son expiration ;
++ *   2. ouverture — POST /v1/payment, `merchant_transaction_id` comme
++ *      identifiant marchand, `client_email` désormais obligatoire ;
++ *   3. relecture — GET /v1/payment/{id} ;
++ *   4. le webhook ne transporte AUCUN statut : il signale qu'un événement a
++ *      eu lieu, et le statut réel est toujours relu auprès de l'API.
++ *
++ * Les commentaires « Leçon » signalent un bug réel déjà payé en production.
+  */
+-import { Injectable } from '@nestjs/common';
++import { Injectable, Logger } from '@nestjs/common';
+ import { ConfigService } from '@nestjs/config';
+-import { createHmac, timingSafeEqual } from 'node:crypto';
+ 
+-import { boundedTimeout, postJson, readObject, readString } from '../http-json';
++import { boundedTimeout, getJson, postJson, readObject, readString } from '../http-json';
+ import { buildTransactionReference } from '../transaction-reference';
+ import {
+   PaymentGatewayError,
+@@ -19,44 +33,35 @@ import {
+   type PaymentIntent,
+ } from '../payment.provider';
+ 
+-const INIT_URL = 'https://api-checkout.cinetpay.com/v2/payment';
+-const CHECK_URL = 'https://api-checkout.cinetpay.com/v2/payment/check';
+-
+-/** Correspondance entre nos opérateurs et les canaux CinetPay. */
+-const CHANNELS: Record<string, string> = {
+-  WAVE: 'WALLET',
+-  ORANGE_MONEY: 'MOBILE_MONEY',
+-  MTN_MOMO: 'MOBILE_MONEY',
+-  MOOV_MONEY: 'MOBILE_MONEY',
+-};
+-
+ /**
+- * Champs signés par CinetPay, dans cet ordre exact. L'ordre fait partie du
+- * protocole : une permutation invalide toutes les signatures.
++ * Hôtes connus. `api.cinetpay.net` est le bac à sable ; la production répond
++ * sur `api.cinetpay.co`. Servir la production contre le bac à sable encaisse
++ * dans le vide — d'où le défaut sur la production.
+  */
+-const SIGNED_FIELDS = [
+-  'cpm_site_id',
+-  'cpm_trans_id',
+-  'cpm_trans_date',
+-  'cpm_amount',
+-  'cpm_currency',
+-  'signature',
+-  'payment_method',
+-  'cel_phone_num',
+-  'cpm_phone_prefixe',
+-  'cpm_language',
+-  'cpm_version',
+-  'cpm_payment_config',
+-  'cpm_page_action',
+-  'cpm_custom',
+-  'cpm_designation',
+-  'cpm_error_message',
+-] as const;
++const HOTE_PRODUCTION = 'https://api.cinetpay.co';
++const HOTE_BAC_A_SABLE = 'api.cinetpay.net';
++
++/** CinetPay borne success_url / failed_url / notify_url à 120 caractères. */
++const LONGUEUR_URL_MAX = 120;
++
++/** Marge avant expiration : ne jamais partir avec un jeton mourant. */
++const MARGE_JETON_SECONDES = 60;
+ 
+ @Injectable()
+ export class CinetPayProvider extends PaymentProvider {
+   readonly name = 'cinetpay';
+ 
++  private readonly logger = new Logger(CinetPayProvider.name);
++
++  private jeton = '';
++  private jetonExpireA = 0;
++
++  /**
++   * Renouvellement en cours, partagé. Sans lui, N requêtes arrivant ensemble
++   * sur un jeton expiré déclencheraient N connexions simultanées.
++   */
++  private renouvellement: Promise<string> | null = null;
++
+   constructor(private readonly config: ConfigService) {
+     super();
+   }
+@@ -65,169 +70,239 @@ export class CinetPayProvider extends PaymentProvider {
+     return this.config.get<string>('CINETPAY_API_KEY') ?? '';
+   }
+ 
+-  private get siteId(): string {
+-    return this.config.get<string>('CINETPAY_SITE_ID') ?? '';
++  private get apiPassword(): string {
++    return this.config.get<string>('CINETPAY_API_PASSWORD') ?? '';
+   }
+ 
+-  private get secret(): string {
+-    return this.config.get<string>('CINETPAY_SECRET') ?? '';
++  private get baseUrl(): string {
++    const brut = this.config.get<string>('CINETPAY_BASE_URL')?.trim() || HOTE_PRODUCTION;
++    return brut.replace(/\/+$/, '');
+   }
+ 
+   private get timeout(): number {
+     return boundedTimeout(this.config.get<string>('PAYMENT_TIMEOUT_SECONDS'));
+   }
+ 
++  /** Vrai si l'on parle encore au bac à sable : aucun encaissement réel. */
++  get enBacASable(): boolean {
++    return this.baseUrl.includes(HOTE_BAC_A_SABLE);
++  }
++
+   /**
+-   * Le secret est requis au même titre que la clé et l'identifiant de site.
++   * Les deux identifiants sont requis.
+    *
+-   * Leçon : sans lui, la configuration passait pour valide mais la
+-   * vérification de signature rejetait 100 % des callbacks. Les clients
+-   * payaient, les commandes restaient « en attente » pour toujours.
++   * Leçon : la version initiale du site n'exigeait pas le second. La
++   * configuration passait pour valide, l'authentification échouait, et le
++   * client lisait « paiement indisponible » sans que rien n'explique pourquoi.
+    */
+   isConfigured(): boolean {
+-    return Boolean(this.apiKey && this.siteId && this.secret);
++    return Boolean(this.apiKey && this.apiPassword);
++  }
++
++  // ───────────────────────────────────────────────── authentification
++
++  private async token(): Promise<string> {
++    if (this.jeton && Date.now() < this.jetonExpireA) return this.jeton;
++    this.renouvellement ??= this.login().finally(() => {
++      this.renouvellement = null;
++    });
++    return this.renouvellement;
+   }
+ 
++  private async login(): Promise<string> {
++    const reponse = await postJson(
++      `${this.baseUrl}/v1/oauth/login`,
++      { api_key: this.apiKey, api_password: this.apiPassword },
++      {},
++      this.timeout,
++    );
++
++    const jeton = readString(reponse, 'access_token');
++    if (!jeton) {
++      throw new PaymentGatewayError(
++        'Authentification CinetPay refusée (jeton absent de la réponse).',
++      );
++    }
++
++    const duree = Number.parseInt(readString(reponse, 'expires_in'), 10);
++    const secondes = Number.isFinite(duree)
++      ? Math.max(MARGE_JETON_SECONDES, duree - MARGE_JETON_SECONDES)
++      : 300; // repli prudent si expires_in est absent ou illisible
++
++    this.jeton = jeton;
++    this.jetonExpireA = Date.now() + secondes * 1000;
++    return jeton;
++  }
++
++  /**
++   * Appel authentifié. Un 401 peut survenir si le jeton a été révoqué avant
++   * l'échéance annoncée : on l'oublie et on retente UNE fois avec un jeton
++   * neuf, plutôt que d'échouer sur un jeton qu'on croyait valide.
++   */
++  private async appel(
++    chemin: string,
++    corps: Record<string, unknown> | null,
++  ): Promise<Record<string, unknown>> {
++    let dernier: unknown;
++    for (const tentative of [1, 2]) {
++      const entetes = { Authorization: `Bearer ${await this.token()}` };
++      try {
++        return corps === null
++          ? await getJson(`${this.baseUrl}${chemin}`, entetes, this.timeout)
++          : await postJson(`${this.baseUrl}${chemin}`, corps, entetes, this.timeout);
++      } catch (erreur) {
++        dernier = erreur;
++        const message = erreur instanceof Error ? erreur.message : '';
++        if (tentative === 1 && message.includes('Réponse 401')) {
++          this.jeton = '';
++          this.jetonExpireA = 0;
++          continue;
++        }
++        throw erreur;
++      }
++    }
++    throw dernier;
++  }
++
++  // ───────────────────────────────────────────────────────── ouverture
++
+   async initiate(intent: PaymentIntent): Promise<GatewayInitiation> {
+     const providerReference = buildTransactionReference(intent.orderReference);
+     const apiUrl = this.requirePublicUrl('PUBLIC_API_URL');
+     const webUrl = this.config.get<string>('PUBLIC_WEB_URL') || apiUrl;
+-    const trackingUrl = `${webUrl.replace(/\/+$/, '')}/suivi?ref=${encodeURIComponent(intent.orderReference)}`;
+-
+-    const response = await postJson(
+-      INIT_URL,
+-      {
+-        apikey: this.apiKey,
+-        site_id: this.siteId,
+-        transaction_id: providerReference,
+-        amount: intent.amountXof,
+-        currency: 'XOF',
+-        description: `Commande ${intent.orderReference} - Riz Boagni`,
+-        customer_name: intent.customerName || 'Client',
+-        customer_phone_number: intent.customerPhone,
+-        channels: intent.provider ? (CHANNELS[intent.provider] ?? 'ALL') : 'ALL',
+-        notify_url: `${apiUrl}/payments/callback/cinetpay`,
+-        return_url: trackingUrl,
+-        metadata: intent.orderReference,
+-      },
+-      {},
+-      this.timeout,
++    const suivi = `${webUrl.replace(/\/+$/, '')}/suivi?ref=${encodeURIComponent(
++      intent.orderReference,
++    )}`;
++
++    const urlRetour = this.urlBornee(suivi, 'success_url/failed_url');
++    const urlNotification = this.urlBornee(
++      `${apiUrl}/payments/callback/cinetpay`,
++      'notify_url',
+     );
+ 
+-    if (readString(response, 'code') === '201') {
++    const [prenom, nom] = decouperNom(intent.customerName);
++
++    const reponse = await this.appel('/v1/payment', {
++      currency: 'XOF',
++      merchant_transaction_id: providerReference,
++      amount: intent.amountXof,
++      lang: 'fr',
++      designation: `Commande ${intent.orderReference} - Riz Boagni`,
++      // Obligatoire dans la nouvelle API. Un e-mail absent ferait échouer la
++      // transaction avec un message technique en anglais : on refuse avant.
++      client_email: this.exigerEmail(intent),
++      client_phone_number: telephoneInternational(intent.customerPhone),
++      client_first_name: prenom,
++      client_last_name: nom,
++      success_url: urlRetour,
++      failed_url: urlRetour,
++      notify_url: urlNotification,
++    });
++
++    // La réponse est plate ou imbriquée sous « data » selon la version de
++    // l'API : on lit les deux plutôt que de parier sur une forme.
++    const bloc = readObject(reponse, 'data');
++    const details = { ...readObject(reponse, 'details'), ...readObject(bloc, 'details') };
++
++    const checkoutUrl =
++      readString(bloc, 'payment_url') ||
++      readString(reponse, 'payment_url') ||
++      readString(bloc, 'paymentUrl') ||
++      readString(reponse, 'paymentUrl');
++
++    // On ne parie pas sur un code de succès précis (200/201/100 selon les
++    // versions) : le seul critère fiable est une URL de paiement exploitable.
++    if (!checkoutUrl) {
+       return {
+-        status: 'PENDING',
++        status: 'FAILED',
+         providerReference,
+-        checkoutUrl: readString(readObject(response, 'data'), 'payment_url'),
+-        message: 'Validez la demande de paiement sur votre téléphone.',
++        checkoutUrl: '',
++        message:
++          readString(details, 'message') ||
++          readString(reponse, 'message') ||
++          readString(bloc, 'message') ||
++          "Le paiement n'a pas pu être initié.",
+       };
+     }
+ 
+     return {
+-      status: 'FAILED',
++      status: 'PENDING',
+       providerReference,
+-      checkoutUrl: '',
++      checkoutUrl,
+       message:
+-        readString(response, 'description') ||
+-        "Le paiement n'a pas pu être initié.",
++        readString(details, 'message') ||
++        'Validez la demande de paiement sur votre téléphone.',
+     };
+   }
+ 
++  // ───────────────────────────────────────────────────────── relecture
++
+   async verify(providerReference: string): Promise<GatewayVerification> {
+-    const response = await postJson(
+-      CHECK_URL,
+-      {
+-        apikey: this.apiKey,
+-        site_id: this.siteId,
+-        transaction_id: providerReference,
+-      },
+-      {},
+-      this.timeout,
++    const reponse = await this.appel(
++      `/v1/payment/${encodeURIComponent(providerReference)}`,
++      null,
+     );
++    const bloc = readObject(reponse, 'data');
++    const statut = (readString(reponse, 'status') || readString(bloc, 'status')).toUpperCase();
+ 
+-    const code = readString(response, 'code');
+-    const operatorStatus = readString(readObject(response, 'data'), 'status');
+-
+-    if (code === '00' && operatorStatus === 'ACCEPTED') {
++    if (['SUCCESS', 'ACCEPTED', 'COMPLETED'].includes(statut)) {
+       return { status: 'PAID', message: 'Paiement confirmé.' };
+     }
+-    if (['REFUSED', 'CANCELED', 'EXPIRED'].includes(operatorStatus)) {
+-      return {
+-        status: 'FAILED',
+-        message: `Paiement ${operatorStatus.toLowerCase()}.`,
+-      };
++    if (
++      ['FAILED', 'INSUFFICIENT_BALANCE', 'EXPIRED', 'REFUSED', 'CANCELED', 'CANCELLED'].includes(
++        statut,
++      )
++    ) {
++      return { status: 'FAILED', message: `Paiement refusé (${statut.toLowerCase()}).` };
++    }
++    // Statut hors de la liste communiquée par CinetPay, qui ne la garantit pas
++    // exhaustive : rester en attente plutôt qu'annuler à tort une commande
++    // peut-être payée.
++    if (!['PENDING', 'INITIATED', 'WAITING', 'WAITING_FOR_CUSTOMER'].includes(statut)) {
++      this.logger.warn(`Statut CinetPay non reconnu : « ${statut || '?'} ».`);
+     }
+     return { status: 'PENDING', message: 'Paiement en cours de validation.' };
+   }
+ 
+-  readCallback(
+-    body: Record<string, unknown>,
+-    headers: Record<string, string | undefined>,
+-  ): GatewayCallback {
+-    if (!this.signatureIsValid(body, headers)) {
+-      throw new PaymentGatewayError('Signature du callback invalide.');
+-    }
+-
+-    const result = (
+-      readString(body, 'cpm_result') || readString(body, 'cpm_error_message')
+-    ).toUpperCase();
+-
+-    let status: GatewayCallback['status'];
+-    if (['00', 'SUCCES', 'SUCCESS'].includes(result)) {
+-      status = 'PAID';
+-    } else if (result) {
+-      // Un échec explicite : la commande doit être annulée et le stock rendu,
+-      // pas laissée en attente indéfiniment.
+-      status = 'FAILED';
+-    } else {
+-      status = 'PENDING';
+-    }
+-
+-    return {
+-      providerReference: readString(body, 'cpm_trans_id'),
+-      orderReference: readString(body, 'metadata'),
+-      status,
+-    };
+-  }
++  // ────────────────────────────────────────────────────────── webhook
+ 
+   /**
+-   * Contrôle du jeton HMAC-SHA256. Le jeton arrive dans l'en-tête `x-token`
+-   * ou dans le champ `signature` du corps, selon la configuration du marchand.
++   * Le webhook de la nouvelle API ne transporte AUCUN statut : il signale
++   * seulement qu'un événement a eu lieu sur une transaction. On renvoie donc
++   * `PAID` — non comme une vérité, mais pour déclencher la relecture
++   * obligatoire côté service (`callbackIsProof` vaut `false`). Le statut
++   * inscrit en base vient toujours de `verify()`, jamais de ce corps.
++   *
++   * C'est ce qui rend la signature inutile ici : un faux webhook ne peut que
++   * provoquer une relecture auprès de CinetPay, laquelle dira la vérité.
+    */
+-  private signatureIsValid(
+-    body: Record<string, unknown>,
+-    headers: Record<string, string | undefined>,
+-  ): boolean {
+-    if (!this.secret) {
+-      // Sans secret, la vérification est impossible : on REFUSE. Mieux vaut
+-      // une commande bloquée qu'un faux paiement accepté.
+-      return false;
++  readCallback(body: Record<string, unknown>): GatewayCallback {
++    const providerReference =
++      readString(body, 'merchant_transaction_id') || readString(body, 'cpm_trans_id');
++
++    if (!providerReference) {
++      throw new PaymentGatewayError('Callback CinetPay sans identifiant de transaction.');
+     }
+ 
+-    const received =
+-      headers['x-token'] ?? headers['X-Token'] ?? readString(body, 'signature');
+-    if (!received) return false;
++    return { providerReference, orderReference: '', status: 'PAID' };
++  }
+ 
+-    const payload = SIGNED_FIELDS.map((field) =>
+-      readString(body, field),
+-    ).join('');
+-    const expected = createHmac('sha256', this.secret)
+-      .update(payload)
+-      .digest('hex');
++  // ──────────────────────────────────────────────────────────── outils
+ 
+-    // `timingSafeEqual` exige des tampons de même longueur : comparer la
+-    // taille d'abord évite l'exception, et un jeton de longueur différente
+-    // est de toute façon invalide.
+-    const a = Buffer.from(expected, 'utf8');
+-    const b = Buffer.from(received, 'utf8');
+-    return a.length === b.length && timingSafeEqual(a, b);
++  private exigerEmail(intent: PaymentIntent): string {
++    const email = (intent.customerEmail ?? '').trim();
++    if (!email) {
++      throw new PaymentGatewayError(
++        "Une adresse e-mail est requise pour le paiement mobile (exigée par CinetPay).",
++      );
++    }
++    return email;
+   }
+ 
+   /**
+    * Leçon : un repli sur `http://127.0.0.1` envoyait les URL de notification
+    * vers la machine locale en production. Le webhook ne revenait jamais et
+-   * chaque paiement restait « en attente » pour toujours. Un paiement réel
+-   * sans URL publique est désormais refusé.
++   * chaque paiement restait « en attente » pour toujours.
+    */
+   private requirePublicUrl(key: string): string {
+     const value = this.config.get<string>(key);
+@@ -238,4 +313,46 @@ export class CinetPayProvider extends PaymentProvider {
+     }
+     return value.replace(/\/+$/, '');
+   }
++
++  private urlBornee(url: string, champ: string): string {
++    if (url.length > LONGUEUR_URL_MAX) {
++      throw new PaymentGatewayError(
++        `URL ${champ} trop longue pour CinetPay (${url.length} > ${LONGUEUR_URL_MAX} ` +
++          'caractères) : raccourcissez PUBLIC_API_URL ou PUBLIC_WEB_URL.',
++      );
++    }
++    return url;
++  }
++}
++
++/**
++ * CinetPay attend un numéro au format international avec « + » : un numéro
++ * local est refusé avec « client_phone_number is not mobile ». Les numéros
++ * ivoiriens à 10 chiffres reçoivent l'indicatif 225.
++ */
++export function telephoneInternational(numero: string): string {
++  const chiffres = (numero ?? '').replace(/[^\d+]/g, '').replace(/^\+/, '');
++  if (!chiffres) {
++    throw new PaymentGatewayError('Numéro de téléphone invalide.');
++  }
++  if (chiffres.startsWith('225')) return `+${chiffres}`;
++  if (chiffres.length === 10) return `+225${chiffres}`;
++  return `+${chiffres}`;
++}
++
++/**
++ * CinetPay exige un prénom ET un nom, de 2 à 255 caractères chacun. Notre
++ * modèle n'a qu'un nom complet : à défaut d'un second mot, le même sert aux
++ * deux champs plutôt que d'en envoyer un vide, que CinetPay refuse.
++ */
++export function decouperNom(nomComplet: string): [string, string] {
++  const mots = (nomComplet ?? '').trim().split(/\s+/).filter(Boolean);
++  const prenom = ajusterLongueur(mots[0] ?? 'Client');
++  const nom = ajusterLongueur(mots.slice(1).join(' ') || prenom);
++  return [prenom, nom];
++}
++
++function ajusterLongueur(valeur: string): string {
++  const propre = (valeur || 'Client').trim() || 'Client';
++  return (propre.length < 2 ? propre.padEnd(2, '.') : propre).slice(0, 255);
+ }
+diff --git a/docs/API-CONTRACT.md b/docs/API-CONTRACT.md
+index 64a1bf2..4356ab9 100644
+--- a/docs/API-CONTRACT.md
++++ b/docs/API-CONTRACT.md
+@@ -8,7 +8,7 @@
+ 
+ | | Site (FastAPI) | Application (NestJS) |
+ | --- | --- | --- |
+-| Base | `https://agrim-zuxe.onrender.com` | `…/api/v1` |
++| Base | `https://agrimsarl.ci/riz-boagni` | `…/api/v1` |
+ | Public | navigateur, back office | application Expo |
+ | Routes | 145 | 67 |
+ | Langue des chemins | **français** (`/api/produits`) | **anglais** (`/products`) |

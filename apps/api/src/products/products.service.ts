@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { cleanProductName } from '@agrim/contracts';
 
 import { prixEffectif, promosActives } from '../common/pricing/effective-price';
 import { PrismaService } from '../prisma/prisma.service';
@@ -114,6 +115,15 @@ export class ProductsService {
     return { ...row, imageUrl: resolveImageUrl(row.imageUrl, site) };
   }
 
+  /**
+   * Nom affichable : la marque ne fait pas partie du nom du produit. Le site
+   * la préfixe ou la suffixe selon les fiches ; l'application l'affiche déjà
+   * dans son en-tête de catalogue, on évite donc de la répéter par produit.
+   */
+  private withDisplayName<T extends { name: string }>(row: T): T {
+    return { ...row, name: cleanProductName(row.name) };
+  }
+
   async list(params: ListProductsParams) {
     const { search, category, featured, page, limit } = params;
 
@@ -149,7 +159,7 @@ export class ProductsService {
 
     return {
       data: data.map((p) => ({
-        ...this.withPublicImage(p),
+        ...this.withDisplayName(this.withPublicImage(p)),
         variants: p.variants.map(projetteVariante),
       })),
       pagination: { page, limit, total },
@@ -168,7 +178,7 @@ export class ProductsService {
       });
     }
     return {
-      ...this.withPublicImage(product),
+      ...this.withDisplayName(this.withPublicImage(product)),
       variants: product.variants.map(projetteVariante),
     };
   }
