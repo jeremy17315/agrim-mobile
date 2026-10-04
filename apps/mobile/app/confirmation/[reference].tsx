@@ -33,6 +33,11 @@ export default function ConfirmationScreen() {
     isMobileMoney ? (accessToken ?? null) : null,
   );
   const mobilePaid = mobilePayment.data?.status === 'SUCCEEDED';
+  // Sans capacité locale, il serait malhonnête d'afficher « en cours » :
+  // l'application ne peut plus demander le statut de cette commande invitée.
+  const cannotVerifyMobilePayment = isMobileMoney && accessToken === null;
+  const mobilePaymentStatusUnavailable =
+    isMobileMoney && accessToken !== undefined && mobilePayment.isError;
 
   useEffect(() => {
     if (!isMobileMoney) return;
@@ -55,19 +60,36 @@ export default function ConfirmationScreen() {
   const title = isMobileMoney
     ? mobilePaid
       ? 'Paiement confirmé !'
-      : 'Validation du paiement'
+      : cannotVerifyMobilePayment
+        ? 'Vérification nécessaire'
+        : mobilePaymentStatusUnavailable
+          ? 'Statut du paiement indisponible'
+          : 'Validation du paiement'
     : 'Commande reçue !';
   const intro = isMobileMoney
     ? mobilePaid
       ? 'Votre règlement Mobile Money est confirmé. Notre équipe prépare maintenant votre livraison.'
-      : 'Votre règlement Mobile Money est en cours de vérification auprès de l’opérateur.'
+      : cannotVerifyMobilePayment
+        ? 'Votre commande n’est pas marquée comme payée. Appelez AGRIM avec votre référence avant de recommencer un paiement.'
+        : mobilePaymentStatusUnavailable
+          ? 'Nous ne pouvons pas vérifier le règlement pour le moment. Réessayez dès que votre connexion revient.'
+          : 'Votre règlement Mobile Money est en cours de vérification auprès de l’opérateur.'
     : 'Merci. Notre équipe prépare la suite et vous appellera si un détail de livraison doit être précisé.';
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top + spacing.xl }]}>
       <CheckoutProgress step={4} />
-      <View style={styles.successMark}>
-        <Icon name="circle-check" size={55} color="green" />
+      <View
+        style={[
+          styles.successMark,
+          isMobileMoney && !mobilePaid && styles.pendingMark,
+        ]}
+      >
+        <Icon
+          name={isMobileMoney && !mobilePaid ? 'clock-3' : 'circle-check'}
+          size={55}
+          color={isMobileMoney && !mobilePaid ? 'goldDark' : 'green'}
+        />
       </View>
       <Text variant="h1" center>
         {title}
@@ -102,7 +124,11 @@ export default function ConfirmationScreen() {
               {isMobileMoney
                 ? mobilePaid
                   ? 'PAYÉ'
-                  : 'EN VÉRIFICATION'
+                  : cannotVerifyMobilePayment
+                    ? 'À VÉRIFIER'
+                    : mobilePaymentStatusUnavailable
+                      ? 'INDISPONIBLE'
+                      : 'EN VÉRIFICATION'
                 : 'À LA LIVRAISON'}
             </Text>
           </View>
@@ -115,22 +141,38 @@ export default function ConfirmationScreen() {
             isMobileMoney
               ? mobilePaid
                 ? 'Paiement Mobile Money confirmé'
-                : 'Paiement Mobile Money à vérifier'
+                : cannotVerifyMobilePayment
+                  ? 'Paiement Mobile Money à vérifier'
+                  : mobilePaymentStatusUnavailable
+                    ? 'Statut Mobile Money indisponible'
+                    : 'Paiement Mobile Money à vérifier'
               : 'Paiement à la livraison'
           }
           detail={
             isMobileMoney
               ? mobilePaid
                 ? 'Confirmation reçue directement de l’opérateur.'
-                : 'Nous attendons la confirmation de l’opérateur.'
+                : cannotVerifyMobilePayment
+                  ? 'Contactez AGRIM avec votre référence avant toute nouvelle tentative.'
+                  : mobilePaymentStatusUnavailable
+                    ? 'Réessayez la vérification dès que votre connexion revient.'
+                    : 'Nous attendons la confirmation de l’opérateur.'
               : 'Vous réglerez votre commande à sa réception.'
           }
           active={!isMobileMoney || mobilePaid}
         />
         <StatusStep
           icon="clipboard-check"
-          title="Commande reçue"
-          detail="Votre demande est enregistrée pour préparation."
+          title={
+            isMobileMoney && !mobilePaid
+              ? 'Commande en attente de paiement'
+              : 'Commande reçue'
+          }
+          detail={
+            isMobileMoney && !mobilePaid
+              ? 'La préparation commencera après la confirmation du règlement.'
+              : 'Votre demande est enregistrée pour préparation.'
+          }
           active={!isMobileMoney || mobilePaid}
         />
         <StatusStep
@@ -164,11 +206,34 @@ export default function ConfirmationScreen() {
 
       <View style={styles.action}>
         {isMobileMoney && !mobilePaid ? (
-          <Button
-            label="VOIR LE PAIEMENT"
-            onPress={() => router.replace(`/paiement/${reference}`)}
-            icon={<Icon name="smartphone" size={17} color="white" />}
-          />
+          cannotVerifyMobilePayment ? (
+            <Button
+              label="APPELER AGRIM"
+              onPress={() => void callMobileSupport()}
+              icon={<Icon name="phone" size={17} color="white" />}
+            />
+          ) : (
+            <>
+              <Button
+                label={
+                  mobilePayment.isFetching
+                    ? 'VÉRIFICATION…'
+                    : mobilePaymentStatusUnavailable
+                      ? 'RÉESSAYER LA VÉRIFICATION'
+                      : 'ACTUALISER LE PAIEMENT'
+                }
+                disabled={accessToken === undefined || mobilePayment.isFetching}
+                onPress={() => void mobilePayment.refetch()}
+                icon={<Icon name="refresh-cw" size={17} color="white" />}
+              />
+              <Button
+                label="VOIR LE PAIEMENT"
+                variant="outline"
+                onPress={() => router.replace(`/paiement/${reference}`)}
+                icon={<Icon name="smartphone" size={17} color="green" />}
+              />
+            </>
+          )
         ) : (
           <Button
             label="RETOUR AUX PRODUITS"
@@ -229,6 +294,7 @@ const styles = StyleSheet.create({
     borderRadius: 48,
     backgroundColor: palette.greenSoft,
   },
+  pendingMark: { backgroundColor: palette.goldSoft },
   intro: { marginTop: spacing.sm, lineHeight: 19 },
   orderCard: {
     gap: spacing.md,
@@ -276,5 +342,5 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
   },
   helpCopy: { flex: 1, lineHeight: 17 },
-  action: { marginTop: 'auto', paddingTop: spacing.xl },
+  action: { gap: spacing.sm, marginTop: 'auto', paddingTop: spacing.xl },
 });

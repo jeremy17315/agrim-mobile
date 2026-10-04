@@ -3,12 +3,14 @@ import { useEffect, useState } from 'react';
 import { Linking, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { useGuestPaymentStatus, useInitiateGuestPayment } from '@/api/payments';
 import { describeError } from '@/api/errors';
+import { useGuestPaymentStatus, useInitiateGuestPayment } from '@/api/payments';
 import { CheckoutProgress } from '@/components/CheckoutProgress';
 import { Banner, Button, Card, Icon, Text } from '@/components/ui';
+import { callMobileSupport } from '@/lib/contact';
 import { formatXof } from '@/lib/format';
 import { getGuestPaymentAccess } from '@/lib/guestPayment';
+import { useIsOnline } from '@/lib/network';
 import { palette, spacing } from '@/theme/tokens';
 
 /**
@@ -18,6 +20,7 @@ import { palette, spacing } from '@/theme/tokens';
 export default function GuestPaymentScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const isOnline = useIsOnline();
   const { reference } = useLocalSearchParams<{ reference: string }>();
   const [accessToken, setAccessToken] = useState<string | null | undefined>(
     undefined,
@@ -44,15 +47,29 @@ export default function GuestPaymentScreen() {
   }, [payment.data?.status, reference, router]);
 
   const beginPayment = async () => {
-    if (!reference || !accessToken) return;
+    if (!reference || !accessToken || !isOnline) return;
     setError(null);
     try {
       const result = await initiate.mutateAsync({
         reference,
         token: accessToken,
       });
+      // Relit tout de suite le serveur : certains opérateurs tranchent la
+      // transaction dès l'ouverture, sans attendre un retour dans l'app.
       await payment.refetch();
-      if (result.checkoutUrl) await Linking.openURL(result.checkoutUrl);
+      if (result.checkoutUrl) {
+        await Linking.openURL(result.checkoutUrl);
+      }
+    } catch (cause) {
+      setError(describeError(cause));
+    }
+  };
+
+  const refreshPaymentStatus = async () => {
+    if (!isOnline) return;
+    setError(null);
+    try {
+      await payment.refetch();
     } catch (cause) {
       setError(describeError(cause));
     }
@@ -87,6 +104,12 @@ export default function GuestPaymentScreen() {
             dans le temps. Recommencez simplement votre commande.
           </Text>
           <Button
+            label="APPELER AGRIM"
+            variant="outline"
+            onPress={() => void callMobileSupport()}
+            icon={<Icon name="phone" size={17} color="green" />}
+          />
+          <Button
             label="RETOUR AUX PRODUITS"
             onPress={() => router.replace('/catalogue')}
           />
@@ -116,13 +139,31 @@ export default function GuestPaymentScreen() {
       <View style={styles.content}>
         <View style={styles.intro}>
           <Text variant="micro" color="green" style={styles.stepLabel}>
-            ÉTAPE PAIEMENT
+            ÉTAPE 3 SUR 4
           </Text>
           <Text variant="h1">Validez votre règlement</Text>
           <Text variant="body" color="muted">
             Vous allez être redirigé vers la page sécurisée de votre opérateur.
           </Text>
         </View>
+
+        {!isOnline ? (
+          <View style={styles.offlineSupport}>
+            <Banner
+              tone="warning"
+              message="Pas de connexion Internet. Votre paiement n’est pas relancé automatiquement."
+              icon={<Icon name="wifi-off" size={15} color="#8A5310" />}
+            />
+            <Button
+              label="APPELER AGRIM · 07 00 05 04 52"
+              variant="outline"
+              size="sm"
+              fullWidth={false}
+              onPress={() => void callMobileSupport()}
+              icon={<Icon name="phone" size={15} color="green" />}
+            />
+          </View>
+        ) : null}
 
         {error || payment.isError ? (
           <Banner
@@ -193,15 +234,27 @@ export default function GuestPaymentScreen() {
         ) : (
           <Button
             label={
-              initiate.isPending
-                ? 'OUVERTURE DU PAIEMENT…'
-                : started
-                  ? 'RÉESSAYER / VÉRIFIER'
-                  : 'PAYER MAINTENANT'
+              !isOnline
+                ? 'CONNEXION NÉCESSAIRE'
+                : initiate.isPending
+                  ? 'OUVERTURE DU PAIEMENT…'
+                  : payment.isFetching
+                    ? 'VÉRIFICATION…'
+                    : started
+                      ? 'ACTUALISER LE STATUT'
+                      : 'PAYER MAINTENANT'
             }
-            disabled={initiate.isPending || payment.isFetching}
-            onPress={() => void beginPayment()}
-            icon={<Icon name="shield-check" size={18} color="white" />}
+            disabled={!isOnline || initiate.isPending || payment.isFetching}
+            onPress={() =>
+              void (started ? refreshPaymentStatus() : beginPayment())
+            }
+            icon={
+              started ? (
+                <Icon name="refresh-cw" size={18} color="white" />
+              ) : (
+                <Icon name="shield-check" size={18} color="white" />
+              )
+            }
           />
         )}
       </View>
@@ -232,6 +285,7 @@ const styles = StyleSheet.create({
   content: { flex: 1, gap: spacing.lg, padding: spacing.lg },
   intro: { gap: spacing.xs },
   stepLabel: { letterSpacing: 1.4 },
+  offlineSupport: { gap: spacing.sm, alignItems: 'flex-start' },
   amountCard: { gap: spacing.md, padding: spacing.lg },
   amountHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   walletIcon: {

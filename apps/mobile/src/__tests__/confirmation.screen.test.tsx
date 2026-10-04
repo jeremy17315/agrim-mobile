@@ -1,4 +1,9 @@
-import { render, screen, waitFor } from '@testing-library/react-native';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react-native';
 
 import ConfirmationScreen from '../../app/confirmation/[reference]';
 
@@ -22,6 +27,10 @@ jest.mock('@/api/payments', () => ({
 
 const mockGetAccess = jest.fn().mockResolvedValue('capabilite-temporaire');
 const mockClearAccess = jest.fn().mockResolvedValue(undefined);
+const mockCallMobileSupport = jest.fn().mockResolvedValue(undefined);
+jest.mock('@/lib/contact', () => ({
+  callMobileSupport: () => mockCallMobileSupport(),
+}));
 jest.mock('@/lib/guestPayment', () => ({
   getGuestPaymentAccess: (...args: unknown[]) => mockGetAccess(...args),
   clearGuestPaymentAccess: (...args: unknown[]) => mockClearAccess(...args),
@@ -30,15 +39,45 @@ jest.mock('@/lib/guestPayment', () => ({
 beforeEach(() => {
   jest.clearAllMocks();
   delete params.payment;
-  mockPaymentStatus.mockReturnValue({ data: undefined });
+  mockGetAccess.mockResolvedValue('capabilite-temporaire');
+  mockPaymentStatus.mockReturnValue({
+    data: undefined,
+    isError: false,
+    isFetching: false,
+    refetch: jest.fn(),
+  });
 });
 
 it('confirme clairement le paiement comptant à la livraison', () => {
   render(<ConfirmationScreen />);
 
   expect(screen.getByText('Commande reçue !')).toBeTruthy();
+  expect(screen.getByLabelText('Étape 4 sur 4 : Confirmation')).toBeTruthy();
   expect(screen.getByText('À LA LIVRAISON')).toBeTruthy();
   expect(screen.getByText('Paiement à la livraison')).toBeTruthy();
+});
+
+it('propose l’appel AGRIM comme aide facultative de suivi', () => {
+  render(<ConfirmationScreen />);
+
+  fireEvent.press(
+    screen.getByLabelText('Appeler AGRIM pour le suivi de cette commande'),
+  );
+  expect(mockCallMobileSupport).toHaveBeenCalledTimes(1);
+});
+
+it('ne marque jamais un paiement Mobile Money comme réglé sans capacité locale', async () => {
+  params.payment = 'MOBILE_MONEY';
+  mockGetAccess.mockResolvedValueOnce(null);
+
+  render(<ConfirmationScreen />);
+
+  await waitFor(() =>
+    expect(screen.getByText('Vérification nécessaire')).toBeTruthy(),
+  );
+  expect(screen.queryByText('PAYÉ')).toBeNull();
+  fireEvent.press(screen.getByText('APPELER AGRIM'));
+  expect(mockCallMobileSupport).toHaveBeenCalledTimes(1);
 });
 
 it('n’affiche un Mobile Money comme payé qu’après le statut serveur réussi', async () => {
