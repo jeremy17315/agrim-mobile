@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Image, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -156,9 +156,16 @@ export default function RootLayout() {
               // Session et cache catalogue en cours de restauration : afficher
               // les écrans maintenant provoquerait une erreur ou une redirection
               // visible dès que les données locales sont retrouvées.
-              <View style={styles.splash}>
-                <Text style={styles.splashBrand}>Bélier d’Or</Text>
-                <Text style={styles.splashCompany}>AGRIM</Text>
+              <View style={styles.splash} accessibilityLabel="Chargement AGRIM">
+                <Image
+                  source={require('../assets/logo-agrim.png')}
+                  style={styles.splashLogo}
+                  resizeMode="contain"
+                  accessibilityLabel="Logo AGRIM"
+                />
+                <Text style={styles.splashCompany}>
+                  PRÉPARATION DE L’APPLICATION
+                </Text>
                 <ActivityIndicator color={palette.green} />
               </View>
             )}
@@ -178,17 +185,12 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     backgroundColor: palette.bg,
   },
-  splashBrand: {
-    color: palette.green,
-    fontSize: 34,
-    fontWeight: '900',
-    letterSpacing: -1.4,
-  },
+  splashLogo: { width: 228, height: 92 },
   splashCompany: {
     color: palette.muted,
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '800',
-    letterSpacing: 2.4,
+    letterSpacing: 1.5,
     marginBottom: spacing.lg,
   },
 });

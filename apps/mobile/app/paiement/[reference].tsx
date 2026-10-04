@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useGuestPaymentStatus, useInitiateGuestPayment } from '@/api/payments';
 import { describeError } from '@/api/errors';
+import { CheckoutProgress } from '@/components/CheckoutProgress';
 import { Banner, Button, Card, Icon, Text } from '@/components/ui';
 import { formatXof } from '@/lib/format';
 import { getGuestPaymentAccess } from '@/lib/guestPayment';
@@ -107,6 +108,9 @@ export default function GuestPaymentScreen() {
           <Icon name="arrow-left" size={19} color="ink" />
         </Pressable>
         <Text variant="h3">Paiement sécurisé</Text>
+      </View>
+      <View style={styles.progress}>
+        <CheckoutProgress step={3} />
       </View>
 
       <View style={styles.content}>
@@ -224,6 +228,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: palette.line,
   },
+  progress: { paddingHorizontal: spacing.lg, paddingBottom: spacing.sm },
   content: { flex: 1, gap: spacing.lg, padding: spacing.lg },
   intro: { gap: spacing.xs },
   stepLabel: { letterSpacing: 1.4 },

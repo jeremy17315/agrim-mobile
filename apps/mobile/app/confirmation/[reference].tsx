@@ -1,14 +1,16 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useGuestPaymentStatus } from '@/api/payments';
+import { CheckoutProgress } from '@/components/CheckoutProgress';
 import { Button, Card, Icon, Text } from '@/components/ui';
 import {
   clearGuestPaymentAccess,
   getGuestPaymentAccess,
 } from '@/lib/guestPayment';
+import { callMobileSupport } from '@/lib/contact';
 import { palette, radius, shadow, spacing } from '@/theme/tokens';
 
 /**
@@ -63,6 +65,7 @@ export default function ConfirmationScreen() {
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top + spacing.xl }]}>
+      <CheckoutProgress step={4} />
       <View style={styles.successMark}>
         <Icon name="circle-check" size={55} color="green" />
       </View>
@@ -146,12 +149,18 @@ export default function ConfirmationScreen() {
         />
       </Card>
 
-      <View style={styles.help}>
-        <Icon name="message-circle" size={17} color="green" />
+      <Pressable
+        onPress={() => void callMobileSupport()}
+        accessibilityRole="button"
+        accessibilityLabel="Appeler AGRIM pour le suivi de cette commande"
+        style={styles.help}
+      >
+        <Icon name="phone-call" size={17} color="green" />
         <Text variant="caption" color="body" style={styles.helpCopy}>
-          Gardez cette référence si vous devez joindre notre équipe.
+          Gardez cette référence. Besoin d’aide ? Appelez AGRIM.
         </Text>
-      </View>
+        <Icon name="chevron-right" size={16} color="muted" />
+      </Pressable>
 
       <View style={styles.action}>
         {isMobileMoney && !mobilePaid ? (
