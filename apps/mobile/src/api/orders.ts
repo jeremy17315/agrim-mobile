@@ -162,10 +162,17 @@ const deliveryQuoteSchema = z.object({
 
 const cartQuoteSchema = z.object({
   subtotal: z.number().int(),
-  /** Remise décidée par le site (volume, grossiste, code promo). */
+  /** Remise décidée par le serveur (code AGRIM, volume, grossiste). */
   remise: z.number().int().default(0),
-  /** `unavailable` : le calculateur est injoignable ⇒ aucune remise. */
-  remiseStatus: z.enum(['ok', 'unavailable']).default('unavailable'),
+  /**
+   * `ok` : une remise a été décidée (éventuellement nulle).
+   * `refused` : le code saisi ne peut pas être appliqué — le client doit le
+   * retirer, sinon il paierait plein tarif en croyant le contraire.
+   * `unavailable` : le calculateur du site est injoignable ⇒ aucune remise.
+   */
+  remiseStatus: z
+    .enum(['ok', 'refused', 'unavailable'])
+    .default('unavailable'),
   promoCode: z.string().nullable().default(null),
   promoMessage: z.string().nullable().default(null),
   delivery: deliveryQuoteSchema,

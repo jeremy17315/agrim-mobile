@@ -232,7 +232,7 @@ l'installation pour l'application qui télécharge le fichier (Chrome, Fichiers)
 Dans l'ordre, avec l'API démarrée sur la machine :
 
 1. **Ouverture de l'application** — le splash vert AGRIM apparaît.
-2. **Catalogue** — les produits RIZ BOAGNI s'affichent.
+2. **Catalogue** — les produits BÉLIER D’OR s'affichent.
    Écran vide ou erreur réseau ⇒ le problème est l'URL de l'API, pas
    l'application. Reprenez l'étape 3.
 3. **Connexion** — `0700000001` / `Agrim2026!` (client de démonstration).

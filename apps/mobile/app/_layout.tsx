@@ -5,9 +5,12 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Image, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
+import { apiRequest } from '@/api/client';
+import { appConfigSchema, configKeys } from '@/api/config';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { fetchProducts, catalogKeys } from '@/api/catalog';
 import { OfflineBanner } from '@/components/OfflineBanner';
+import { rememberPublishedSupport } from '@/lib/contact';
 import { usePushRegistration } from '@/lib/usePushRegistration';
 import { startNetworkMonitoring } from '@/lib/network';
 import {
@@ -99,6 +102,27 @@ export default function RootLayout() {
         // Hors ligne, React Query conserve le cache relu ci-dessus et attend
         // le retour du réseau pour rafraîchir le catalogue.
       });
+
+    // Coordonnées et textes publiés par AGRIM, préchargés une fois pour
+    // toutes : les écrans de secours (appel du support, livraison) appellent
+    // ensuite la bonne ligne, même s'ils n'ont pas fait la requête eux-mêmes.
+    void queryClient
+      .fetchQuery({
+        queryKey: configKeys.all,
+        queryFn: ({ signal }) =>
+          apiRequest({
+            path: '/config/app',
+            schema: appConfigSchema,
+            isPublic: true,
+            signal,
+          }),
+        staleTime: 10 * 60 * 1000,
+      })
+      .then((config) => rememberPublishedSupport(config.support))
+      .catch(() => {
+        // API injoignable : `contact.ts` retombe sur les valeurs AGRIM du
+        // contrat partagé — jamais sur un écran sans numéro.
+      });
   }, [catalogHydrated, queryClient]);
 
   // Jeton de notification : lié à la session, pas à un écran.
@@ -123,6 +147,8 @@ export default function RootLayout() {
                 <Stack.Screen name="(tabs)" />
                 <Stack.Screen name="produit/[slug]" />
                 <Stack.Screen name="commande" />
+                {/* Contact et aide : public, sans compte. */}
+                <Stack.Screen name="contact" />
                 <Stack.Screen name="paiement/[reference]" />
                 <Stack.Screen name="confirmation/[reference]" />
 

@@ -84,6 +84,29 @@ jest.mock('@/api/orders', () => ({
   }),
 }));
 
+/**
+ * Moyens de paiement publiés par AGRIM : ils viennent du RÉSEAU, jamais d'une
+ * constante du bundle. Le test vérifie que c'est bien cette liste qui pilote
+ * l'écran, et que le numéro affiché est celui du serveur.
+ */
+jest.mock('@/api/payments', () => ({
+  usePaymentMethods: () => ({
+    data: {
+      methods: [
+        {
+          code: 'ORANGE_MONEY',
+          operatorName: 'Orange Money',
+          receivingNumber: '0700000000',
+          beneficiaryName: 'AGRIM SARL',
+          instructions: null,
+          ussdTemplate: null,
+        },
+      ],
+    },
+    isError: false,
+  }),
+}));
+
 const mockSaveGuestPaymentAccess = jest.fn().mockResolvedValue(undefined);
 jest.mock('@/lib/guestPayment', () => ({
   // La fonction enveloppe garde la référence du mock après l'initialisation
@@ -199,15 +222,22 @@ it('transmet le choix Mobile Money et rejoint le paiement invité sécurisé', a
     paymentAccessToken: 'capabilite-invitee-de-paiement-valide',
   });
   render(<CommandeScreen />);
-  fireEvent.press(screen.getByLabelText('Payer maintenant par Mobile Money'));
+  fireEvent.press(
+    screen.getByLabelText('Payer maintenant par Orange Money'),
+  );
   fillDelivery();
   fireEvent.press(screen.getByText('CONTINUER VERS LE PAIEMENT'));
 
   await waitFor(() => expect(mockCreateGuestOrder).toHaveBeenCalled());
+  // Transfert direct : le code du moyen part au serveur, mais JAMAIS un
+  // numéro — c'est le serveur qui le résout depuis sa configuration.
   expect(mockCreateGuestOrder.mock.calls[0]![0]).toMatchObject({
-    paymentMethod: 'MOBILE_MONEY',
-    mobileMoneyProvider: 'ORANGE_MONEY',
+    paymentMethod: 'DIRECT_MOBILE_MONEY',
+    paymentMethodCode: 'ORANGE_MONEY',
   });
+  expect(JSON.stringify(mockCreateGuestOrder.mock.calls[0]![0])).not.toContain(
+    '0700000000',
+  );
   await waitFor(() =>
     expect(mockSaveGuestPaymentAccess).toHaveBeenCalledWith(
       'AGR-2026-0002',
@@ -237,7 +267,9 @@ it('demande seulement les trois informations de livraison, sans adresse enregist
   expect(screen.getByLabelText('Numéro de téléphone')).toBeTruthy();
   expect(screen.getByLabelText('Livrer à Abidjan')).toBeTruthy();
   expect(screen.queryByText(/Ajouter une adresse/i)).toBeNull();
-  expect(screen.getByText(/Mobile Money/i)).toBeTruthy();
+  expect(
+    screen.getByLabelText('Payer maintenant par Orange Money'),
+  ).toBeTruthy();
 });
 
 it('conserve le panier et la clé d’idempotence après une coupure réseau', async () => {

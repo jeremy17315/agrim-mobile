@@ -6,6 +6,7 @@ import { phoneSchema } from '@agrim/contracts';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CreateOrderDto } from './dto/create-order.dto';
 import type { CreateGuestOrderDto } from './dto/create-guest-order.dto';
+import { normalizeOrderPayment } from '../payments/resolve-method';
 import { OrdersService } from './orders.service';
 import { GuestPaymentTokenService } from './guest-payment-token.service';
 
@@ -37,12 +38,26 @@ export class GuestCheckoutService {
       });
     }
     const phone = phoneResult.data;
-    const paymentMethod = dto.paymentMethod ?? 'CASH_ON_DELIVERY';
-    if (paymentMethod === 'MOBILE_MONEY' && !dto.mobileMoneyProvider) {
-      throw new BadRequestException({
-        code: 'PAYMENT_PROVIDER_REQUIRED',
-        message: 'Choisissez un opérateur Mobile Money.',
-      });
+
+    // Le moyen de paiement est NORMALISÉ ici : `MOBILE_MONEY` (application
+    // déjà installée) devient un transfert direct, jamais un encaissement par
+    // agrégateur. La résolution du numéro officiel, elle, se fait dans
+    // `OrdersService.create` — un seul endroit décide du régime de paiement.
+    const orderPayment = normalizeOrderPayment({
+      paymentMethod: dto.paymentMethod ?? 'CASH_ON_DELIVERY',
+      mobileMoneyProvider: dto.mobileMoneyProvider,
+      paymentMethodCode: dto.paymentMethodCode,
+    });
+    if (orderPayment.method === 'DIRECT_MOBILE_MONEY' && !dto.paymentMethodCode) {
+      // Compatibilité : un ancien client n'envoie que `mobileMoneyProvider`.
+      // On ne refuse pas sa commande, mais on lui réclame de quoi résoudre le
+      // moyen de paiement si aucun code n'est déductible.
+      if (!dto.mobileMoneyProvider) {
+        throw new BadRequestException({
+          code: 'PAYMENT_METHOD_CODE_REQUIRED',
+          message: 'Choisissez le moyen de paiement que vous allez utiliser.',
+        });
+      }
     }
 
     // Réponse perdue ou double-tap : aucun nouveau profil, aucun nouveau stock.
@@ -83,9 +98,10 @@ export class GuestCheckoutService {
       });      const order: CreateOrderDto = {
         addressId: address.id,
         items: dto.items,
-        paymentMethod,
-        mobileMoneyProvider:
-          paymentMethod === 'MOBILE_MONEY' ? dto.mobileMoneyProvider : undefined,
+        paymentMethod: orderPayment.method,
+        // Le code effectivement retenu part vers la création de commande, qui
+        // y résout le numéro officiel de réception.
+        paymentMethodCode: orderPayment.methodCode ?? undefined,
         idempotencyKey: dto.idempotencyKey,
         // Relais vers le calculateur du site : seul lui sait si le code est
         // valable, et seule la remise qu'il renvoie est appliquée.
@@ -131,7 +147,13 @@ export class GuestCheckoutService {
   private withPaymentAccess<
     T extends { reference: string; payment: { method: string } | null },
   >(order: T) {
-    if (order.payment?.method !== 'MOBILE_MONEY') return order;
+    // Une commande invitée réglée par transfert direct a besoin de sa capacité
+    // temporaire : c'est elle qui autorise l'affichage des instructions, la
+    // déclaration du paiement et la relecture du statut sans compte.
+    const method = order.payment?.method;
+    if (method !== 'MOBILE_MONEY' && method !== 'DIRECT_MOBILE_MONEY') {
+      return order;
+    }
     return {
       ...order,
       paymentAccessToken: this.paymentTokens.issue(order.reference),

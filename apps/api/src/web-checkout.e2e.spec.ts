@@ -8,9 +8,11 @@
  *    facturera — un centime d'écart et c'est tout le contrat qui ment ;
  *  - le double-clic CONCURRENT (deux requêtes en vol, même clé) produit UNE
  *    commande — le perdant est renvoyé sur celle du gagnant, jamais un 500 ;
- *  - le parcours payé asynchrone : `initiate` ouvre, le WEBHOOK de
- *    l'opérateur tranche, la commande se confirme toute seule ;
- *  - un webhook REJOUÉ est acquitté sans second effet ;
+ *  - la bascule du 11 octobre 2026 : une commande NOUVELLE naît en transfert
+ *    direct, et l'agrégateur lui est fermé — un ancien client qui envoie
+ *    encore `MOBILE_MONEY` est servi sans commission ;
+ *  - le régime HISTORIQUE reste prouvé : un webhook rejoué pour une commande
+ *    antérieure est acquitté sans second effet ;
  *  - un autre compte ne peut ni lire ni payer la commande d'autrui.
  */
 import 'dotenv/config';
@@ -41,8 +43,10 @@ describe('Parcours web — commander et payer via /api/v1', () => {
   const prefix = '/api/v1';
 
   let clientToken: string;
+  let clientUserId: string;
   let addressId: string;
   let variantId: string;
+  let configMethodId: string;
 
   const orderIds: string[] = [];
   const addressIds: string[] = [];
@@ -85,6 +89,27 @@ describe('Parcours web — commander et payer via /api/v1', () => {
     addressId = (address.body as { id: string }).id;
     addressIds.push(addressId);
 
+    const clientUser = await prisma.db.user.findUniqueOrThrow({
+      where: { phone: '0700000001' },
+      select: { id: true },
+    });
+    clientUserId = clientUser.id;
+
+    // Moyen de paiement ACTIF, données de test : un numéro réel est un
+    // paramètre AGRIM, jamais une valeur du dépôt.
+    const methode = await prisma.db.paymentMethodConfig.create({
+      data: {
+        code: 'ORANGE_MONEY',
+        operatorName: 'Orange Money (test)',
+        receivingNumber: '0700000000',
+        beneficiaryName: 'AGRIM SARL (test)',
+        isActive: true,
+        sortOrder: 1,
+      },
+      select: { id: true },
+    });
+    configMethodId = methode.id;
+
     const variant = await prisma.db.productVariant.findFirstOrThrow({
       where: { isAvailable: true },
       select: { id: true },
@@ -106,6 +131,11 @@ describe('Parcours web — commander et payer via /api/v1', () => {
     if (addressIds.length > 0) {
       await prisma.db.address.deleteMany({ where: { id: { in: addressIds } } });
     }
+    if (configMethodId) {
+      await prisma.db.paymentMethodConfig.delete({
+        where: { id: configMethodId },
+      });
+    }
     await app.close();
     delete process.env.THROTTLE_DISABLED;
     delete process.env.PAYMENT_SIMULATION_ASYNC;
@@ -122,7 +152,7 @@ describe('Parcours web — commander et payer via /api/v1', () => {
     opts: {
       idempotencyKey?: string;
       paymentMethod?: 'CASH_ON_DELIVERY' | 'MOBILE_MONEY';
-      provider?: string;
+      provider?: 'ORANGE_MONEY' | 'MTN_MOMO' | 'MOOV_MONEY' | 'WAVE';
     } = {},
   ) =>
     server()
@@ -136,33 +166,49 @@ describe('Parcours web — commander et payer via /api/v1', () => {
         idempotencyKey: opts.idempotencyKey ?? randomUUID(),
       });
 
-  /** Ouvre un paiement Mobile Money asynchrone et renvoie la commande plus
-   * sa référence de transaction côté opérateur. */
-  const commandeEnAttente = async () => {
-    const commande = await creerCommande({
-      paymentMethod: 'MOBILE_MONEY',
-      provider: 'ORANGE_MONEY',
+  /**
+   * Commande ANTÉRIEURE à la bascule du 11 octobre 2026, posée directement en
+   * base. Le webhook de l'agrégateur reste en service pour CES commandes : leur
+   * argent a été encaissé par ce chemin, et c'est l'idempotence de ce
+   * traitement-là que le test protège. Une commande nouvelle ne peut plus
+   * emprunter cette voie (voir le test de fermeture plus bas).
+   */
+  const commandeLegacy = async () => {
+    const providerReference = `TX-LEGACY-${randomUUID().slice(0, 8)}`;
+    const commande = await prisma.db.order.create({
+      data: {
+        reference: `AGR-LEG-${randomUUID().slice(0, 6)}`,
+        userId: clientUserId,
+        addressId,
+        status: 'PENDING',
+        subtotal: 18_500,
+        deliveryFee: 0,
+        total: 18_500,
+        idempotencyKey: randomUUID(),
+        items: {
+          create: {
+            variantId,
+            productName: 'Produit hérité',
+            variantLabel: 'Format de test',
+            unitPrice: 9_250,
+            quantity: 2,
+            lineTotal: 18_500,
+          },
+        },
+        payment: {
+          create: {
+            method: 'MOBILE_MONEY',
+            provider: 'ORANGE_MONEY',
+            amount: 18_500,
+            status: 'AWAITING_CONFIRMATION',
+            providerReference,
+          },
+        },
+      },
+      select: { id: true, reference: true, status: true },
     });
-    expect(commande.status).toBe(201);
-    orderIds.push((commande.body as { id: string }).id);
-
-    const initiation = await server()
-      .post(`${prefix}/payments/orders/${commande.body.reference}/initiate`)
-      .set(auth(clientToken))
-      .send();
-    expect(initiation.status).toBe(201);
-    expect(initiation.body).toMatchObject({ status: 'PENDING' });
-
-    const paiement = await prisma.db.payment.findFirstOrThrow({
-      where: { order: { id: commande.body.id } },
-      select: { providerReference: true, status: true },
-    });
-    expect(paiement.status).toBe('AWAITING_CONFIRMATION');
-
-    return {
-      commande: commande.body as { id: string; reference: string; status: string },
-      providerReference: paiement.providerReference,
-    };
+    orderIds.push(commande.id);
+    return { commande, providerReference };
   };
 
   it('le devis annonce EXACTEMENT ce que la commande facturera', async () => {
@@ -209,19 +255,43 @@ describe('Parcours web — commander et payer via /api/v1', () => {
     orderIds.push(corps[0].body!.id!);
   });
 
-  it('parcours payé : initiate ouvre, SANS confirmer tout seul', async () => {
-    const { commande } = await commandeEnAttente();
-    // En asynchrone, l'initiation NE tranche pas : tant que l'opérateur
-    // n'a pas parlé, la commande reste en attente — c'est ce qui rend le
-    // webhook irremplaçable (et sa réconciliation nécessaire).
-    const fiche = await server()
-      .get(`${prefix}/orders/${commande.reference}`)
-      .set(auth(clientToken));
-    expect(fiche.body.status).toBe('PENDING');
+  it('bascule : une commande NOUVELLE ne passe plus par l’agrégateur', async () => {
+    const commande = await creerCommande({
+      paymentMethod: 'MOBILE_MONEY',
+      provider: 'ORANGE_MONEY',
+    });
+    expect(commande.status).toBe(201);
+    orderIds.push((commande.body as { id: string }).id);
+
+    // Un ancien client envoie encore `MOBILE_MONEY` : sa commande est HONORÉE,
+    // mais elle naît en transfert direct — jamais sous le régime commissionné.
+    const paiement = await prisma.db.payment.findFirstOrThrow({
+      where: { order: { id: (commande.body as { id: string }).id } },
+      select: { method: true, methodCode: true, receivingNumber: true },
+    });
+    expect(paiement).toMatchObject({
+      method: 'DIRECT_MOBILE_MONEY',
+      methodCode: 'ORANGE_MONEY',
+      receivingNumber: '0700000000',
+    });
+
+    // Et la porte de l'agrégateur est fermée : aucune transaction n'est ouverte.
+    const initiation = await server()
+      .post(
+        `${prefix}/payments/orders/${
+          (commande.body as { reference: string }).reference
+        }/initiate`,
+      )
+      .set(auth(clientToken))
+      .send();
+    expect(initiation.status).toBe(409);
+    expect((initiation.body as { code: string }).code).toBe(
+      'PAYMENT_NOT_AGGREGATOR',
+    );
   });
 
   it('un webhook REJOUÉ est acquitté sans second effet', async () => {
-    const { commande, providerReference } = await commandeEnAttente();
+    const { commande, providerReference } = await commandeLegacy();
 
     const premier = await server()
       .post(`${prefix}/payments/callback/simulation`)
@@ -262,8 +332,7 @@ describe('Parcours web — commander et payer via /api/v1', () => {
 
   it('un autre compte ne peut ni lire ni payer ma commande', async () => {
     const commande = await creerCommande({
-      paymentMethod: 'MOBILE_MONEY',
-      provider: 'WAVE',
+      paymentMethod: 'CASH_ON_DELIVERY',
     });
     expect(commande.status).toBe(201);
     orderIds.push((commande.body as { id: string }).id);

@@ -1,21 +1,38 @@
+import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Linking, Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { describeError } from '@/api/errors';
-import { useGuestPaymentStatus, useInitiateGuestPayment } from '@/api/payments';
+import {
+  useDeclarePayment,
+  useGuestPaymentStatus,
+  usePaymentInstructions,
+  type DirectPaymentMethod,
+} from '@/api/payments';
 import { CheckoutProgress } from '@/components/CheckoutProgress';
-import { Banner, Button, Card, Icon, Text } from '@/components/ui';
-import { callMobileSupport } from '@/lib/contact';
+import { Banner, Button, Card, Icon, Input, Text } from '@/components/ui';
+import { callMobileSupport, supportPhone } from '@/lib/contact';
 import { formatXof } from '@/lib/format';
 import { getGuestPaymentAccess } from '@/lib/guestPayment';
 import { useIsOnline } from '@/lib/network';
 import { palette, spacing } from '@/theme/tokens';
 
 /**
- * Suite du checkout invité : même passerelle que le site, avec une capacité
- * temporaire stockée localement à la place d'une session client.
+ * Paiement par TRANSFERT DIRECT vers le numéro officiel d'AGRIM.
+ *
+ * L'écran ne fait que trois choses, dans cet ordre :
+ *
+ *  1. afficher l'instruction EXACTE venue du serveur — montant figé, numéro
+ *     configuré par AGRIM, bénéficiaire, référence de commande à rappeler ;
+ *  2. laisser le client DÉCLARER la transaction qu'il vient d'effectuer
+ *     (référence opérateur, montant transféré) ;
+ *  3. suivre le statut réel : déclaré → vérification AGRIM → confirmé.
+ *
+ * Ce que cet écran ne fera JAMAIS : confirmer un paiement. Le bouton
+ * « j'ai payé » n'existe pas ; une déclaration n'est pas une preuve, et seule
+ * la vérification humaine côté AGRIM fait passer la commande à « confirmée ».
  */
 export default function GuestPaymentScreen() {
   const router = useRouter();
@@ -26,7 +43,19 @@ export default function GuestPaymentScreen() {
     undefined,
   );
   const [error, setError] = useState<string | null>(null);
-  const initiate = useInitiateGuestPayment();
+  const [transactionReference, setTransactionReference] = useState('');
+  // `null` tant que le client n'a rien saisi : la valeur AFFICHÉE retombe alors
+  // sur le montant attendu venu du serveur — sans effet de bord ni état dupliqué.
+  const [declaredAmount, setDeclaredAmount] = useState<string | null>(null);
+  const [note, setNote] = useState('');
+  const [declared, setDeclared] = useState(false);
+  const [copied, setCopied] = useState<'numero' | 'tout' | null>(null);
+
+  const instructions = usePaymentInstructions(
+    reference ?? '',
+    accessToken ?? null,
+  );
+  const declare = useDeclarePayment(reference ?? '', accessToken ?? null);
   const payment = useGuestPaymentStatus(reference ?? '', accessToken ?? null);
 
   useEffect(() => {
@@ -39,53 +68,74 @@ export default function GuestPaymentScreen() {
     };
   }, [reference]);
 
+  // Le montant attendu pré-remplit le formulaire : le client transfère le
+  // montant exact, il n'a rien à recopier de tête.
+  const montantSaisi =
+    declaredAmount ??
+    (instructions.data ? String(instructions.data.amount) : '');
+
+  // Confirmation réelle (par AGRIM) : on rejoint l'écran de confirmation.
   useEffect(() => {
     if (payment.data?.status !== 'SUCCEEDED' || !reference) return;
-    // La capacité reste disponible un court instant pour que la confirmation
-    // lise elle aussi le statut réellement confirmé par le serveur.
-    router.replace(`/confirmation/${reference}?payment=MOBILE_MONEY`);
+    router.replace(`/confirmation/${reference}?payment=DIRECT_MOBILE_MONEY`);
   }, [payment.data?.status, reference, router]);
 
-  const beginPayment = async () => {
+  const copyNumber = async (method: DirectPaymentMethod) => {
+    await Clipboard.setStringAsync(method.receivingNumber);
+    setCopied('numero');
+  };
+
+  const copyAll = async () => {
+    const data = instructions.data;
+    if (!data) return;
+    const lignes = [
+      `Paiement AGRIM — commande ${data.reference}`,
+      `Montant : ${formatXof(data.amount)}`,
+      `${data.method.operatorName} : ${data.method.receivingNumber}`,
+      data.method.beneficiaryName
+        ? `Bénéficiaire : ${data.method.beneficiaryName}`
+        : null,
+      `Référence à indiquer : ${data.paymentReference}`,
+    ].filter((ligne): ligne is string => ligne !== null);
+    await Clipboard.setStringAsync(lignes.join('\n'));
+    setCopied('tout');
+  };
+
+  const submitDeclaration = async () => {
     if (!reference || !accessToken || !isOnline) return;
+    const montant = Number.parseInt(montantSaisi.replace(/\D/g, ''), 10);
+    const valeur = transactionReference.trim();
     setError(null);
+
+    if (valeur.length < 4) {
+      setError(
+        'Indiquez la référence de transaction affichée par votre opérateur (au moins 4 caractères).',
+      );
+      return;
+    }
+    if (!Number.isSafeInteger(montant) || montant <= 0) {
+      setError('Indiquez le montant que vous avez transféré.');
+      return;
+    }
+
     try {
-      const result = await initiate.mutateAsync({
-        reference,
-        token: accessToken,
+      await declare.mutateAsync({
+        transactionReference: valeur,
+        declaredAmount: montant,
+        note: note.trim() ? note.trim() : undefined,
       });
-      // Relit tout de suite le serveur : certains opérateurs tranchent la
-      // transaction dès l'ouverture, sans attendre un retour dans l'app.
-      await payment.refetch();
-      if (result.checkoutUrl) {
-        await Linking.openURL(result.checkoutUrl);
-      }
-    } catch (cause) {
-      setError(describeError(cause));
-    }
-  };
-
-  const refreshPaymentStatus = async () => {
-    if (!isOnline) return;
-    setError(null);
-    try {
+      setDeclared(true);
       await payment.refetch();
     } catch (cause) {
       setError(describeError(cause));
     }
   };
-
-  const status = payment.data?.status;
-  const failed = status === 'FAILED' || status === 'EXPIRED';
-  const started =
-    payment.data?.providerReference !== null &&
-    payment.data?.providerReference !== undefined;
 
   if (accessToken === undefined) {
     return (
       <View style={[styles.screen, { paddingTop: insets.top + spacing.xl }]}>
         <Text variant="body" color="muted" center>
-          Préparation du paiement sécurisé…
+          Préparation du paiement…
         </Text>
       </View>
     );
@@ -100,8 +150,9 @@ export default function GuestPaymentScreen() {
             Session de paiement expirée
           </Text>
           <Text variant="body" color="muted" center>
-            Pour protéger votre commande, la session de paiement est limitée
-            dans le temps. Recommencez simplement votre commande.
+            Pour protéger votre commande, l’accès au paiement est limité dans le
+            temps. Appelez AGRIM avec votre numéro de commande : votre dossier
+            reste enregistré.
           </Text>
           <Button
             label="APPELER AGRIM"
@@ -118,6 +169,14 @@ export default function GuestPaymentScreen() {
     );
   }
 
+  const data = instructions.data;
+  const statut = payment.data?.status ?? data?.status ?? 'PENDING';
+  const confirmed = statut === 'SUCCEEDED';
+  const rejected = statut === 'REJECTED';
+  const needsReview =
+    statut === 'DECLARED_BY_CUSTOMER' || statut === 'UNDER_REVIEW';
+  const declaredAlready = declared || needsReview || rejected || confirmed;
+
   return (
     <View style={styles.screen}>
       <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
@@ -130,20 +189,22 @@ export default function GuestPaymentScreen() {
         >
           <Icon name="arrow-left" size={19} color="ink" />
         </Pressable>
-        <Text variant="h3">Paiement sécurisé</Text>
+        <Text variant="h3">Paiement par transfert</Text>
       </View>
       <View style={styles.progress}>
         <CheckoutProgress step={3} />
       </View>
 
-      <View style={styles.content}>
+      <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.intro}>
           <Text variant="micro" color="green" style={styles.stepLabel}>
             ÉTAPE 3 SUR 4
           </Text>
-          <Text variant="h1">Validez votre règlement</Text>
+          <Text variant="h1">Effectuez le transfert</Text>
           <Text variant="body" color="muted">
-            Vous allez être redirigé vers la page sécurisée de votre opérateur.
+            Envoyez le montant exact vers le numéro officiel d’AGRIM, puis
+            déclarez votre transaction ci-dessous. AGRIM vérifie la réception
+            des fonds avant de confirmer la commande.
           </Text>
         </View>
 
@@ -151,11 +212,11 @@ export default function GuestPaymentScreen() {
           <View style={styles.offlineSupport}>
             <Banner
               tone="warning"
-              message="Pas de connexion Internet. Votre paiement n’est pas relancé automatiquement."
+              message="Pas de connexion Internet. Votre paiement ne peut pas être déclaré hors connexion — ne payez jamais sans réseau, appelez AGRIM."
               icon={<Icon name="wifi-off" size={15} color="#8A5310" />}
             />
             <Button
-              label="APPELER AGRIM · 07 00 05 04 52"
+              label={`APPELER AGRIM · ${supportPhone()}`}
               variant="outline"
               size="sm"
               fullWidth={false}
@@ -165,99 +226,207 @@ export default function GuestPaymentScreen() {
           </View>
         ) : null}
 
-        {error || payment.isError ? (
+        {error || instructions.isError ? (
           <Banner
             tone="danger"
-            message={error ?? 'Le statut du paiement est indisponible.'}
+            message={error ?? 'Les instructions de paiement sont indisponibles.'}
             icon={<Icon name="triangle-alert" size={15} color="danger" />}
           />
         ) : null}
 
-        <Card style={styles.amountCard}>
-          <View style={styles.amountHead}>
-            <View style={styles.walletIcon}>
-              <Icon name="smartphone" size={22} color="green" />
-            </View>
-            <View style={styles.flex}>
-              <Text variant="h3">Mobile Money</Text>
-              <Text variant="caption" color="muted">
-                {payment.data?.provider?.replace('_', ' ') ??
-                  'Opérateur choisi'}
-              </Text>
-            </View>
-          </View>
-          <View style={styles.divider} />
-          <View style={styles.amountRow}>
-            <Text variant="bodyStrong">Montant à régler</Text>
-            <Text variant="h1" color="green">
-              {payment.data ? formatXof(payment.data.amount) : '…'}
-            </Text>
-          </View>
-          {reference ? (
-            <Text variant="caption" color="muted">
-              Commande {reference}
-            </Text>
-          ) : null}
-        </Card>
+        {confirmed ? (
+          <Banner
+            tone="success"
+            message="Paiement confirmé par AGRIM. Votre commande est prise en charge."
+            icon={<Icon name="circle-check" size={16} color="green" />}
+          />
+        ) : null}
 
-        {started && !failed ? (
+        {data ? (
+          <>
+            <Card style={styles.amountCard}>
+              <View style={styles.amountHead}>
+                <View style={styles.walletIcon}>
+                  <Icon name="smartphone" size={22} color="green" />
+                </View>
+                <View style={styles.flex}>
+                  <Text variant="h3">{data.method.operatorName}</Text>
+                  <Text variant="caption" color="muted">
+                    Transfert vers le numéro officiel AGRIM
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.divider} />
+              <View style={styles.amountRow}>
+                <Text variant="bodyStrong">Montant exact à envoyer</Text>
+                <Text variant="h1" color="green">
+                  {formatXof(data.amount)}
+                </Text>
+              </View>
+              <View style={styles.amountRow}>
+                <Text variant="caption" color="muted">
+                  Référence à indiquer
+                </Text>
+                <Text variant="bodyStrong">{data.paymentReference}</Text>
+              </View>
+            </Card>
+
+            <Card style={styles.numberCard}>
+              <Text variant="micro" color="muted">
+                NUMÉRO OFFICIEL DE RÉCEPTION
+              </Text>
+              <Text variant="h1" selectable style={styles.number}>
+                {data.method.receivingNumber}
+              </Text>
+              {data.method.beneficiaryName ? (
+                <Text variant="caption" color="muted">
+                  Bénéficiaire : {data.method.beneficiaryName}
+                </Text>
+              ) : null}
+              <Button
+                label={copied === 'numero' ? 'NUMÉRO COPIÉ' : 'COPIER LE NUMÉRO'}
+                variant="outline"
+                size="sm"
+                fullWidth={false}
+                onPress={() => void copyNumber(data.method)}
+                icon={<Icon name="copy" size={15} color="green" />}
+              />
+              {data.method.instructions ? (
+                <Text variant="body" color="body">
+                  {data.method.instructions}
+                </Text>
+              ) : null}
+            </Card>
+
+            <Button
+              label={
+                copied === 'tout'
+                  ? 'INSTRUCTIONS COPIÉES'
+                  : 'COPIER MONTANT + NUMÉRO + RÉFÉRENCE'
+              }
+              variant="outline"
+              onPress={() => void copyAll()}
+              icon={<Icon name="copy" size={17} color="green" />}
+            />
+
+            <Banner
+              tone="info"
+              message="AGRIM ne vous demandera JAMAIS votre code secret ni un mot de passe. Ne partagez ce code avec personne."
+              icon={<Icon name="shield-check" size={15} color="green" />}
+            />
+          </>
+        ) : null}
+
+        {/* ── Déclaration de la transaction ─────────────────────────────── */}
+        {!confirmed ? (
+          <Card style={styles.form}>
+            <View style={styles.formHeading}>
+              <View style={styles.formIcon}>
+                <Icon name="receipt" size={17} color="green" />
+              </View>
+              <View style={styles.flex}>
+                <Text variant="h3">J’ai effectué le transfert</Text>
+                <Text variant="caption" color="muted">
+                  Indiquez la référence affichée par votre opérateur. Une
+                  déclaration n’est pas une confirmation : AGRIM vérifie les
+                  fonds reçus.
+                </Text>
+              </View>
+            </View>
+
+            {declared ? (
+              <Banner
+                tone={
+                  statut === 'UNDER_REVIEW'
+                    ? 'warning'
+                    : statut === 'REJECTED'
+                      ? 'danger'
+                      : 'success'
+                }
+                message={
+                  statut === 'UNDER_REVIEW'
+                    ? 'Déclaration enregistrée. Le montant annoncé diffère du montant attendu : AGRIM vous contacte.'
+                    : statut === 'REJECTED'
+                      ? `AGRIM n’a pas pu confirmer ce paiement${
+                          data?.rejectionNote
+                            ? ` — motif : « ${data.rejectionNote} »`
+                            : ''
+                        }. Vérifiez la référence, ou appelez-nous : vous pouvez déclarer une autre transaction.`
+                      : 'Merci. Votre déclaration est enregistrée : AGRIM vérifie la réception des fonds.'
+                }
+                icon={<Icon name="clock-3" size={15} color="#8A5310" />}
+              />
+            ) : null}
+
+            <Input
+              label="Référence de la transaction"
+              value={transactionReference}
+              onChangeText={setTransactionReference}
+              placeholder="Ex. TX123456789"
+              autoCapitalize="characters"
+              autoCorrect={false}
+              editable={!declare.isPending}
+              hint="Elle figure dans le message de confirmation de votre opérateur."
+            />
+            <Input
+              label="Montant transféré (F CFA)"
+              value={montantSaisi}
+              onChangeText={setDeclaredAmount}
+              placeholder="Ex. 18500"
+              keyboardType="number-pad"
+              editable={!declare.isPending}
+            />
+            <Input
+              label="Note pour AGRIM (facultatif)"
+              value={note}
+              onChangeText={setNote}
+              placeholder="Ex. transfert effectué à 10h30"
+              editable={!declare.isPending}
+              multiline
+            />
+
+            <Button
+              label={
+                declare.isPending
+                  ? 'ENREGISTREMENT…'
+                  : rejected
+                    ? 'DÉCLARER UNE AUTRE TRANSACTION'
+                    : declaredAlready
+                      ? 'METTRE À JOUR MA DÉCLARATION'
+                      : 'DÉCLARER MON TRANSFERT'
+              }
+              disabled={!isOnline || declare.isPending}
+              onPress={() => void submitDeclaration()}
+              icon={<Icon name="send" size={17} color="white" />}
+            />
+            <Text variant="caption" color="muted">
+              Vous ne pouvez pas modifier le statut ni le montant dû : seule
+              AGRIM confirme un paiement, après vérification des fonds reçus.
+            </Text>
+          </Card>
+        ) : null}
+
+        {needsReview ? (
           <Card style={styles.awaiting} flat>
             <Icon name="clock-3" size={20} color="goldDark" />
             <View style={styles.flex}>
-              <Text variant="h3">Paiement en attente de validation</Text>
+              <Text variant="h3">Vérification en cours</Text>
               <Text variant="caption" color="muted">
-                Revenez ici après avoir validé chez votre opérateur : le statut
-                se met à jour automatiquement.
+                Vous serez prévenu dès que AGRIM aura confirmé la réception des
+                fonds. Cet écran se met à jour automatiquement.
               </Text>
             </View>
           </Card>
         ) : null}
 
-        {failed ? (
-          <Banner
-            tone="warning"
-            message="Le paiement n’a pas abouti. Votre commande a été annulée et aucun montant n’est prélevé par AGRIM."
-            icon={<Icon name="circle-x" size={16} color="#8A5310" />}
-          />
-        ) : null}
-      </View>
-
-      <View
-        style={[styles.footer, { paddingBottom: insets.bottom + spacing.md }]}
-      >
-        {failed ? (
-          <Button
-            label="RETOUR AUX PRODUITS"
-            variant="outline"
-            onPress={() => router.replace('/catalogue')}
-          />
-        ) : (
-          <Button
-            label={
-              !isOnline
-                ? 'CONNEXION NÉCESSAIRE'
-                : initiate.isPending
-                  ? 'OUVERTURE DU PAIEMENT…'
-                  : payment.isFetching
-                    ? 'VÉRIFICATION…'
-                    : started
-                      ? 'ACTUALISER LE STATUT'
-                      : 'PAYER MAINTENANT'
-            }
-            disabled={!isOnline || initiate.isPending || payment.isFetching}
-            onPress={() =>
-              void (started ? refreshPaymentStatus() : beginPayment())
-            }
-            icon={
-              started ? (
-                <Icon name="refresh-cw" size={18} color="white" />
-              ) : (
-                <Icon name="shield-check" size={18} color="white" />
-              )
-            }
-          />
-        )}
-      </View>
+        <Button
+          label="ACTUALISER LE STATUT"
+          variant="outline"
+          disabled={!isOnline || payment.isFetching}
+          onPress={() => void payment.refetch()}
+          icon={<Icon name="refresh-cw" size={16} color="green" />}
+        />
+      </ScrollView>
     </View>
   );
 }
@@ -282,7 +451,7 @@ const styles = StyleSheet.create({
     borderColor: palette.line,
   },
   progress: { paddingHorizontal: spacing.lg, paddingBottom: spacing.sm },
-  content: { flex: 1, gap: spacing.lg, padding: spacing.lg },
+  content: { gap: spacing.lg, padding: spacing.lg, paddingBottom: spacing.xxl },
   intro: { gap: spacing.xs },
   stepLabel: { letterSpacing: 1.4 },
   offlineSupport: { gap: spacing.sm, alignItems: 'flex-start' },
@@ -304,6 +473,18 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: spacing.md,
   },
+  numberCard: { gap: spacing.sm, padding: spacing.lg },
+  number: { letterSpacing: 1.2 },
+  form: { gap: spacing.md, padding: spacing.lg },
+  formHeading: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  formIcon: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 18,
+    backgroundColor: palette.greenSoft,
+  },
   awaiting: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -311,13 +492,6 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     backgroundColor: palette.goldSoft,
     borderColor: '#EAD9A5',
-  },
-  footer: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md,
-    backgroundColor: palette.card,
-    borderTopWidth: 1,
-    borderTopColor: palette.line,
   },
   lostAccess: {
     flex: 1,

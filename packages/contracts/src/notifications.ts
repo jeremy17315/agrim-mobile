@@ -86,6 +86,36 @@ export const NOTIFICATION_TEMPLATES: Record<
     title: 'Paiement non abouti',
     body: 'Le paiement de la commande {reference} n’a pas abouti.',
   },
+  /**
+   * Déclaration du client → message destiné à l'ÉQUIPE, pas au client.
+   * Le routage ne l'envoie pas au client : il vient de lui, il verrait un écho.
+   */
+  PAYMENT_DECLARED: {
+    title: 'Paiement déclaré à vérifier',
+    body: 'Le client déclare avoir payé la commande {reference}. Vérifiez la réception des fonds.',
+  },
+  PAYMENT_CONFIRMED: {
+    title: 'Paiement confirmé',
+    body: 'Nous avons vérifié la réception des fonds. Votre commande {reference} est confirmée et passe en préparation.',
+  },
+  PAYMENT_REJECTED: {
+    title: 'Paiement non confirmé',
+    body: 'Nous n’avons pas pu confirmer le paiement de la commande {reference}. Contactez-nous : vous pouvez aussi déclarer une autre référence.',
+  },
+  /**
+   * Montant annoncé ≠ montant attendu : arbitrage humain, des deux côtés.
+   * Le client doit savoir qu'un écart a été vu, sinon il attend une
+   * confirmation qui n'arrivera pas.
+   */
+  PAYMENT_AMOUNT_MISMATCH: {
+    title: 'Montant à vérifier',
+    body: 'Le montant déclaré pour la commande {reference} ne correspond pas au montant attendu. AGRIM vous contacte pour régulariser.',
+  },
+  /** Campagne commerciale : titre et texte sont rédigés dans l'administration. */
+  PROMOTION: {
+    title: 'Offre Bélier d’Or',
+    body: '{titre}',
+  },
   LOW_STOCK: {
     title: 'Stock faible',
     body: 'Un produit atteint son seuil de réapprovisionnement.',
@@ -109,10 +139,16 @@ export const ORDER_STATUS_NOTIFICATION: Partial<
   CANCELLED: 'ORDER_CANCELLED',
 };
 
-/** Applique le gabarit : remplace `{reference}` par la valeur réelle. */
+/**
+ * Applique le gabarit : remplace `{reference}`, `{code}` et `{titre}`.
+ *
+ * `{titre}` n'est utilisé que par la catégorie `PROMOTION`, dont le texte vient
+ * de l'administration. Il est remplacé APRÈS `{reference}` : un titre de
+ * campagne ne doit pas pouvoir injecter un jeton de gabarit dans le corps.
+ */
 export function renderNotification(
   type: NotificationType,
-  values: { reference?: string; code?: string } = {},
+  values: { reference?: string; code?: string; titre?: string } = {},
 ): NotificationTemplate {
   const template = NOTIFICATION_TEMPLATES[type];
   return {
@@ -120,6 +156,7 @@ export function renderNotification(
     body: template.body
       .replace('{reference}', values.reference ?? '')
       .replace('{code}', values.code ?? '')
+      .replace('{titre}', values.titre ?? '')
       .replace(/\s+/g, ' ')
       .trim(),
   };

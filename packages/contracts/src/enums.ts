@@ -50,9 +50,23 @@ export function canTransition(from: OrderStatus, to: OrderStatus): boolean {
 }
 
 /**
- * Paiement : machine à états ASYNCHRONE.
- * Le mobile money se confirme hors de l'app (USSD/redirection) puis via webhook.
- * Une réponse du frontend n'est JAMAIS une preuve de paiement (section 29).
+ * Paiement : machine à états ASYNCHRONE — et, depuis le 11 octobre 2026,
+ * à DEUX régimes.
+ *
+ * Régime historique (agrégateur) : la transaction est confirmée par le
+ * fournisseur (webhook, puis reconfirmation par appel sortant). Concerne les
+ * commandes antérieures à l'abandon des agrégateurs ; conservé pour ne pas
+ * casser leur historique.
+ *
+ * Régime en vigueur (**paiement direct manuel**) : le client transfère
+ * lui-même vers le numéro officiel d'AGRIM, déclare sa transaction, et un
+ * responsable constate la réception réelle des fonds. Les statuts
+ * `DECLARED_BY_CUSTOMER` → `UNDER_REVIEW` → `SUCCEEDED` (ou `REJECTED`)
+ * décrivent ce chemin.
+ *
+ * Règle inchangée et non négociable : **une réponse du frontend n'est jamais
+ * une preuve de paiement**. `SUCCEEDED` ne s'atteint que par une action
+ * d'administrateur authentifié et journalisée.
  */
 export const PAYMENT_STATUSES = [
   'PENDING',
@@ -61,15 +75,72 @@ export const PAYMENT_STATUSES = [
   'FAILED',
   'EXPIRED',
   'REFUNDED',
+  /** Le client a déclaré un transfert. Rien n'est encore vérifié. */
+  'DECLARED_BY_CUSTOMER',
+  /** Vérification humaine en cours, ou montant annoncé ≠ montant attendu. */
+  'UNDER_REVIEW',
+  /** Déclaration écartée par AGRIM (référence fausse, fonds non reçus…). */
+  'REJECTED',
 ] as const;
 export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
 
+/** Statuts atteints uniquement par une décision humaine d'AGRIM. */
+export const MANUAL_PAYMENT_STATUSES = [
+  'DECLARED_BY_CUSTOMER',
+  'UNDER_REVIEW',
+] as const satisfies readonly PaymentStatus[];
+
+/**
+ * Statuts dits « en suspens » : la commande attend encore une décision de
+ * paiement. Un écran qui rafraîchit un statut doit traiter ces valeurs comme
+ * « ça peut encore bouger ».
+ */
+export const PAYMENT_PENDING_STATUSES = [
+  'PENDING',
+  'AWAITING_CONFIRMATION',
+  'DECLARED_BY_CUSTOMER',
+  'UNDER_REVIEW',
+] as const satisfies readonly PaymentStatus[];
+
+export function isPaymentSettled(status: PaymentStatus): boolean {
+  return (
+    status === 'SUCCEEDED' ||
+    status === 'FAILED' ||
+    status === 'EXPIRED' ||
+    status === 'REFUNDED'
+  );
+}
+
+export function isPaymentPending(status: PaymentStatus): boolean {
+  return (PAYMENT_PENDING_STATUSES as readonly PaymentStatus[]).includes(status);
+}
+
 export const PAYMENT_METHODS = [
+  /** Historique : agrégateur mobile money (plus utilisé pour les nouvelles commandes). */
   'MOBILE_MONEY',
   'CARD',
   'CASH_ON_DELIVERY',
+  /**
+   * **Paiement direct manuel** — régime en vigueur.
+   * Le client transfère vers le numéro officiel d'AGRIM et déclare sa
+   * transaction ; AGRIM vérifie puis confirme.
+   */
+  'DIRECT_MOBILE_MONEY',
 ] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+
+/**
+ * Méthodes proposables sur une NOUVELLE commande.
+ *
+ * `MOBILE_MONEY` et `CARD` en sont exclus : ils supposent un agrégateur, que
+ * la décision commerciale a écarté. Les accepter à la création rouvrirait un
+ * encaissement par commission.
+ */
+export const NEW_ORDER_PAYMENT_METHODS = [
+  'DIRECT_MOBILE_MONEY',
+  'CASH_ON_DELIVERY',
+] as const satisfies readonly PaymentMethod[];
+export type NewOrderPaymentMethod = (typeof NEW_ORDER_PAYMENT_METHODS)[number];
 
 /** Opérateurs mobile money pertinents en Côte d'Ivoire. */
 export const MOBILE_MONEY_PROVIDERS = [
@@ -219,6 +290,16 @@ export const NOTIFICATION_TYPES = [
   'DELIVERY_FAILED',
   'PAYMENT_SUCCEEDED',
   'PAYMENT_FAILED',
+  /** Le client a déclaré un transfert : l'équipe doit aller vérifier. */
+  'PAYMENT_DECLARED',
+  /** Réception des fonds confirmée par un responsable AGRIM. */
+  'PAYMENT_CONFIRMED',
+  /** Déclaration écartée (fonds non reçus, référence invalide, montant faux). */
+  'PAYMENT_REJECTED',
+  /** Montant annoncé différent du montant attendu : arbitrage humain. */
+  'PAYMENT_AMOUNT_MISMATCH',
+  /** Campagne commerciale envoyée depuis l'administration. */
+  'PROMOTION',
   'LOW_STOCK',
 ] as const;
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];

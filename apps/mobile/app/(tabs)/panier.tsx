@@ -14,7 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CheckoutProgress } from '@/components/CheckoutProgress';
 import { EmptyState, Skeleton } from '@/components/states';
 import { Banner, Button, Card, Icon, Text } from '@/components/ui';
-import { callMobileSupport } from '@/lib/contact';
+import { callMobileSupport, supportPhone } from '@/lib/contact';
 import { formatWeight, formatXof } from '@/lib/format';
 import { useIsOnline } from '@/lib/network';
 import { resolveProductImageUrl } from '@/lib/productImage';
@@ -130,7 +130,7 @@ export default function PanierScreen() {
               icon={<Icon name="wifi-off" size={15} color="#8A5310" />}
             />
             <Button
-              label="APPELER AGRIM · 07 00 05 04 52"
+              label={`APPELER AGRIM · ${supportPhone()}`}
               variant="outline"
               size="sm"
               fullWidth={false}

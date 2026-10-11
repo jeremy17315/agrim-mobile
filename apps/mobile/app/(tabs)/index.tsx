@@ -1,6 +1,6 @@
 import { COMPANY } from '@agrim/contracts';
 import { useRouter } from 'expo-router';
-import { Image, StyleSheet, View } from 'react-native';
+import { Image, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Button, Icon, Text } from '@/components/ui';
@@ -68,8 +68,19 @@ export default function WelcomeScreen() {
           icon={<Icon name="arrow-right" size={19} color="white" />}
         />
         <Text variant="micro" color="muted" center>
-          Commande sans compte · Livraison ou Mobile Money
+          Commande sans compte · Livraison ou transfert direct
         </Text>
+        <Pressable
+          onPress={() => router.push('/contact')}
+          accessibilityRole="button"
+          accessibilityLabel="Contact et aide"
+          style={styles.contact}
+        >
+          <Icon name="headset" size={15} color="green" />
+          <Text variant="caption" color="green">
+            Contact et aide
+          </Text>
+        </Pressable>
       </View>
     </View>
   );
@@ -88,6 +99,13 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   company: { letterSpacing: 2.5 },
+  contact: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    paddingVertical: spacing.sm,
+  },
   intro: { marginTop: spacing.xxxl, gap: spacing.xs },
   copy: { maxWidth: 285, marginTop: spacing.sm, lineHeight: 20 },
   visual: {

@@ -121,6 +121,14 @@ export default function CompteScreen() {
                   onPress={() => router.push('/direction')}
                 />
               ) : null}
+              {user.role === 'DG' || user.role === 'ADMIN' ? (
+                <MenuRow
+                  icon="ticket-percent"
+                  label="Codes promo"
+                  hint="Créer, relire et publier les remises"
+                  onPress={() => router.push('/direction/promotions')}
+                />
+              ) : null}
               {user.role === 'PRODUCTEUR' ? (
                 <MenuRow
                   icon="sprout"

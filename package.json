@@ -2,7 +2,7 @@
   "name": "agrim-mobile",
   "private": true,
   "version": "1.0.0",
-  "description": "AGRIM-Mobile — plateforme mobile AGRIM / RIZ BOAGNI",
+  "description": "AGRIM-Mobile — plateforme mobile AGRIM — marque BÉLIER D'OR",
   "workspaces": ["apps/*", "packages/*"],
   "engines": { "node": ">=20.19" },
   "scripts": {

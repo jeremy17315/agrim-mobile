@@ -43,7 +43,17 @@ export class HttpExceptionFilter implements ExceptionFilter {
             ? raw
             : exception.message;
         if (typeof body.code === 'string') code = body.code;
-        if (Array.isArray(raw)) details = { validation: raw };
+        // `details` est posé EXPLICITEMENT par nos services (motif d'un refus
+        // de code promo, champ fautif…). Il était jusqu'ici ignoré : le client
+        // recevait un code d'erreur sans la raison, donc sans moyen de
+        // corriger. On le transmet tel quel, sans jamais y mettre de données
+        // techniques (les services n'y placent que des valeurs métier).
+        if (body.details && typeof body.details === 'object') {
+          details = body.details as Record<string, unknown>;
+        }
+        if (Array.isArray(raw)) {
+          details = { ...(details ?? {}), validation: raw };
+        }
       }
       if (code === 'INTERNAL_ERROR') code = HttpStatus[status] ?? 'ERROR';
     }

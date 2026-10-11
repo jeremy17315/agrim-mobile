@@ -59,6 +59,19 @@ export class CreateOrderDto {
   mobileMoneyProvider?: MobileMoneyProvider;
 
   /**
+   * Opérateur choisi pour un **transfert direct** (`ORANGE_MONEY`, `WAVE`…).
+   *
+   * C'est un CODE, pas un numéro : le numéro de réception officiel vient de la
+   * configuration d'AGRIM, côté serveur. Le client ne peut donc ni le
+   * connaître d'avance ni le modifier.
+   */
+  @ApiPropertyOptional({ example: 'ORANGE_MONEY' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  paymentMethodCode?: string;
+
+  /**
    * Clé générée par le mobile AVANT l'envoi. Si le réseau coupe et que
    * l'application rejoue la requête, la même clé renvoie la commande déjà
    * créée au lieu d'en créer une seconde.
@@ -74,11 +87,13 @@ export class CreateOrderDto {
   note?: string;
 
   /**
-   * Code promo, transmis tel quel au calculateur du SITE.
+   * Code promo saisi par le client (facultatif).
    *
-   * Cette API ne sait pas si un code est valide : elle le relaie et applique
-   * la remise que le site a retournée. Un code inventé ici reviendrait à
-   * s'auto-attribuer une remise.
+   * Le code n'est jamais cru sur parole : la règle unique
+   * `PromoCodesService.resolveRemise` le vérifie (code administré, actif,
+   * dans sa fenêtre de validité, panier suffisant, zone, quota) et c'est
+   * elle qui calcule la remise. Un code inconnu est refusé avec un motif
+   * lisible — un code inventé ici ne peut donc pas créer de remise.
    */
   @ApiPropertyOptional({ example: 'BIENVENUE10' })
   @IsOptional()

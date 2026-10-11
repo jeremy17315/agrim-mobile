@@ -1,4 +1,4 @@
-# Modèle de statuts — AGRIM / RIZ BOAGNI
+# Modèle de statuts — AGRIM / BÉLIER D’OR
 
 > Vocabulaire officiel. Toute valeur absente de ce document est un défaut.
 > Établi le 28 août 2026 par lecture du code des deux plateformes.

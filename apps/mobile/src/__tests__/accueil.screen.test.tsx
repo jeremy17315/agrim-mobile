@@ -23,7 +23,7 @@ describe('Accueil public', () => {
     expect(screen.getByText('Le bon riz,')).toBeTruthy();
     expect(screen.getByText('simplement.')).toBeTruthy();
     expect(
-      screen.getByText('Commande sans compte · Livraison ou Mobile Money'),
+      screen.getByText('Commande sans compte · Livraison ou transfert direct'),
     ).toBeTruthy();
   });
 

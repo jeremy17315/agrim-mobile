@@ -51,13 +51,19 @@ export class CreateGuestOrderDto {
   @Type(() => CreateOrderItemDto)
   items!: CreateOrderItemDto[];
 
+  /**
+   * `MOBILE_MONEY` reste accepté pour les applications DÉJÀ INSTALLÉES : le
+   * serveur le convertit en transfert direct, jamais en encaissement par
+   * agrégateur. Refuser la requête priverait ces clients de la commande alors
+   * que leur intention — payer par mobile money — reste satisfaite.
+   */
   @ApiProperty({
-    enum: ['CASH_ON_DELIVERY', 'MOBILE_MONEY'],
+    enum: ['CASH_ON_DELIVERY', 'MOBILE_MONEY', 'DIRECT_MOBILE_MONEY'],
     default: 'CASH_ON_DELIVERY',
   })
   @IsOptional()
-  @IsIn(['CASH_ON_DELIVERY', 'MOBILE_MONEY'])
-  paymentMethod?: 'CASH_ON_DELIVERY' | 'MOBILE_MONEY';
+  @IsIn(['CASH_ON_DELIVERY', 'MOBILE_MONEY', 'DIRECT_MOBILE_MONEY'])
+  paymentMethod?: 'CASH_ON_DELIVERY' | 'MOBILE_MONEY' | 'DIRECT_MOBILE_MONEY';
 
   @ApiProperty({ enum: MOBILE_MONEY_PROVIDERS, required: false })
   @ValidateIf(
@@ -65,6 +71,19 @@ export class CreateGuestOrderDto {
   )
   @IsIn(MOBILE_MONEY_PROVIDERS)
   mobileMoneyProvider?: (typeof MOBILE_MONEY_PROVIDERS)[number];
+
+  /**
+   * Opérateur choisi pour le transfert direct. Code technique uniquement
+   * (`ORANGE_MONEY`, `MTN_MOMO`, `WAVE`…) : le numéro officiel de réception est
+   * résolu côté serveur, jamais transmis par le téléphone.
+   */
+  @ApiProperty({ example: 'ORANGE_MONEY', required: false })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[A-Z0-9_]{2,40}$/, {
+    message: 'Code de moyen de paiement invalide.',
+  })
+  paymentMethodCode?: string;
 
   @ApiProperty({ format: 'uuid' })
   @IsUUID()

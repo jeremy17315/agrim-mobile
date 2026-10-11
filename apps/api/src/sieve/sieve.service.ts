@@ -91,7 +91,7 @@ export class SieveDeviceLogin {
     }
 
     const body = JSON.stringify({ device_code: deviceCode, grant_type: 'urn:ietf:params:oauth:grant-type:device_code' });
-    let deadline = Date.now() + 600_000; // 10 minutes (contract: expires_in ~600)
+    const deadline = Date.now() + 600_000; // 10 minutes (contract: expires_in ~600)
 
     while (Date.now() < deadline) {
       const response = await sendSieveRequest<SieveDeviceTokenResponse>(

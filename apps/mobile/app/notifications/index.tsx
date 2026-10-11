@@ -181,6 +181,28 @@ const PRESENTATION: Record<
     icon: 'receipt',
     tint: { bg: palette.greenSoft, icon: 'green' },
   },
+  // Paiement par transfert direct : la déclaration du client est une attente,
+  // jamais une bonne nouvelle — d'où le ton « or » rien qu'indicatif.
+  PAYMENT_DECLARED: {
+    icon: 'smartphone',
+    tint: { bg: palette.goldSoft, icon: 'gold' },
+  },
+  PAYMENT_CONFIRMED: {
+    icon: 'circle-check',
+    tint: { bg: palette.greenSoft, icon: 'green' },
+  },
+  PAYMENT_REJECTED: {
+    icon: 'circle-x',
+    tint: { bg: '#FBE3E1', icon: 'danger' },
+  },
+  PAYMENT_AMOUNT_MISMATCH: {
+    icon: 'triangle-alert',
+    tint: { bg: palette.goldSoft, icon: 'gold' },
+  },
+  PROMOTION: {
+    icon: 'megaphone',
+    tint: { bg: palette.greenSoft, icon: 'green' },
+  },
   ORDER_CONFIRMED: {
     icon: 'circle-check',
     tint: { bg: palette.greenSoft, icon: 'green' },

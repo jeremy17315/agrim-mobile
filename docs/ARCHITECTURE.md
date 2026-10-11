@@ -1,4 +1,4 @@
-# Architecture — AGRIM / RIZ BOAGNI
+# Architecture — AGRIM / BÉLIER D’OR
 
 > État réel au 28 août 2026, puis cible retenue et justifiée.
 > Ce document décrit **ce que fait le code**, pas une intention.

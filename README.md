@@ -1,13 +1,18 @@
 # AGRIM-Mobile
 
-Plateforme mobile **AGRIM** — marque **RIZ BOAGNI**, _Pur riz local de luxe_.
+Plateforme mobile **AGRIM** — marque **BÉLIER D’OR**, _Pur riz local de luxe_.
 Monorepo : application mobile (React Native / Expo) + API (NestJS / PostgreSQL).
 
-> **État actuel : parcours complet fonctionnel, phases 0 à 20 livrées.**
+> **État actuel : parcours complet fonctionnel, phases 0 à 20 livrées, et
+> finalisation en cours (paiement direct manuel, codes promo, données
+> commerciales servies par le serveur).**
 > Application mobile et API opérationnelles : catalogue, panier, commande,
 > livraison avec validation par code, espaces livreur, producteur,
-> gestionnaire et direction. **481 tests au vert** (243 API, 238 mobile).
-> Restent les phases 21 à 25 : performance, finitions, builds et publication.
+> gestionnaire et direction. **724 tests au vert (435 API + 289 mobile).**
+> Restent : notifications push (phase 4, reportée à la demande d'AGRIM),
+> cohérence du catalogue commercial, tests sur appareil réel et build de
+> publication. Détail et blocages dans
+> [docs/LIVRAISON-FINALISATION-2026-10-11.md](docs/LIVRAISON-FINALISATION-2026-10-11.md).
 
 |         |                                                                          |
 | ------- | ------------------------------------------------------------------------ |
