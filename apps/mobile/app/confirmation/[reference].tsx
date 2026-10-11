@@ -24,7 +24,11 @@ export default function ConfirmationScreen() {
     reference: string;
     payment?: string;
   }>();
-  const isMobileMoney = paymentType === 'MOBILE_MONEY';
+  // Le transfert direct suit le même parcours de statut qu'un paiement
+  // Mobile Money, mais il n'a pas d'opérateur à interroger : c'est AGRIM qui
+  // vérifie la réception des fonds.
+  const isDirect = paymentType === 'DIRECT_MOBILE_MONEY';
+  const isMobileMoney = paymentType === 'MOBILE_MONEY' || isDirect;
   const [accessToken, setAccessToken] = useState<string | null | undefined>(
     isMobileMoney ? undefined : null,
   );
@@ -73,7 +77,9 @@ export default function ConfirmationScreen() {
         ? 'Votre commande n’est pas marquée comme payée. Appelez AGRIM avec votre référence avant de recommencer un paiement.'
         : mobilePaymentStatusUnavailable
           ? 'Nous ne pouvons pas vérifier le règlement pour le moment. Réessayez dès que votre connexion revient.'
-          : 'Votre règlement Mobile Money est en cours de vérification auprès de l’opérateur.'
+          : isDirect
+            ? 'Votre déclaration de transfert est enregistrée : AGRIM vérifie la réception des fonds, puis confirme votre commande.'
+            : 'Votre règlement Mobile Money est en cours de vérification auprès de l’opérateur.'
     : 'Merci. Notre équipe prépare la suite et vous appellera si un détail de livraison doit être précisé.';
 
   return (
@@ -142,10 +148,14 @@ export default function ConfirmationScreen() {
               ? mobilePaid
                 ? 'Paiement Mobile Money confirmé'
                 : cannotVerifyMobilePayment
-                  ? 'Paiement Mobile Money à vérifier'
-                  : mobilePaymentStatusUnavailable
-                    ? 'Statut Mobile Money indisponible'
+                  ? isDirect
+                    ? 'Paiement par transfert à vérifier'
                     : 'Paiement Mobile Money à vérifier'
+                  : mobilePaymentStatusUnavailable
+                    ? 'Statut du paiement indisponible'
+                    : isDirect
+                      ? 'Paiement par transfert déclaré'
+                      : 'Paiement Mobile Money à vérifier'
               : 'Paiement à la livraison'
           }
           detail={
@@ -156,7 +166,9 @@ export default function ConfirmationScreen() {
                   ? 'Contactez AGRIM avec votre référence avant toute nouvelle tentative.'
                   : mobilePaymentStatusUnavailable
                     ? 'Réessayez la vérification dès que votre connexion revient.'
-                    : 'Nous attendons la confirmation de l’opérateur.'
+                    : isDirect
+                      ? 'Votre déclaration est enregistrée : AGRIM vérifie la réception des fonds.'
+                      : 'Nous attendons la confirmation de l’opérateur.'
               : 'Vous réglerez votre commande à sa réception.'
           }
           active={!isMobileMoney || mobilePaid}

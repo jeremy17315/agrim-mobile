@@ -122,6 +122,15 @@ export default function GestionScreen() {
           <Icon name="wheat" size={20} color="ink" />
         </Pressable>
         <Pressable
+          onPress={() => router.push('/gestion/paiements')}
+          accessibilityRole="button"
+          accessibilityLabel="Paiements à vérifier"
+          hitSlop={12}
+          style={styles.headerAction}
+        >
+          <Icon name="smartphone" size={20} color="ink" />
+        </Pressable>
+        <Pressable
           onPress={() => router.push('/gestion/stocks')}
           accessibilityRole="button"
           accessibilityLabel="Stocks"

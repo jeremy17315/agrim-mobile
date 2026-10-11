@@ -115,6 +115,230 @@ export class NotificationsService {
     });
   }
 
+  /**
+   * Prévient l'ÉQUIPE (gestion, administration, direction) d'une action qui
+   * l'attend — typiquement une déclaration de paiement à vérifier.
+   *
+   * Une notification est écrite pour chaque personne concernée (elle apparaît
+   * dans son écran de notifications) et poussée sur ses appareils. Un échec de
+   * push ne remet pas en cause l'écriture en base : l'écran de vérification
+   * reste la source de vérité, le push n'est qu'un raccourci.
+   */
+  async notifyStaff(input: {
+    type: NotificationType;
+    reference?: string;
+    orderId?: string;
+    values?: { code?: string };
+  }) {
+    const staff = await this.prisma.db.user.findMany({
+      where: {
+        isActive: true,
+        role: { in: ['GESTIONNAIRE', 'ADMIN', 'DG'] },
+      },
+      select: { id: true },
+      take: 100,
+    });
+    if (staff.length === 0) return { notified: 0 };
+
+    const rendered = renderNotification(input.type, {
+      reference: input.reference,
+      code: input.values?.code,
+    });
+
+    try {
+      await this.prisma.db.notification.createMany({
+        data: staff.map((user) => ({
+          userId: user.id,
+          type: input.type,
+          title: rendered.title,
+          body: rendered.body,
+          orderId: input.orderId ?? null,
+        })),
+      });
+    } catch {
+      this.logger.warn('Notification d’équipe non enregistrée.');
+    }
+
+    // Message de SERVICE : il ne dépend pas du consentement promotionnel.
+    void this.deliverToUsers(
+      staff.map((user) => user.id),
+      rendered,
+      {
+        reference: input.reference ?? '',
+        target: 'information',
+        value: input.orderId ?? input.reference ?? '',
+      },
+      input.type,
+    );
+
+    return { notified: staff.length };
+  }
+
+  /**
+   * Prévient un client SANS COMPTE, à partir de son numéro de téléphone.
+   *
+   * C'est le canal des commandes invitées : le jeton de l'appareil a été
+   * rattaché au numéro saisi au checkout. Sans appareil connu, on ne prétend
+   * pas avoir prévenu — on renvoie `delivered: 0`, et l'information reste
+   * consultable avec la référence de commande.
+   */
+  async notifyPhone(input: {
+    phone: string;
+    type: NotificationType;
+    reference?: string;
+    orderId?: string;
+  }) {
+    const phone = input.phone.replace(/[\s.-]/g, '');
+    const devices = await this.prisma.db.pushDevice.findMany({
+      where: { phone, isActive: true },
+      select: { token: true },
+    });
+    if (devices.length === 0) return { delivered: 0 };
+
+    const { title, body } = renderNotification(input.type, {
+      reference: input.reference,
+    });
+
+    const result = await this.dispatchPush(
+      devices.map((d) => d.token),
+      title,
+      body,
+      {
+        reference: input.reference ?? '',
+        target: 'commande',
+        value: input.reference ?? '',
+      },
+    );
+
+    await this.recordMessageLog({
+      channel: 'PUSH',
+      type: input.type,
+      to: phone,
+      orderId: input.orderId,
+      status: result.sent > 0 ? 'SENT' : 'FAILED',
+      error: result.error,
+    });
+
+    return { delivered: result.sent };
+  }
+
+  /**
+   * Envoi d'une campagne à une liste de jetons.
+   *
+   * Le `data` transporté décrit la destination au tap (`target`/`value`) : un
+   * client qui touche « Nouveau produit » doit ouvrir la fiche, pas la liste
+   * des notifications.
+   */
+  async pushToTokens(
+    tokens: string[],
+    title: string,
+    body: string,
+    data: Record<string, string>,
+  ) {
+    return this.dispatchPush(tokens, title, body, data);
+  }
+
+  /** Écrit une ligne du journal unifié des envois (jamais bloquant). */
+  async recordMessageLog(input: {
+    channel: 'PUSH' | 'SMS' | 'WHATSAPP' | 'EMAIL';
+    type: string;
+    to: string;
+    orderId?: string;
+    userId?: string;
+    status: 'QUEUED' | 'SENT' | 'FAILED';
+    error?: string;
+    providerMessageId?: string;
+  }): Promise<void> {
+    try {
+      await this.prisma.db.messageLog.create({
+        data: {
+          channel: input.channel,
+          template: input.type,
+          toAddress: input.to.slice(0, 200),
+          userId: input.userId ?? null,
+          orderId: input.orderId ?? null,
+          status: input.status,
+          error: input.error?.slice(0, 500) ?? null,
+          providerMessageId: input.providerMessageId ?? null,
+        },
+      });
+    } catch {
+      // Un journal manquant ne change rien à l'envoi : une trace ne doit
+      // jamais faire échouer l'action métier qu'elle décrit.
+    }
+  }
+
+  /**
+   * Envoi brut + purge des jetons refusés.
+   *
+   * Un jeton que le fournisseur déclare mort est DÉSACTIVÉ (jamais supprimé :
+   * la trace explique pourquoi l'appareil ne reçoit plus rien). Les deux tables
+   * sont nettoyées : `PushDevice` (installation, y compris invités) et
+   * `PushToken` (compte, historique).
+   */
+  private async dispatchPush(
+    tokens: string[],
+    title: string,
+    body: string,
+    data: Record<string, string>,
+  ): Promise<{ sent: number; error?: string }> {
+    if (tokens.length === 0) return { sent: 0 };
+    try {
+      const result = await this.push.send({ tokens, title, body, data });
+      if (result.invalidTokens.length > 0) {
+        await this.prisma.db.pushDevice
+          .updateMany({
+            where: { token: { in: result.invalidTokens } },
+            data: { isActive: false },
+          })
+          .catch(() => undefined);
+        await this.prisma.db.pushToken
+          .deleteMany({ where: { token: { in: result.invalidTokens } } })
+          .catch(() => undefined);
+      }
+      return { sent: result.sent };
+    } catch {
+      this.logger.warn('Service de notifications injoignable.');
+      return { sent: 0, error: 'Service de notifications injoignable.' };
+    }
+  }
+
+  /** Push vers tous les appareils de plusieurs comptes (messages de service). */
+  private async deliverToUsers(
+    userIds: string[],
+    message: { title: string; body: string },
+    data: Record<string, string>,
+    type?: NotificationType,
+  ): Promise<void> {
+    try {
+      const devices = await this.prisma.db.pushDevice.findMany({
+        where: { userId: { in: userIds }, isActive: true },
+        select: { token: true },
+      });
+      const legacy = await this.prisma.db.pushToken.findMany({
+        where: { userId: { in: userIds } },
+        select: { token: true },
+      });
+      const tokens = [...new Set([...devices, ...legacy].map((row) => row.token))];
+      if (tokens.length === 0) return;
+      const result = await this.dispatchPush(
+        tokens,
+        message.title,
+        message.body,
+        data,
+      );
+      await this.recordMessageLog({
+        channel: 'PUSH',
+        type: type ?? 'ORDER_CREATED',
+        to: `staff:${userIds.length}`,
+        status: result.sent > 0 ? 'SENT' : 'FAILED',
+        error: result.error,
+      });
+    } catch {
+      this.logger.warn('Notification d’équipe non distribuée.');
+    }
+  }
+
   /** Envoi effectif, isolé pour ne jamais propager d'erreur. */
   private async deliver(
     userId: string,

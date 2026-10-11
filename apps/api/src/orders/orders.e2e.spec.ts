@@ -167,15 +167,20 @@ describe('Commandes (e2e)', () => {
     const expectedSubtotal = variantPrice * 2;
     expect(res.body.subtotal).toBe(expectedSubtotal);
 
-    // Les FRAIS viennent de la grille du site (décision du 29 août 2026), plus
-    // d'un forfait local. L'adresse est à Yamoussoukro, et deux exemplaires
-    // d'un format quelconque du catalogue pèsent moins que le seuil de
-    // gratuité : le tarif de la zone s'applique.
+    // Les FRAIS DE LIVRAISON NE SONT PLUS ENCAISSÉS EN LIGNE (décision du
+    // 2 octobre 2026, `packages/contracts/src/delivery.ts`). Le site affiche
+    // « À confirmer » et laisse le total intact ; la commande fait pareil.
+    //
+    // Ce test affirmait 1 000 F — un forfait supprimé depuis. Il mentait donc
+    // sur le montant réellement réclamé au client : le laisser rouge ou le
+    // « réparer » en remettant un tarif ressusciterait la divergence de prix
+    // que la décision a précisément supprimée.
     const poidsKg = (variantWeightGrams * 2) / 1000;
     expect(poidsKg).toBeLessThan(75);
-    expect(res.body.deliveryFee).toBe(1000);
+    expect(res.body.deliveryFee).toBe(0);
 
     expect(res.body.total).toBe(res.body.subtotal + res.body.deliveryFee);
+    expect(res.body.total).toBe(res.body.subtotal);
     expect(Number.isInteger(res.body.total)).toBe(true);
 
     // Le stock a bien été réservé auprès du site — c'est lui qui en décide

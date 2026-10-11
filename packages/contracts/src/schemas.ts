@@ -289,23 +289,60 @@ export const guestOrderSchema = z
     /** Ville, zone ou repère de livraison saisi simplement par le client. */
     deliveryLocation: z.string().trim().min(2).max(255),
     items: z.array(createOrderItemSchema).min(1).max(50),
-    /** Même choix que le site, sans imposer la création d'un compte. */
+    /**
+     * Même choix que le site, sans imposer la création d'un compte.
+     *
+     * `MOBILE_MONEY` reste ACCEPTÉ pour ne pas casser les applications déjà
+     * installées : un client d'une version antérieure qui choisit « Orange
+     * Money » sera servi par le **transfert direct** (le serveur le convertit),
+     * et non par un agrégateur. Refuser sa requête l'empêcherait de commander,
+     * alors que son intention — payer par mobile money — reste satisfaite.
+     *
+     * Les nouvelles versions envoient directement `DIRECT_MOBILE_MONEY`.
+     */
     paymentMethod: z
-      .enum(['CASH_ON_DELIVERY', 'MOBILE_MONEY'])
+      .enum(['CASH_ON_DELIVERY', 'MOBILE_MONEY', 'DIRECT_MOBILE_MONEY'])
       .default('CASH_ON_DELIVERY'),
+    /**
+     * Opérateur choisi pour un transfert direct. Le mobile liste les moyens
+     * ACTIFS servis par `GET /payments/methods` ; cette valeur n'est qu'un
+     * code, jamais un numéro ni un montant.
+     */
+    paymentMethodCode: z
+      .string()
+      .trim()
+      .min(2)
+      .max(40)
+      .regex(/^[A-Z0-9_]+$/)
+      .optional(),
+    /** Conservé pour l'historique et les commandes antérieures. */
     mobileMoneyProvider: z.enum(MOBILE_MONEY_PROVIDERS).optional(),
-    /** Code promo : relais vers le calculateur du SITE, seul juge du rabais. */
+    /** Code promo : validé côté serveur (table locale, sinon calculateur du site). */
     codePromo: z.string().trim().max(40).optional(),
     /** Note pour le livreur — le site en propose une à sa page de commande. */
     note: z.string().max(500).optional(),
     idempotencyKey: z.uuid(),
   })
   .superRefine((value, ctx) => {
-    if (value.paymentMethod === 'MOBILE_MONEY' && !value.mobileMoneyProvider) {
+    if (
+      value.paymentMethod === 'MOBILE_MONEY' &&
+      !value.mobileMoneyProvider &&
+      !value.paymentMethodCode
+    ) {
       ctx.addIssue({
         code: 'custom',
         path: ['mobileMoneyProvider'],
         message: 'Choisissez un opérateur Mobile Money.',
+      });
+    }
+    if (
+      value.paymentMethod === 'DIRECT_MOBILE_MONEY' &&
+      !value.paymentMethodCode
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['paymentMethodCode'],
+        message: 'Choisissez le moyen de paiement que vous allez utiliser.',
       });
     }
   });

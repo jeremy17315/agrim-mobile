@@ -8,9 +8,9 @@ jest.mock('../../generated/prisma/client', () => ({
 import { CartQuoteService } from './cart-quote.service';
 import type { PrismaService } from '../prisma/prisma.service';
 import type {
-  RemiseResult,
-  SitePricingService,
-} from '../site-pricing/site-pricing.service';
+  PromoCodesService,
+  RemiseResolution,
+} from '../promo-codes/promo-codes.service';
 
 /**
  * Le devis panier, sous test — POLITIQUE de prix, pas transport.
@@ -62,8 +62,14 @@ function variante(overrides: Partial<VarianteFausse>): VarianteFausse {
 function harnais(opts: {
   variants?: VarianteFausse[];
   grille?: Record<string, unknown> | null;
-  /** Réponse du calculateur du site (remises). Par défaut : 0, sans code. */
-  remise?: RemiseResult;
+  /**
+   * Décision de remise. Par défaut : aucune remise, code inconnu.
+   *
+   * Le devis ne parle PLUS directement au site : il passe par la règle
+   * partagée avec le checkout (`PromoCodesService`), qui décide localement
+   * pour les codes d'AGRIM et n'interroge le site que pour le reste.
+   */
+  remise?: Partial<RemiseResolution>;
 } = {}) {
   const db = {
     productVariant: {
@@ -77,15 +83,21 @@ function harnais(opts: {
       ),
     },
   };
-  const service = new CartQuoteService(
-    { db } as unknown as PrismaService,
-    {
-      remise: jest.fn(async () =>
-        opts.remise ?? { status: 'ok', remise: 0, code: null, message: null },
-      ),
-    } as unknown as SitePricingService,
-  );
-  return { service, db };
+  const resolved: RemiseResolution = {
+    status: 'ok',
+    siteAvailable: true,
+    remise: 0,
+    code: null,
+    message: null,
+    reason: null,
+    local: false,
+    ...opts.remise,
+  };
+  const resolveRemise = jest.fn(async () => resolved);
+  const service = new CartQuoteService({ db } as unknown as PrismaService, {
+    resolveRemise,
+  } as unknown as PromoCodesService);
+  return { service, db, resolveRemise };
 }
 
 /** Code métier attendu : les exceptions NestJS portent le code dans
@@ -137,10 +149,10 @@ describe('CartQuoteService — le serveur calcule, le client affiche', () => {
     expect(devis.weightUntilFreeDeliveryKg).toBe(6);
   });
 
-  it('applique la remise renvoyée par le site, et rien d’autre', async () => {
+  it('applique la remise décidée par la règle partagée, et rien d’autre', async () => {
     const { service } = harnais({
       variants: [variante({})],
-      remise: { status: 'ok', remise: 500, code: null, message: null },
+      remise: { status: 'ok', remise: 500, siteAvailable: true },
     });
 
     const devis = await service.quote({
@@ -154,10 +166,10 @@ describe('CartQuoteService — le serveur calcule, le client affiche', () => {
     expect(devis.deliveryFee).toBe(0);
   });
 
-  it('site injoignable ⇒ aucune remise, jamais une remise inventée', async () => {
+  it('calculateur du site injoignable ⇒ aucune remise inventée, et le client est prévenu', async () => {
     const { service } = harnais({
       variants: [variante({})],
-      remise: { status: 'unavailable' },
+      remise: { status: 'ok', remise: 0, siteAvailable: false },
     });
 
     const devis = await service.quote({
@@ -171,26 +183,56 @@ describe('CartQuoteService — le serveur calcule, le client affiche', () => {
     expect(devis.total).toBe(5000);
   });
 
-  it('un code refusé par le site remonte sa raison au client', async () => {
+  it('un code refusé est ANNONCÉ comme tel, avec son motif', async () => {
     const { service } = harnais({
       variants: [variante({})],
       remise: {
-        status: 'ok',
+        status: 'refused',
         remise: 0,
-        code: null,
-        message: 'Ce code a déjà été utilisé.',
+        code: 'USE',
+        message: 'Ce code promo a expiré.',
+        reason: 'EXPIRE',
+        local: true,
       },
     });
 
     const devis = await service.quote({
       items: items(['var-1', 1]),
       city: 'Abidjan',
-      codePromo: 'USÉ',
+      codePromo: 'USE',
     });
 
-    expect(devis.promoMessage).toBe('Ce code a déjà été utilisé.');
+    expect(devis.remiseStatus).toBe('refused');
+    expect(devis.promoMessage).toBe('Ce code promo a expiré.');
     expect(devis.remise).toBe(0);
     expect(devis.total).toBe(2500);
+  });
+
+  it('la remise locale est appliquée même si le site est injoignable', async () => {
+    // Un code créé par AGRIM dans l'application doit fonctionner sans le site :
+    // c'est ce qui rend une promotion locale fiable.
+    const { service } = harnais({
+      variants: [variante({})],
+      remise: {
+        status: 'ok',
+        remise: 250,
+        code: 'AGRIM10',
+        message: 'Remise AGRIM10 appliquée.',
+        local: true,
+        siteAvailable: false,
+      },
+    });
+
+    const devis = await service.quote({
+      items: items(['var-1', 1]),
+      city: 'Abidjan',
+      codePromo: 'AGRIM10',
+    });
+
+    expect(devis.remiseStatus).toBe('ok');
+    expect(devis.remise).toBe(250);
+    expect(devis.total).toBe(2250);
+    expect(devis.promoCode).toBe('AGRIM10');
   });
 
   it('une promotion périmée ou future ne change PAS le prix affiché', async () => {

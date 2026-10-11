@@ -40,6 +40,18 @@ enum OrderStatus {
   CANCELLED
 }
 
+/// Cycle de vie d'un paiement — DEUX régimes cohabitent.
+///
+/// Agrégateur (historique, commandes antérieures au 11 octobre 2026) :
+/// `PENDING` puis `AWAITING_CONFIRMATION`, tranché par webhook ou
+/// réconciliation.
+///
+/// **Paiement direct manuel (régime en vigueur)** : le client transfère vers
+/// le numéro officiel d'AGRIM puis déclare sa transaction
+/// (`DECLARED_BY_CUSTOMER`) ; un responsable vérifie la réception réelle des
+/// fonds et confirme (`SUCCEEDED`) ou rejette (`REJECTED`).
+///
+/// Invariant : rien n'atteint `SUCCEEDED` sans action humaine journalisée.
 enum PaymentStatus {
   PENDING
   AWAITING_CONFIRMATION
@@ -47,12 +59,21 @@ enum PaymentStatus {
   FAILED
   EXPIRED
   REFUNDED
+  /// Le client a déclaré un transfert. Ni vérifié, ni confirmé.
+  DECLARED_BY_CUSTOMER
+  /// Vérification humaine en cours — dont le cas « montant annoncé ≠ attendu ».
+  UNDER_REVIEW
+  /// Déclaration écartée par AGRIM (fonds non reçus, référence invalide…).
+  REJECTED
 }
 
 enum PaymentMethod {
+  /// Agrégateur mobile money — historique, plus proposé aux nouvelles commandes.
   MOBILE_MONEY
   CARD
   CASH_ON_DELIVERY
+  /// Transfert direct vers le numéro officiel d'AGRIM, vérifié manuellement.
+  DIRECT_MOBILE_MONEY
 }
 
 enum MobileMoneyProvider {
@@ -135,7 +156,50 @@ enum NotificationType {
   DELIVERY_FAILED
   PAYMENT_SUCCEEDED
   PAYMENT_FAILED
+  /// Déclaration de paiement du client → destination : l'ÉQUIPE AGRIM.
+  PAYMENT_DECLARED
+  /// Réception des fonds vérifiée par un responsable.
+  PAYMENT_CONFIRMED
+  /// Déclaration écartée après vérification.
+  PAYMENT_REJECTED
+  /// Montant déclaré différent de l'attendu : arbitrage humain.
+  PAYMENT_AMOUNT_MISMATCH
+  /// Campagne commerciale rédigée dans l'administration.
+  PROMOTION
   LOW_STOCK
+}
+
+/// Statut d'une déclaration de paiement déposée par un client.
+/// Distinct de `PaymentStatus` : une déclaration a sa propre vie (déposée,
+/// vérifiée, acceptée, refusée) et peut être rejouée si elle est refusée.
+enum PaymentDeclarationStatus {
+  DECLARED
+  VERIFYING
+  ACCEPTED
+  REJECTED
+}
+
+/// Type de réduction d'un code promo.
+enum PromoDiscountType {
+  PERCENT
+  FIXED
+}
+
+/// Cycle de vie d'une campagne de notifications.
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  SENDING
+  SENT
+  FAILED
+}
+
+/// Public d'une campagne. Peu de valeurs à dessein : un ciblage flou envoie
+/// des promotions à des clients qui n'en veulent pas, et coûte des refus.
+enum CampaignAudience {
+  ALL_OPTED_IN
+  AUTHENTICATED
+  TEST
 }
 
 /* ──────────────────────────── Utilisateurs ─────────────────────────── */
@@ -178,6 +242,16 @@ model User {
   productReviews ProductReview[]
   stockMovements StockMovement[]
 
+  // ── Paiement direct manuel, codes promo, push ──────────────────────────
+  // Ces relations portent la TRACABILITÉ : qui a changé un numéro de
+  // réception, qui a confirmé un paiement, qui a envoyé une campagne.
+  paymentMethodUpdates PaymentMethodConfig[] @relation("PaymentMethodUpdates")
+  paymentReviews       PaymentDeclaration[]  @relation("PaymentReviews")
+  paymentReviewLogs    PaymentReviewLog[]    @relation("PaymentReviewActor")
+  campaignsCreated     NotificationCampaign[] @relation("CampaignsCreated")
+  promoCodesCreated    PromoCode[]            @relation("PromoCodesCreated")
+  pushDevices          PushDevice[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -208,6 +282,103 @@ model PushToken {
   createdAt DateTime @default(now())
 
   @@index([userId])
+}
+
+/// Appareil abonné aux notifications poussées.
+///
+/// **Pourquoi une seconde table, à côté de `PushToken`** : `PushToken` exige un
+/// `userId`, donc un COMPTE. Or le parcours d'achat est volontairement sans
+/// compte — un client qui commande en invité doit quand même recevoir la
+/// confirmation de son paiement et l'arrivée de son livreur. `PushDevice`
+/// s'accroche à une INSTALLATION (identifiant aléatoire conservé sur
+/// l'appareil), et le compte n'est qu'un rattachement facultatif.
+///
+/// Le rattachement par téléphone permet de joindre un invité : le numéro saisi
+/// au moment de la commande est associé à l'appareil, et une notification de
+/// commande invitée part vers les appareils qui portent ce numéro.
+model PushDevice {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Identifiant d'installation, généré sur l'appareil, stable entre deux
+  /// ouvertures et effacé à la réinstallation.
+  installationId String @unique @db.VarChar(64)
+  /// Jeton remis par le service de notifications (Expo, FCM…).
+  token          String @unique @db.VarChar(255)
+  /// `android` | `ios`.
+  platform       String @db.VarChar(10)
+
+  /// Compte connecté, si l'appareil en a un. Jamais exigé.
+  userId String? @db.Uuid
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  /// Téléphone déclaré sur cet appareil (commandes invitées). Format normalisé.
+  phone String? @db.VarChar(20)
+
+  /// Consentement aux notifications PROMOTIONNELLES. Les messages de commande
+  /// et de paiement ne dépendent pas de cette préférence : ils servent le
+  /// service rendu, pas la prospection.
+  promoOptIn Boolean @default(true)
+
+  /// Jeton encore valide. Un jeton refusé par le fournisseur est désactivé,
+  /// pas supprimé : la trace explique pourquoi l'appareil ne reçoit plus rien.
+  isActive Boolean @default(true)
+
+  appVersion String?   @db.VarChar(30)
+  lastSeenAt DateTime  @default(now())
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([phone])
+  @@index([isActive, promoOptIn])
+  @@map("push_devices")
+}
+
+/// Campagne de notifications, rédigée et envoyée depuis l'administration.
+///
+/// Les compteurs portent la distinction qui compte : `sentCount` est ce que le
+/// service a ACCEPTÉ, `failedCount` ce qu'il a refusé. Aucun ne dit « lu » —
+/// prétendre le contraire serait un mensonge d'interface.
+model NotificationCampaign {
+  id String @id @default(uuid()) @db.Uuid
+
+  title String @db.VarChar(120)
+  body  String @db.VarChar(500)
+  /// PROMOTION | NOUVEAU_PRODUIT | PROMO_CODE | INFORMATION
+  category String @db.VarChar(30)
+
+  imageUrl String? @db.VarChar(500)
+
+  /// Destination au tap : `produit`, `offre`, `categorie`, `commande`, `information`.
+  linkTarget String? @db.VarChar(30)
+  linkValue  String? @db.VarChar(120)
+
+  audience CampaignAudience @default(ALL_OPTED_IN)
+  status   CampaignStatus   @default(DRAFT)
+
+  scheduledAt DateTime?
+  sentAt      DateTime?
+  /// Début du dernier envoi : distingue « en cours » de « bloqué ».
+  sendingAt   DateTime?
+
+  targetCount  Int @default(0)
+  sentCount    Int @default(0)
+  failedCount  Int @default(0)
+  invalidCount Int @default(0)
+
+  /// Dernière erreur remontée par le service push, tronquée.
+  lastError String? @db.VarChar(500)
+
+  createdById String? @db.Uuid
+  createdBy   User?   @relation("CampaignsCreated", fields: [createdById], references: [id])
+
+  notifications Notification[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, scheduledAt])
+  @@map("notification_campaigns")
 }
 
 /// Adresse adaptée au contexte ivoirien : GPS + repères, pas une simple rue.
@@ -503,17 +674,143 @@ model Payment {
   method   PaymentMethod
   provider MobileMoneyProvider?
   status   PaymentStatus        @default(PENDING)
+  /// Montant ATTENDU, figé au moment de la commande. C'est lui qui fait foi
+  /// pendant la vérification : le client ne peut pas le modifier.
   amount   Int
 
+  /// Code du moyen de paiement direct affiché au client (`ORANGE_MONEY`…).
+  /// Dénormalisé volontairement : si AGRIM retire un moyen de paiement, on
+  /// doit encore pouvoir dire vers quel numéro ce client-là a payé.
+  methodCode        String?   @db.VarChar(40)
+  /// Recopie du numéro officiel affiché, au moment de la commande.
+  receivingNumber   String?   @db.VarChar(30)
   providerReference String?   @db.VarChar(120)
   failureReason     String?   @db.VarChar(255)
   expiresAt         DateTime?
   paidAt            DateTime?
+  /// Horodatage de la confirmation HUMAINE (jamais automatique).
+  confirmedAt       DateTime?
+
+  declarations PaymentDeclaration[]
+  reviews      PaymentReviewLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([status])
+}
+
+/// Moyen de paiement direct, **configuré par AGRIM** — jamais codé en dur.
+///
+/// Le numéro de réception n'existe QUE ici : il n'est ni dans le bundle
+/// mobile, ni dans un fichier de code. Le corriger prend effet immédiatement,
+/// sans nouvelle publication sur le Play Store.
+model PaymentMethodConfig {
+  id String @id @default(uuid()) @db.Uuid @map("id")
+
+  /// Code technique stable (`ORANGE_MONEY`, `MTN_MOMO`, `WAVE`, …).
+  code            String  @unique @db.VarChar(40)
+  /// Nom affiché, rédigé par AGRIM (« Orange Money », « Wave »…).
+  operatorName    String  @db.VarChar(80)
+  /// Numéro officiel de réception, tel que le client doit le composer.
+  receivingNumber String  @db.VarChar(30)
+  /// Nom du bénéficiaire, quand AGRIM le renseigne (compte marchand).
+  beneficiaryName String? @db.VarChar(120)
+  /// Instructions rédigées par AGRIM, affichées au client.
+  instructions    String? @db.VarChar(600)
+  /// Modèle ouvrable par l'opérateur, s'il en existe un (`tel:` / USSD).
+  ussdTemplate    String? @db.VarChar(200)
+
+  /// Un moyen créé sans indication explicite est INACTIF : le publier par
+  /// défaut l'exposerait aux clients avant relecture.
+  isActive  Boolean @default(false)
+  sortOrder Int     @default(0)
+
+  updatedById String? @db.Uuid
+  updatedBy   User?   @relation("PaymentMethodUpdates", fields: [updatedById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("payment_method_configs")
+}
+
+/// Déclaration de paiement déposée par un client.
+///
+/// **Une déclaration n'est pas une preuve.** Elle ouvre une vérification : la
+/// capture d'écran jointe est un indice, pas un encaissement. Un même
+/// justificatif ne peut pas servir deux commandes — contrainte d'unicité sur
+/// la référence de transaction, insensible à la casse.
+model PaymentDeclaration {
+  id        String  @id @default(uuid()) @db.Uuid
+  paymentId String  @db.Uuid
+  payment   Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  /// Référence fournie par l'opérateur au client (`TX123456789`).
+  transactionReference String  @db.VarChar(60)
+  /// Même référence, normalisée (majuscules, sans espaces).
+  ///
+  /// C'est ELLE qui porte l'unicité : les opérateurs affichent la même
+  /// référence selon les cas (`tx12ab` / `TX12AB`), et deux écritures de la
+  /// même transaction ne doivent pas pouvoir servir deux commandes.
+  transactionReferenceNormalized String @unique @db.VarChar(60)
+  /// Montant annoncé par le client, en XOF entier.
+  declaredAmount       Int
+  /// Date du transfert telle que le client la déclare (facultative).
+  paidAt               DateTime?
+  /// Justificatif déposé (facultatif). Contrôlé : type MIME et taille.
+  proofKey             String? @db.VarChar(200)
+  proofMimeType        String? @db.VarChar(100)
+  proofSizeBytes       Int?
+
+  status PaymentDeclarationStatus @default(DECLARED)
+
+  submittedAt   DateTime  @default(now())
+  reviewedById  String?   @db.Uuid
+  reviewedBy    User?     @relation("PaymentReviews", fields: [reviewedById], references: [id])
+  reviewedAt    DateTime?
+  /// Motif affiché au client en cas de refus, rédigé par le vérificateur.
+  rejectionNote String?   @db.VarChar(300)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([paymentId])
+  @@index([status, submittedAt])
+  @@map("payment_declarations")
+}
+
+/// Journal des décisions prises sur un paiement.
+///
+/// Écrit à CHAQUE action sensible : dépôt, mise en vérification, confirmation,
+/// refus. Il porte l'identité de l'auteur, la date et l'heure, et ce qui a
+/// changé. C'est la réponse à « qui a validé cet argent, et quand ? » — une
+/// colonne `updatedAt` sur `Payment` ne peut pas y répondre.
+model PaymentReviewLog {
+  id        String  @id @default(uuid()) @db.Uuid
+  paymentId String  @db.Uuid
+  payment   Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  /// DECLARED | VERIFYING | CONFIRMED | REJECTED | AMOUNT_MISMATCH | NOTE
+  action      String  @db.VarChar(30)
+  fromStatus  String? @db.VarChar(30)
+  toStatus    String? @db.VarChar(30)
+  note        String? @db.VarChar(500)
+  /// Auteur : administrateur, gestionnaire — ou `null` pour le client lui-même.
+  /// La relation est en `SetNull` : effacer un compte ne doit pas effacer la
+  /// preuve qu'une décision a été prise.
+  actorId     String? @db.Uuid
+  actor       User?   @relation("PaymentReviewActor", fields: [actorId], references: [id], onDelete: SetNull)
+  actorRole   String? @db.VarChar(20)
+  /// `CLIENT` | `STAFF` | `SYSTEM` : qui a déclenché l'écriture.
+  actorSource String  @default("SYSTEM") @db.VarChar(10)
+  /// Adresse IP de l'auteur d'une décision administrative (traçabilité).
+  actorIp     String? @db.VarChar(60)
+
+  createdAt DateTime @default(now())
+
+  @@index([paymentId, createdAt])
+  @@map("payment_review_logs")
 }
 
 /* ────────────────────────────── Livraison ──────────────────────────── */
@@ -649,9 +946,20 @@ model Notification {
   isRead  Boolean          @default(false)
   orderId String?          @db.Uuid
 
+  /// Destination au TAP : `produit:nouveau-riz`, `commande:AGR-2026-0042`…
+  /// Sans elle, l'application ouvre la liste des notifications — mieux qu'un
+  /// écran vide, mais moins bien que la bonne fiche.
+  linkTarget String? @db.VarChar(30)
+  linkValue  String? @db.VarChar(120)
+
+  /// Campagne à l'origine de la notification, pour les statistiques.
+  campaignId String? @db.Uuid
+  campaign   NotificationCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+
   createdAt DateTime @default(now())
 
   @@index([userId, isRead])
+  @@index([campaignId])
 }
 
 /* ───────────────────────────── Producteur ──────────────────────────── */
@@ -771,6 +1079,111 @@ model Promotion {
   updatedAt DateTime @updatedAt
 
   @@index([variantId, isActive])
+}
+
+/// Code promotionnel, géré par AGRIM depuis l'administration.
+///
+/// Pourquoi une table LOCALE alors que le site calcule aussi des remises :
+/// le site est la source du catalogue et des remises de volume, mais un code
+/// créé ici doit pouvoir être vérifié même si le site est injoignable — sinon
+/// AGRIM annonce une promotion que l'application refuse d'appliquer. Le
+/// serveur reste seul juge : le client envoie une chaîne, jamais un montant.
+model PromoCode {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Code saisi par le client, en majuscules.
+  code        String  @unique @db.VarChar(40)
+  description String? @db.VarChar(200)
+
+  discountType  PromoDiscountType
+  /// Pourcentage (1–100) ou montant XOF entier, selon le type.
+  discountValue Int
+
+  /// Montant minimum de panier, en XOF. `null` = pas de minimum.
+  minOrderTotal Int?
+  /// Quota global. `null` = illimité.
+  maxUses       Int?
+  usedCount     Int  @default(0)
+  /// Quota par numéro de téléphone. `null` = illimité.
+  maxUsesPerPhone Int?
+  /// Zone de livraison concernée. `null` = toutes.
+  zone          String? @db.VarChar(40)
+
+  startsAt DateTime  @default(now())
+  endsAt   DateTime?
+  isActive Boolean   @default(true)
+
+  /// Références produits concernées (`sourceRef` ou `sku`). Vide = tout.
+  /// Tableau PostgreSQL plutôt qu'une table de liaison : la règle tient en
+  /// quelques dizaines de références, et une jointure de plus ne servirait
+  /// personne.
+  appliesTo String[] @default([])
+
+  createdById String? @db.Uuid
+  createdBy   User?   @relation("PromoCodesCreated", fields: [createdById], references: [id])
+
+  redemptions PromoCodeRedemption[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, startsAt, endsAt])
+  @@map("promo_codes")
+}
+
+/// Trace d'utilisation d'un code : une ligne par commande remisée.
+///
+/// Elle sert deux choses distinctes : compter les usages par téléphone (quota
+/// individuel) et pouvoir expliquer, des mois plus tard, pourquoi une commande
+/// a été facturée moins cher.
+model PromoCodeRedemption {
+  id          String    @id @default(uuid()) @db.Uuid
+  promoCodeId String    @db.Uuid
+  promoCode   PromoCode @relation(fields: [promoCodeId], references: [id], onDelete: Cascade)
+
+  /// Référence de commande — sans clé étrangère : la trace doit survivre à la
+  /// purge des commandes (même règle que `MessageLog`).
+  orderReference String @db.VarChar(20)
+  phone          String @db.VarChar(20)
+  /// Remise réellement appliquée, en XOF entier.
+  discount       Int
+  /** Panier au moment de l'application, pour l'audit. */
+  orderTotal     Int
+
+  createdAt DateTime @default(now())
+
+  @@unique([promoCodeId, orderReference])
+  @@index([promoCodeId, phone])
+  @@map("promo_code_redemptions")
+}
+
+/// Point de vente AGRIM (usine, boutique, dépôt).
+///
+/// Adresses commerciales : elles changent, et un changement ne doit pas exiger
+/// une nouvelle version de l'application. Aucune n'est pré-remplie : une
+/// adresse inventée enverrait un client au mauvais endroit.
+model PointOfSale {
+  id String @id @default(uuid()) @db.Uuid
+
+  name        String  @db.VarChar(120)
+  address     String  @db.VarChar(255)
+  city        String  @db.VarChar(80)
+  landmark    String? @db.VarChar(200)
+  phone       String? @db.VarChar(30)
+  openingHours String? @db.VarChar(120)
+  latitude    Float?
+  longitude   Float?
+
+  /// Le point accepte-t-il le retrait d'une commande passée dans l'app ?
+  supportsPickup Boolean @default(true)
+  isActive       Boolean @default(true)
+  sortOrder      Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, sortOrder])
+  @@map("points_of_sale")
 }
 
 /// Verrou d'exclusion mutuelle des tâches planifiées (cron cPanel).

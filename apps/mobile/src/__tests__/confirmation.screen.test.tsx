@@ -30,6 +30,9 @@ const mockClearAccess = jest.fn().mockResolvedValue(undefined);
 const mockCallMobileSupport = jest.fn().mockResolvedValue(undefined);
 jest.mock('@/lib/contact', () => ({
   callMobileSupport: () => mockCallMobileSupport(),
+  // Le numéro affiché vient du SERVEUR ; le test fixe celui d'AGRIM, comme le
+  // ferait le repli du contrat partagé.
+  supportPhone: () => '+225 07 00 05 04 52',
 }));
 jest.mock('@/lib/guestPayment', () => ({
   getGuestPaymentAccess: (...args: unknown[]) => mockGetAccess(...args),

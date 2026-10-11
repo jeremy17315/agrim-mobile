@@ -1,4 +1,4 @@
-import { phoneSchema, type MobileMoneyProvider } from '@agrim/contracts';
+import { phoneSchema } from '@agrim/contracts';
 import { randomUUID } from 'expo-crypto';
 import { useRouter } from 'expo-router';
 import { useRef, useState } from 'react';
@@ -11,26 +11,26 @@ import {
   useDeliveryZones,
   useGuestCartQuote,
 } from '@/api/orders';
+import { usePaymentMethods } from '@/api/payments';
 import { CheckoutProgress } from '@/components/CheckoutProgress';
 import { EmptyState } from '@/components/states';
 import { Banner, Button, Card, Icon, Input, Text } from '@/components/ui';
-import { callMobileSupport } from '@/lib/contact';
+import { callMobileSupport, supportPhone } from '@/lib/contact';
 import { formatXof } from '@/lib/format';
 import { saveGuestPaymentAccess } from '@/lib/guestPayment';
 import { useIsOnline } from '@/lib/network';
 import { useCartStore, useCartTotals } from '@/store/cart';
 import { palette, spacing } from '@/theme/tokens';
 
-/** Le site propose ces deux parcours ; aucun ne demande de compte invité. */
-type GuestPaymentMethod = 'CASH_ON_DELIVERY' | 'MOBILE_MONEY';
-
-const PROVIDERS: { value: MobileMoneyProvider; label: string }[] = [
-  { value: 'ORANGE_MONEY', label: 'Orange Money' },
-  { value: 'MTN_MOMO', label: 'MTN MoMo' },
-  { value: 'MOOV_MONEY', label: 'Moov Money' },
-  { value: 'WAVE', label: 'Wave' },
-];
-
+/**
+ * Deux façons de régler, aucune ne demande de compte : à la livraison, ou par
+ * transfert direct vers le numéro officiel qu'AGRIM a publié.
+ *
+ * La liste des opérateurs n'est PLUS écrite ici : elle est lue sur
+ * `GET /payments/methods`, donc corriger un numéro ou retirer un opérateur
+ * prend effet sans nouvelle version sur le Play Store — et aucun numéro
+ * inventé ne peut se retrouver dans le bundle.
+ */
 /**
  * Checkout invité aligné sur le site : coordonnées, choix de règlement,
  * paiement sécurisé éventuel. Les prix, stocks et frais restent calculés côté
@@ -54,11 +54,13 @@ export default function CommandeScreen() {
   const [zone, setZone] = useState('');
   const [landmark, setLandmark] = useState('');
   const [codePromo, setCodePromo] = useState('');
-  const [paymentMethod, setPaymentMethod] =
-    useState<GuestPaymentMethod>('CASH_ON_DELIVERY');
-  const [mobileMoneyProvider, setMobileMoneyProvider] =
-    useState<MobileMoneyProvider>('ORANGE_MONEY');
+  const [methodCode, setMethodCode] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Moyens de paiement ACTIFS publiés par AGRIM. Liste vide = seul le paiement
+  // à la livraison est proposé : l'application n'invente jamais un numéro.
+  const methods = usePaymentMethods();
+  const selectedMethod =
+    (methods.data?.methods ?? []).find((m) => m.code === methodCode) ?? null;
   const idempotencyKey = useRef(randomUUID());
 
   /** Zone choisie + précisions éventuelles : le serveur résout la zone depuis
@@ -72,7 +74,12 @@ export default function CommandeScreen() {
   /** Même devis serveur que le site : prix, remises et total exacts, sans
    * créer d'ordre ni réserver de stock. Les frais de livraison, eux, ne sont
    * jamais chiffrés — le site dit « À confirmer », on dit pareil. */
-  const refreshQuote = async (location = deliveryLocation()) => {
+  const refreshQuote = async (
+    location = deliveryLocation(),
+    // Le code RETIRÉ doit partir comme absent : passer une chaîne vide au
+    // serveur reviendrait à lui demander d'évaluer un code vide.
+    code = codePromo.trim(),
+  ) => {
     const city = location.trim();
     if (!isOnline || city.length < 2 || items.length === 0) return;
     try {
@@ -82,7 +89,7 @@ export default function CommandeScreen() {
           variantId: item.variantId,
           quantity: item.quantity,
         })),
-        codePromo: codePromo.trim() ? codePromo.trim() : undefined,
+        codePromo: code ? code : undefined,
         phone: phone.trim() ? phone.trim() : undefined,
       });
     } catch {
@@ -120,17 +127,20 @@ export default function CommandeScreen() {
           variantId: item.variantId,
           quantity: item.quantity,
         })),
-        paymentMethod,
-        mobileMoneyProvider:
-          paymentMethod === 'MOBILE_MONEY' ? mobileMoneyProvider : undefined,
+        paymentMethod: selectedMethod
+          ? 'DIRECT_MOBILE_MONEY'
+          : 'CASH_ON_DELIVERY',
+        paymentMethodCode: selectedMethod?.code,
         codePromo: codePromo.trim() ? codePromo.trim() : undefined,
         idempotencyKey: idempotencyKey.current,
       });
 
       // Le panier est vidé uniquement quand la commande existe. Pour le
-      // Mobile Money, la capacité temporaire est stockée AVANT de quitter vers
-      // l'opérateur afin que le retour dans l'app puisse vérifier le statut.
-      if (paymentMethod === 'MOBILE_MONEY') {
+      // transfert direct, la capacité temporaire est stockée AVANT d'aller
+      // chercher les instructions de paiement, afin que le retour dans
+      // l'application (ou une fermeture suivie d'une réouverture) retrouve le
+      // dossier sans compte.
+      if (selectedMethod) {
         if (!order.paymentAccessToken) {
           throw new Error(
             'La session de paiement est indisponible. Réessayez.',
@@ -140,7 +150,7 @@ export default function CommandeScreen() {
       }
       clearCart();
       router.replace(
-        paymentMethod === 'MOBILE_MONEY'
+        selectedMethod
           ? `/paiement/${order.reference}`
           : `/confirmation/${order.reference}?payment=CASH_ON_DELIVERY`,
       );
@@ -207,7 +217,7 @@ export default function CommandeScreen() {
               icon={<Icon name="wifi-off" size={15} color="#8A5310" />}
             />
             <Button
-              label="APPELER AGRIM · 07 00 05 04 52"
+              label={`APPELER AGRIM · ${supportPhone()}`}
               variant="outline"
               size="sm"
               fullWidth={false}
@@ -320,42 +330,36 @@ export default function CommandeScreen() {
             MODE DE PAIEMENT
           </Text>
           <PaymentChoice
-            active={paymentMethod === 'CASH_ON_DELIVERY'}
+            active={selectedMethod === null}
             icon="banknote"
             title="Paiement à la livraison"
             detail="Réglez votre commande à la réception."
-            onPress={() => setPaymentMethod('CASH_ON_DELIVERY')}
+            onPress={() => setMethodCode(null)}
           />
-          <PaymentChoice
-            active={paymentMethod === 'MOBILE_MONEY'}
-            icon="smartphone"
-            title="Payer maintenant par Mobile Money"
-            detail="Validation sécurisée chez l’opérateur."
-            onPress={() => setPaymentMethod('MOBILE_MONEY')}
-          />
-          {paymentMethod === 'MOBILE_MONEY' ? (
-            <View style={styles.providerList}>
-              {PROVIDERS.map((provider) => {
-                const active = mobileMoneyProvider === provider.value;
-                return (
-                  <Pressable
-                    key={provider.value}
-                    onPress={() => setMobileMoneyProvider(provider.value)}
-                    accessibilityRole="radio"
-                    accessibilityState={{ selected: active }}
-                    accessibilityLabel={`Payer avec ${provider.label}`}
-                    style={[styles.provider, active && styles.providerActive]}
-                  >
-                    <Text
-                      variant="caption"
-                      style={{ color: active ? palette.green : palette.body }}
-                    >
-                      {provider.label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
+          {(methods.data?.methods ?? []).map((method) => (
+            <PaymentChoice
+              key={method.code}
+              active={selectedMethod?.code === method.code}
+              icon="smartphone"
+              title={`Payer maintenant par ${method.operatorName}`}
+              detail="Transfert vers le numéro officiel AGRIM, puis déclaration de votre transaction."
+              onPress={() => setMethodCode(method.code)}
+            />
+          ))}
+          {selectedMethod ? (
+            <Text variant="caption" color="muted">
+              Vous transférez {formatXof(totals.total)} vers le numéro officiel
+              d’AGRIM, puis vous indiquez la référence de la transaction à
+              l’étape suivante. Aucun prélèvement automatique, et AGRIM ne vous
+              demandera jamais votre code secret.
+            </Text>
+          ) : null}
+          {methods.data && methods.data.methods.length === 0 ? (
+            <Banner
+              tone="warning"
+              message="AGRIM n’a pas encore publié de numéro mobile money. Vous pouvez commander dès maintenant et régler à la livraison."
+              icon={<Icon name="info" size={15} color="#8A5310" />}
+            />
           ) : null}
         </View>
 
@@ -396,13 +400,32 @@ export default function CommandeScreen() {
                 value={formatXof(quote.data.total)}
                 strong
               />
-              {quote.data.promoMessage ? (
+              {quote.data.promoMessage || quote.data.remiseStatus === 'refused' ? (
                 <Banner
-                  tone="warning"
-                  message={quote.data.promoMessage}
-                  icon={
-                    <Icon name="triangle-alert" size={15} color="#8A5310" />
+                  tone={quote.data.remiseStatus === 'refused' ? 'danger' : 'warning'}
+                  message={
+                    quote.data.promoMessage ??
+                    'Ce code promo ne peut pas être appliqué.'
                   }
+                  icon={
+                    <Icon name="triangle-alert" size={15} color="danger" />
+                  }
+                />
+              ) : null}
+              {quote.data.remiseStatus === 'refused' ? (
+                <Button
+                  label="RETIRER LE CODE PROMO"
+                  variant="outline"
+                  size="sm"
+                  fullWidth={false}
+                  onPress={() => {
+                    // Le code refusé ne doit pas partir avec la commande :
+                    // le serveur la refuserait (409) et le client croirait à
+                    // une panne. On le retire et on redemande le devis.
+                    setCodePromo('');
+                    void refreshQuote(undefined, '');
+                  }}
+                  icon={<Icon name="x" size={15} color="green" />}
                 />
               ) : null}
               <Text variant="caption" color="muted">
@@ -429,7 +452,7 @@ export default function CommandeScreen() {
               ? 'Connexion nécessaire'
               : createOrder.isPending
                 ? 'Commande en cours…'
-                : paymentMethod === 'MOBILE_MONEY'
+                : selectedMethod
                   ? 'CONTINUER VERS LE PAIEMENT'
                   : 'CONFIRMER LA COMMANDE'
           }

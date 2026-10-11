@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 
 import { CatalogSyncModule } from '../catalog-sync/catalog-sync.module';
 import { DeliveriesModule } from '../deliveries/deliveries.module';
+import { PromoCodesModule } from '../promo-codes/promo-codes.module';
 import { SitePricingModule } from '../site-pricing/site-pricing.module';
 import { SieveModule } from '../sieve/sieve.module';
 import { OrdersController } from './orders.controller';
@@ -13,7 +14,13 @@ import { GuestCheckoutService } from './guest-checkout.service';
 import { GuestPaymentTokenService } from './guest-payment-token.service';
 
 @Module({
-  imports: [SieveModule, DeliveriesModule, CatalogSyncModule, SitePricingModule],
+  imports: [
+    SieveModule,
+    DeliveriesModule,
+    CatalogSyncModule,
+    SitePricingModule,
+    PromoCodesModule,
+  ],
   controllers: [OrdersController, CartQuoteController],
   providers: [
     OrdersService,
@@ -24,4 +31,4 @@ import { GuestPaymentTokenService } from './guest-payment-token.service';
   ],
   exports: [GuestPaymentTokenService],
 })
-export class OrdersModule {}
+export class OrdersModule {}

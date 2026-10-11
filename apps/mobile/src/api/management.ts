@@ -32,6 +32,53 @@ export type StockItem = z.infer<typeof stockItemSchema>;
 export type CourierSummary = z.infer<typeof courierSummarySchema>;
 export type ReviewableProduction = z.infer<typeof reviewableProductionSchema>;
 
+/**
+ * Dossier de vérification d'un paiement par transfert direct.
+ *
+ * Tous les montants viennent du SERVEUR : montant attendu (figé sur la
+ * commande) et montant déclaré par le client. L'écran ne fait que les
+ * comparer et afficher le verdict `amountMatches`.
+ */
+export const pendingDeclarationSchema = z.object({
+  declarationId: z.uuid(),
+  orderReference: z.string(),
+  customerName: z.string(),
+  customerPhone: z.string(),
+  expectedAmount: z.number().int(),
+  declaredAmount: z.number().int(),
+  paymentMethodCode: z.string().nullable(),
+  receivingNumber: z.string().nullable(),
+  transactionReference: z.string(),
+  declaredPaidAt: z.iso.datetime().nullable(),
+  submittedAt: z.iso.datetime(),
+  hasProof: z.boolean(),
+  /** Type MIME du justificatif : seules les images sont prévisualisées. */
+  proofMimeType: z.string().nullable(),
+  status: z.string(),
+  amountMatches: z.boolean(),
+  orderStatus: z.string(),
+  paymentStatus: z.string(),
+  lastReview: z
+    .object({
+      action: z.string(),
+      note: z.string().nullable(),
+      actorName: z.string().nullable(),
+      createdAt: z.iso.datetime(),
+    })
+    .nullable(),
+});
+export type PendingDeclaration = z.infer<typeof pendingDeclarationSchema>;
+
+const declarationsPageSchema = z.object({
+  data: z.array(pendingDeclarationSchema),
+  meta: z.object({
+    page: z.number().int(),
+    limit: z.number().int(),
+    total: z.number().int(),
+  }),
+});
+export type DeclarationsPage = z.infer<typeof declarationsPageSchema>;
+
 export const managementKeys = {
   all: ['management'] as const,
   dashboard: () => [...managementKeys.all, 'dashboard'] as const,
@@ -44,6 +91,8 @@ export const managementKeys = {
   couriers: () => [...managementKeys.all, 'couriers'] as const,
   productionReview: (status?: ProductionStatus) =>
     [...managementKeys.all, 'production-review', status ?? 'PENDING'] as const,
+  declarations: (status?: string) =>
+    [...managementKeys.all, 'payment-declarations', status ?? 'DEFAULT'] as const,
 };
 
 export function useManagerDashboard(enabled = true) {
@@ -266,6 +315,62 @@ export function useReviewProduction() {
           producerId: true,
           producerName: true,
           producerPhone: true,
+        }),
+      }),
+  );
+}
+
+/* ───────────────── Vérification des paiements (transfert direct) ─────────── */
+
+/** File d'attente des déclarations à vérifier. */
+export function usePaymentDeclarations(
+  filters: { status?: 'DECLARED' | 'VERIFYING' | 'ACCEPTED' | 'REJECTED'; search?: string } = {},
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: managementKeys.declarations(filters.status),
+    queryFn: ({ signal }) =>
+      apiRequest({
+        path: '/management/payments/declarations',
+        query: { status: filters.status, search: filters.search },
+        schema: declarationsPageSchema,
+        signal,
+      }),
+    enabled,
+    // Un dossier de paiement change sous nos yeux : le gestionnaire travaille
+    // sur l'état du moment, pas sur une photo d'il y a dix minutes.
+    staleTime: 5_000,
+  });
+}
+
+/**
+ * Décision sur une déclaration : confirmer, rejeter (motif obligatoire), ou
+ * maintenir en vérification.
+ *
+ * Le serveur applique une bascule CONDITIONNELLE : deux gestionnaires qui
+ * confirment en même temps, et le second reçoit un refus explicite — jamais
+ * une double validation silencieuse.
+ */
+export function useReviewPayment() {
+  return useManagementMutation(
+    ({
+      declarationId,
+      decision,
+      note,
+      rejectionNote,
+    }: {
+      declarationId: string;
+      decision: 'CONFIRM' | 'REJECT' | 'REVIEW';
+      note?: string;
+      rejectionNote?: string;
+    }) =>
+      apiRequest({
+        path: `/management/payments/declarations/${declarationId}/review`,
+        method: 'POST',
+        body: { decision, note, rejectionNote },
+        schema: z.object({
+          status: z.string(),
+          note: z.string().optional(),
         }),
       }),
   );

@@ -19,7 +19,11 @@ import { recordStockMovement } from '../common/stock/stock-movement';
 import { CatalogSyncService } from '../catalog-sync/catalog-sync.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { SitePricingService } from '../site-pricing/site-pricing.service';
+import { PromoCodesService } from '../promo-codes/promo-codes.service';
+import {
+  normalizeOrderPayment,
+  resolveOrderPaymentMethod,
+} from '../payments/resolve-method';
 import { SieveSession, type SieveSessionRow } from '../sieve/model';
 import { SieveScrapeService } from '../sieve/sieve.service';
 import type { CreateOrderDto } from './dto/create-order.dto';
@@ -87,7 +91,7 @@ export class OrdersService {
     private readonly notifications: NotificationsService,
     private readonly catalog: CatalogSyncService,
     private readonly checkout: CheckoutService,
-    private readonly pricing: SitePricingService,
+    private readonly promos: PromoCodesService,
     private readonly sieveSession: SieveSession,
     private readonly sieveScrape: SieveScrapeService,
   ) {}
@@ -137,12 +141,21 @@ export class OrdersService {
       });
     }
 
-    if (dto.paymentMethod === 'MOBILE_MONEY' && !dto.mobileMoneyProvider) {
-      throw new BadRequestException({
-        code: 'PAYMENT_PROVIDER_REQUIRED',
-        message: 'Choisissez un opérateur Mobile Money.',
-      });
-    }
+    // ── Moyen de paiement : normalisé et vérifié AVANT toute écriture ────
+    //
+    // Aucune nouvelle commande ne peut naître avec `MOBILE_MONEY` : une
+    // application déjà installée qui l'envoie encore est servie par le
+    // transfert direct (`normalizeOrderPayment`). Le numéro de réception est
+    // ensuite résolu depuis la configuration d'AGRIM — jamais depuis le
+    // téléphone — et refusé s'il n'est plus actif.
+    const orderPayment = normalizeOrderPayment({
+      paymentMethod: dto.paymentMethod,
+      mobileMoneyProvider: dto.mobileMoneyProvider,
+      paymentMethodCode: dto.paymentMethodCode,
+    });
+    const directMethod = orderPayment.methodCode
+      ? await resolveOrderPaymentMethod(this.prisma.db, orderPayment.methodCode)
+      : null;
 
     // Une même variante ne doit pas apparaître deux fois : sinon le contrôle
     // de stock se ferait ligne par ligne et laisserait passer un dépassement.
@@ -172,6 +185,7 @@ export class OrdersService {
       where: { id: { in: variantIds } },
       select: {
         id: true,
+        sku: true,
         label: true,
         price: true,
         originalPrice: true,
@@ -348,25 +362,55 @@ export class OrdersService {
         this.logger.warn('Sieve run failed to start; driver will retry or mark error');
       }
     }
-    // ── Remises : LE SITE les calcule, AVANT la transaction ──────────────
+    // ── Remises : calculées AVANT la transaction ─────────────────────────
     //
     // Un appel réseau tenu sous verrou PostgreSQL retiendrait les verrous
     // pendant toute la latence : la remise est donc demandée ici, avant
     // d'ouvrir la transaction, puis appliquée à l'intérieur.
-    const remise = await this.pricing.remise({
-      items: variants.map((v) => ({
+    //
+    // `PromoCodesService` tranche d'abord sur la TABLE LOCALE : un code créé
+    // par AGRIM dans l'application doit s'appliquer même si le site est
+    // injoignable. Le site ne reçoit alors PAS ce code — il l'appliquerait une
+    // seconde fois — et ne fournit plus que ses remises automatiques.
+    const subtotalAvantRemise = lines.reduce(
+      (sum, l) => sum + l.unitPrice * l.quantity,
+      0,
+    );
+    const skus = new Map(variants.map((v) => [v.id, v.sku]));
+    const remise = await this.promos.resolveRemise({
+      lines: variants.map((v) => ({
         sourceRef: v.sourceRef,
+        sku: skus.get(v.id) ?? '',
+        unitPrice:
+          lines.find((l) => l.variantId === v.id)?.unitPrice ?? 0,
         quantity: merged.get(v.id) ?? 0,
       })),
+      subtotal: subtotalAvantRemise,
       zone,
       mode: 'domicile',
       codePromo: dto.codePromo,
-      phone: guest?.phone,
+      // Téléphone du CLIENT, invité ou titulaire du compte : sans lui, le
+      // quota « une utilisation par numéro » ne s'appliquait qu'aux invités,
+      // et un même client pouvait réutiliser son code à l'infini en se
+      // connectant. Le numéro est celui du COMPTE (jamais un champ envoyé par
+      // le téléphone), donc il ne peut pas être falsifié.
+      phone: guest?.phone ?? (await this.phoneOf(userId)),
     });
+
+    // Un code refusé n'est JAMAIS ignoré en silence : le client verrait un
+    // total plus élevé que celui annoncé par le devis. Il doit retirer son
+    // code (ou en corriger la saisie) pour continuer.
+    if (remise.status === 'refused') {
+      throw new ConflictException({
+        code: 'PROMO_CODE_REFUSED',
+        message: remise.message ?? 'Ce code promo ne peut pas être appliqué.',
+        details: { reason: remise.reason },
+      });
+    }
 
     const totals = computeCartTotals(
       lines.map((l) => ({ unitPrice: l.unitPrice, quantity: l.quantity })),
-      { remise: remise.status === 'ok' ? remise.remise : 0 },
+      { remise: remise.remise },
     );
 
     // ── Réservation du stock auprès du SITE ───────────────────────────────
@@ -482,11 +526,19 @@ export class OrdersService {
             },
             payment: {
               create: {
-                method: dto.paymentMethod,
-                provider: dto.mobileMoneyProvider ?? null,
+                method: orderPayment.method,
+                // Le champ `provider` (opérateur de l'agrégateur) n'est plus
+                // jamais renseigné sur une nouvelle commande : le régime en
+                // vigueur est le transfert direct, décrit par `methodCode`.
+                provider: null,
+                // Le moyen affiché et SON numéro sont figés ici : si AGRIM
+                // retire un moyen de paiement, on saura encore expliquer vers
+                // quel compte ce client-là a transféré.
+                methodCode: directMethod?.code ?? null,
+                receivingNumber: directMethod?.receivingNumber ?? null,
                 amount: totals.total,
-                // Le paiement à la livraison est en attente jusqu'à la remise ;
-                // aucun statut ne peut être décidé par le client.
+                // Le paiement à la livraison — comme le transfert direct — est
+                // en attente ; aucun statut ne peut être décidé par le client.
                 status: 'PENDING',
               },
             },
@@ -555,7 +607,31 @@ export class OrdersService {
       });
     }
 
+    // Code promo appliqué : on consomme le quota APRÈS la création, quand la
+    // commande existe pour de bon. Compter avant réserverait une utilisation
+    // pour une commande qui pourrait échouer.
+    if (remise.local && remise.code && remise.remise > 0) {
+      await this.promos
+        .recordRedemption({
+          code: remise.code,
+          orderReference: created.reference,
+          phone: guest?.phone ?? (await this.phoneOf(userId)),
+          discount: remise.remise,
+          orderTotal: created.total,
+        })
+        .catch(() => undefined);
+    }
+
     return created;
+  }
+
+  /** Téléphone du compte, pour rattacher l'usage d'un code promo. */
+  private async phoneOf(userId: string): Promise<string> {
+    const user = await this.prisma.db.user.findUnique({
+      where: { id: userId },
+      select: { phone: true },
+    });
+    return user?.phone ?? '';
   }
 
   /**

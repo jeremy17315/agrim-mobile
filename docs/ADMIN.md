@@ -1,4 +1,4 @@
-# Administration — AGRIM / RIZ BOAGNI
+# Administration — AGRIM / BÉLIER D’OR
 
 > État réel au 29 août 2026. Décrit ce que fait le code, pas une intention.
 > À lire après `ARCHITECTURE.md`, dont ce document applique les règles.

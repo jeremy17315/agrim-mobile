@@ -1,4 +1,4 @@
-# Authentification et autorisation — AGRIM / RIZ BOAGNI
+# Authentification et autorisation — AGRIM / BÉLIER D’OR
 
 > État réel au 28 août 2026, les deux plateformes confrontées.
 

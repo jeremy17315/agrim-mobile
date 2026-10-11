@@ -95,8 +95,19 @@ export function useInitiateGuestPayment() {
   });
 }
 
-/** Statuts depuis lesquels le paiement peut encore bouger tout seul. */
-const PAYMENT_IN_FLIGHT = ['PENDING', 'AWAITING_CONFIRMATION'];
+/**
+ * Statuts depuis lesquels le paiement peut encore bouger sans action du client.
+ *
+ * `DECLARED_BY_CUSTOMER` et `UNDER_REVIEW` appartiennent au régime du transfert
+ * direct : le client a déclaré, AGRIM vérifie — l'écran doit continuer à
+ * interroger le serveur pour annoncer la confirmation dès qu'elle tombe.
+ */
+const PAYMENT_IN_FLIGHT = [
+  'PENDING',
+  'AWAITING_CONFIRMATION',
+  'DECLARED_BY_CUSTOMER',
+  'UNDER_REVIEW',
+];
 
 /**
  * Le paiement peut-il encore changer d'état sans action du client ?
@@ -200,4 +211,160 @@ export function useSuiviPaiement(
   }, [statut, queryClient, reference]);
 
   return statut;
+}
+
+/* ───────────────────── Paiement direct manuel (AGRIM) ───────────────────── */
+
+/**
+ * Un moyen de paiement ACTIF, tel qu'AGRIM l'a configuré.
+ *
+ * `receivingNumber` est le numéro officiel de réception : il est public par
+ * nécessité (le client doit le composer), et il vient TOUJOURS du serveur —
+ * jamais d'une constante du bundle.
+ */
+const directMethodSchema = z.object({
+  code: z.string(),
+  operatorName: z.string(),
+  receivingNumber: z.string(),
+  beneficiaryName: z.string().nullable(),
+  instructions: z.string().nullable(),
+  ussdTemplate: z.string().nullable(),
+});
+export type DirectPaymentMethod = z.infer<typeof directMethodSchema>;
+
+const paymentMethodsSchema = z.object({
+  methods: z.array(directMethodSchema),
+});
+
+export function fetchPaymentMethods(signal?: AbortSignal) {
+  return apiRequest({
+    path: '/payments/methods',
+    schema: paymentMethodsSchema,
+    isPublic: true,
+    signal,
+  });
+}
+
+/**
+ * Liste des moyens publiés par AGRIM. Rechargée régulièrement : un numéro
+ * corrigé dans l'administration doit apparaître sans réinstaller l'application.
+ */
+export function usePaymentMethods() {
+  return useQuery({
+    queryKey: ['payments', 'methods'],
+    queryFn: ({ signal }) => fetchPaymentMethods(signal),
+    staleTime: 5 * 60_000,
+  });
+}
+
+const paymentInstructionSchema = z.object({
+  reference: z.string(),
+  amount: z.number().int(),
+  currency: z.literal('XOF'),
+  status: z.string(),
+  method: directMethodSchema,
+  paymentReference: z.string(),
+  declarations: z.number().int(),
+  lastDeclaration: z
+    .object({
+      transactionReference: z.string(),
+      declaredAmount: z.number().int(),
+      submittedAt: z.iso.datetime(),
+      status: z.string(),
+    })
+    .nullable(),
+  /** Motif du dernier rejet : affiché au client, jamais tronqué en silence. */
+  rejectionNote: z.string().nullable(),
+});
+export type PaymentInstruction = z.infer<typeof paymentInstructionSchema>;
+
+/**
+ * Instruction de paiement d'UNE commande.
+ *
+ * Le serveur vérifie le propriétaire : jeton de compte, ou capacité temporaire
+ * pour une commande invitée. Le téléphone ne calcule rien — il affiche.
+ */
+export function fetchPaymentInstructions(
+  reference: string,
+  token: string | null,
+  signal?: AbortSignal,
+) {
+  return apiRequest({
+    path: token
+      ? `/payments/guest/orders/${reference}/instructions`
+      : `/payments/orders/${reference}/instructions`,
+    schema: paymentInstructionSchema,
+    isPublic: token !== null,
+    headers: token ? guestPaymentHeaders(token) : undefined,
+    signal,
+  });
+}
+
+export function usePaymentInstructions(
+  reference: string,
+  token: string | null,
+) {
+  return useQuery({
+    queryKey: ['payment-instructions', reference, token],
+    queryFn: ({ signal }) => fetchPaymentInstructions(reference, token, signal),
+    enabled: reference.length > 0 && token !== null,
+    staleTime: 30_000,
+  });
+}
+
+const declareResultSchema = z.object({
+  recorded: z.boolean(),
+  status: z.string(),
+  amountMatches: z.boolean(),
+  message: z.string(),
+});
+export type DeclareResult = z.infer<typeof declareResultSchema>;
+
+export function declarePayment(input: {
+  reference: string;
+  token: string | null;
+  transactionReference: string;
+  declaredAmount: number;
+  note?: string;
+  paidAt?: string;
+}): Promise<DeclareResult> {
+  const { reference, token, ...body } = input;
+  return apiRequest({
+    method: 'POST',
+    path: token
+      ? `/payments/guest/orders/${reference}/declare`
+      : `/payments/orders/${reference}/declare`,
+    body,
+    schema: declareResultSchema,
+    isPublic: token !== null,
+    headers: token ? guestPaymentHeaders(token) : undefined,
+  });
+}
+
+/**
+ * Déclaration d'un transfert effectué.
+ *
+ * Rien n'est confirmé ici : la réponse dit seulement que la déclaration est
+ * ENREGISTRÉE, et le statut réel reste lu sur le serveur. Une référence déjà
+ * utilisée (envoi rejoué, ou tentative de double validation) est refusée.
+ */
+export function useDeclarePayment(reference: string, token: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: {
+      transactionReference: string;
+      declaredAmount: number;
+      note?: string;
+      paidAt?: string;
+    }) => declarePayment({ reference, token, ...input }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ['payment-instructions', reference, token],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: token ? ['guest-payment', reference] : ['payments', reference],
+      });
+    },
+    retry: false,
+  });
 }

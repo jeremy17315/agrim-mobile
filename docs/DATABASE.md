@@ -1,4 +1,4 @@
-# Bases de données — AGRIM / RIZ BOAGNI
+# Bases de données — AGRIM / BÉLIER D’OR
 
 > État réel au 28 août 2026.
 > **Il y a deux bases.** Ce document décrit les deux et ce qui les sépare.

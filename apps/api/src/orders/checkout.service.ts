@@ -9,8 +9,6 @@ import {
 import { computeCartTotals, resolveDeliveryZone } from '@agrim/contracts';
 import { Prisma } from '../../generated/prisma/client';
 import { estP2002 } from '../common/prisma/prisma-erreur';
-import { promosActives } from '../common/pricing/effective-price';
-import { SitePricingService } from '../site-pricing/site-pricing.service';
 import { readDeliveryGrid } from './delivery-grid';
 
 import {
@@ -19,7 +17,13 @@ import {
   StockReservationError,
 } from '../common/stock/reserve-stock';
 import { kickOutboxDrain } from '../jobs/outbox-drain';
+import { prixEffectif, promosActives } from '../common/pricing/effective-price';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  normalizeOrderPayment,
+  resolveOrderPaymentMethod,
+} from '../payments/resolve-method';
+import { PromoCodesService } from '../promo-codes/promo-codes.service';
 import { SieveSession } from '../sieve/model';
 import type { CreateOrderDto } from './dto/create-order.dto';
 import type { GuestOrderCustomer } from './orders.service';
@@ -81,7 +85,7 @@ const IDEMPOTENCY_TTL_DAYS = 7;
 export class CheckoutService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly pricing: SitePricingService,
+    private readonly promos: PromoCodesService,
     private readonly sieveSession: SieveSession,
   ) {}
 
@@ -139,22 +143,56 @@ export class CheckoutService {
 
     const variants = await this.prisma.db.productVariant.findMany({
       where: { id: { in: dto.items.map((i) => i.variantId) } },
-      select: { id: true, sourceRef: true },
+      select: {
+        id: true,
+        sku: true,
+        price: true,
+        sourceRef: true,
+        promotions: {
+          where: { isActive: true },
+          select: { isActive: true, priceXof: true, startsAt: true, endsAt: true },
+        },
+      },
     });
-    const refs = new Map(variants.map((v) => [v.id, v.sourceRef]));
+    const skus = new Map(variants.map((v) => [v.id, v.sku]));
 
-    const remise = await this.pricing.remise({
-      items: dto.items.map((item) => ({
-        sourceRef: refs.get(item.variantId) ?? null,
-        quantity: item.quantity,
-      })),
+    // Même règle que le mode « site » : la table locale des codes promo fait
+    // foi quand elle connaît le code, le site ne reçoit alors que ses propres
+    // remises automatiques.
+    const now = new Date();
+    const lines = variants.map((variant) => {
+      const promo = promosActives(variant.promotions, now)[0] ?? null;
+      return {
+        sourceRef: variant.sourceRef,
+        sku: skus.get(variant.id) ?? '',
+        unitPrice: prixEffectif(variant.price, promo),
+        quantity:
+          dto.items.find((item) => item.variantId === variant.id)?.quantity ?? 0,
+      };
+    });
+    const subtotal = lines.reduce(
+      (sum, line) => sum + line.unitPrice * line.quantity,
+      0,
+    );
+
+    const remise = await this.promos.resolveRemise({
+      lines,
+      subtotal,
       zone,
       mode: 'domicile',
       codePromo: dto.codePromo,
       phone: guest?.phone,
     });
 
-    return { remise: remise.status === 'ok' ? remise.remise : 0 };
+    if (remise.status === 'refused') {
+      throw new ConflictException({
+        code: 'PROMO_CODE_REFUSED',
+        message: remise.message ?? 'Ce code promo ne peut pas être appliqué.',
+        details: { reason: remise.reason },
+      });
+    }
+
+    return { remise: remise.remise };
   }
 
   async create(
@@ -166,6 +204,18 @@ export class CheckoutService {
 
     // Réseau AVANT verrous : voir `prepare`.
     const preflight = await this.prepare(userId, dto, guest);
+
+    // Moyen de paiement : normalisé puis vérifié AVANT la transaction. Une
+    // application installée qui envoie encore `MOBILE_MONEY` est servie par le
+    // transfert direct ; le numéro officiel vient de la configuration d'AGRIM.
+    const payment = normalizeOrderPayment({
+      paymentMethod: dto.paymentMethod,
+      mobileMoneyProvider: dto.mobileMoneyProvider,
+      paymentMethodCode: dto.paymentMethodCode,
+    });
+    const directMethod = payment.methodCode
+      ? await resolveOrderPaymentMethod(this.prisma.db, payment.methodCode)
+      : null;
 
     // `isReplay` distingue une création fraîche d'un rejeu : on ne notifie
     // qu'une fois, à la création — le rejeu renvoie la commande d'origine
@@ -338,8 +388,10 @@ export class CheckoutService {
             },
             payment: {
               create: {
-                method: dto.paymentMethod,
-                provider: dto.mobileMoneyProvider ?? null,
+                method: payment.method,
+                provider: null,
+                methodCode: directMethod?.code ?? null,
+                receivingNumber: directMethod?.receivingNumber ?? null,
                 amount: totals.total,
                 status: 'PENDING',
               },

@@ -119,11 +119,15 @@ describe('GuestCheckoutService', () => {
       paymentAccessToken: 'guest-payment-capability',
     });
 
+    // `MOBILE_MONEY` (application déjà installée) est NORMALISÉ en transfert
+    // direct : plus aucune commande ne peut naître sous le régime de
+    // l'agrégateur, mais l'intention du client — payer par mobile money — est
+    // conservée, et son opérateur devient le code du moyen de paiement.
     expect(orders.create).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
-        paymentMethod: 'MOBILE_MONEY',
-        mobileMoneyProvider: 'ORANGE_MONEY',
+        paymentMethod: 'DIRECT_MOBILE_MONEY',
+        paymentMethodCode: 'ORANGE_MONEY',
       }),
       expect.any(Object),
     );

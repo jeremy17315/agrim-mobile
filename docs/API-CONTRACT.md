@@ -1,4 +1,4 @@
-# Contrat d'API — AGRIM / RIZ BOAGNI
+# Contrat d'API — AGRIM / BÉLIER D’OR
 
 > État réel au 28 août 2026. Les deux API sont décrites, puis le contrat
 > d'intégration qui les relie.
@@ -229,7 +229,7 @@ Le catalogue complet. Consommé toutes les 15 minutes par `CatalogSyncService`.
 ```json
 {
   "genere_le": "2026-08-28T18:00:00Z",
-  "marque": "RIZ BOAGNI",
+  "marque": "BÉLIER D’OR",
   "devise": "F CFA",
   "gammes": [
     { "code": "DJA", "nom": "Djassa", "slug": "djassa",

@@ -8,7 +8,7 @@ import {
 
 import { prixEffectif, promosActives } from '../common/pricing/effective-price';
 import { PrismaService } from '../prisma/prisma.service';
-import { SitePricingService } from '../site-pricing/site-pricing.service';
+import { PromoCodesService } from '../promo-codes/promo-codes.service';
 import { readDeliveryGrid } from './delivery-grid';
 import type { CartQuoteDto } from './dto/cart-quote.dto';
 
@@ -49,7 +49,11 @@ export interface LigneDevis {
 export class CartQuoteService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly pricing: SitePricingService,
+    // La remise passe par la MÊME règle que le checkout : la table des codes
+    // promo d'AGRIM d'abord, le calculateur du site pour ses remises
+    // automatiques. Un code refusé au devis ne peut donc pas passer à la
+    // commande, et un code accepté garde la même valeur des deux côtés.
+    private readonly promos: PromoCodesService,
   ) {}
 
   /**
@@ -138,14 +142,22 @@ export class CartQuoteService {
     // additionner un tarif.
     const delivery = quoteDelivery({ mode: 'domicile', zone, grid });
 
-    // ── Remises : LE SITE les calcule ───────────────────────────────────
-    // Volume, grossiste et code promo vivent dans son back office. Site
-    // injoignable ⇒ aucune remise appliquée, jamais une remise devinée.
-    const remise = await this.pricing.remise({
-      items: lines.map((l) => ({
+    // ── Remises : règle unique, partagée avec le checkout ───────────────
+    // Les codes créés par AGRIM dans l'application sont appliqués LOCALEMENT
+    // (donc même si le site est injoignable), et le site ne fournit que ses
+    // remises automatiques. Le montant affiché ici est celui qui sera facturé.
+    const subtotalAvantRemise = lines.reduce(
+      (sum, l) => sum + l.unitPrice * l.quantity,
+      0,
+    );
+    const remise = await this.promos.resolveRemise({
+      lines: lines.map((l) => ({
         sourceRef: l.sourceRef,
+        sku: l.sku,
+        unitPrice: l.unitPrice,
         quantity: l.quantity,
       })),
+      subtotal: subtotalAvantRemise,
       zone,
       mode: 'domicile',
       codePromo: dto.codePromo,
@@ -154,7 +166,7 @@ export class CartQuoteService {
 
     const totals = computeCartTotals(
       lines.map((l) => ({ unitPrice: l.unitPrice, quantity: l.quantity })),
-      { remise: remise.status === 'ok' ? remise.remise : 0 },
+      { remise: remise.status === 'refused' ? 0 : remise.remise },
     );
 
     return {
@@ -167,9 +179,19 @@ export class CartQuoteService {
       weightUntilFreeDeliveryKg: weightUntilFreeDelivery(weightKg, grid),
       subtotal: totals.subtotal,
       remise: totals.remise,
-      remiseStatus: remise.status === 'ok' ? ('ok' as const) : ('unavailable' as const),
-      promoCode: remise.status === 'ok' ? remise.code : null,
-      promoMessage: remise.status === 'ok' ? remise.message : null,
+      // `refused` : le client doit retirer son code (il paie plein tarif).
+      // `unavailable` : le calculateur du site n'a pas répondu — le dire est
+      // plus honnête que d'afficher un total qui bougera peut-être.
+      remiseStatus:
+        remise.status === 'refused'
+          ? ('refused' as const)
+          : remise.siteAvailable || remise.local
+            ? ('ok' as const)
+            : ('unavailable' as const),
+      promoCode:
+        remise.status === 'ok' ? remise.code : (dto.codePromo?.trim() ?? null),
+      // Message du refus (motif précis) ou confirmation du rabais appliqué.
+      promoMessage: remise.message,
       // Toujours 0 : aucun frais n'est encaissé en ligne (voir contracts).
       deliveryFee: totals.deliveryFee,
       total: totals.total,

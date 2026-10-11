@@ -18,7 +18,9 @@ import { LegalModule } from './legal/legal.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { ManagementModule } from './management/management.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { AppConfigModule } from './app-config/app-config.module';
 import { ProducersModule } from './producers/producers.module';
+import { PromoCodesModule } from './promo-codes/promo-codes.module';
 import { ReferralsModule } from './referrals/referrals.module';
 import { StorageModule } from './storage/storage.module';
 import { OrdersModule } from './orders/orders.module';
@@ -58,7 +60,13 @@ import { ReviewsModule } from './reviews/reviews.module';
     NotificationsModule,
     AnalyticsModule,
     ManagementModule,
+    // Coordonnées, points de vente et textes : modifiables sans nouvelle
+    // version sur le Play Store.
+    AppConfigModule,
     ProducersModule,
+    // Codes promo gérés dans l'application : le devis et le checkout y
+    // trouvent la règle de remise, avant de retomber sur le calculateur du site.
+    PromoCodesModule,
     ReferralsModule,
     // Garantit qu'aucune commande ne reste en suspens : paiements abandonnés
     // réglés, stock rendu, données de rétention purgées. Sans lui, seule la

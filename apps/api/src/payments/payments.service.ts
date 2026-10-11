@@ -99,7 +99,7 @@ type InitiableOrder = {
   guestPhone: string | null;
   payment: {
     id: string;
-    method: 'MOBILE_MONEY' | 'CARD' | 'CASH_ON_DELIVERY';
+    method: 'MOBILE_MONEY' | 'CARD' | 'CASH_ON_DELIVERY' | 'DIRECT_MOBILE_MONEY';
     provider: 'ORANGE_MONEY' | 'MTN_MOMO' | 'MOOV_MONEY' | 'WAVE' | null;
     status: string;
   } | null;
@@ -194,6 +194,26 @@ export class PaymentsService {
       throw new ConflictException({
         code: 'PAYMENT_NOT_APPLICABLE',
         message: 'Cette commande est réglée à la livraison.',
+      });
+    }
+    /**
+     * FIN DE L'AGRÉGATEUR POUR LES NOUVELLES COMMANDES.
+     *
+     * Décision commerciale du 11 octobre 2026 : plus d'intermédiaire, donc
+     * plus de commission. Une commande créée après la bascule se règle par
+     * transfert direct — ce service ne doit donc plus JAMAIS ouvrir de
+     * transaction pour elle, sous peine de réintroduire l'agrégateur par la
+     * petite porte.
+     *
+     * Les commandes antérieures (`MOBILE_MONEY`) restent, elles, traitées
+     * normalement : leur argent a été encaissé par ce chemin, et le retirer
+     * laisserait des paiements définitivement irrésolus.
+     */
+    if (payment.method === 'DIRECT_MOBILE_MONEY') {
+      throw new ConflictException({
+        code: 'PAYMENT_NOT_AGGREGATOR',
+        message:
+          'Cette commande se règle par transfert direct vers AGRIM. Ouvrez les instructions de paiement.',
       });
     }
     if (payment.status === 'SUCCEEDED') {
