@@ -74,33 +74,50 @@ export default function CatalogueScreen() {
     <View style={[styles.screen, { paddingTop: insets.top + spacing.sm }]}>
       <View style={styles.header}>
         <View style={styles.titleRow}>
-          <View style={styles.titleCopy}>
-            <Text variant="micro" color="green" style={styles.brand}>
-              BÉLIER D’OR
-            </Text>
-            <Text variant="h1">Choisissez votre riz</Text>
+          <Image
+            source={require('../../assets/logo-agrim.png')}
+            style={styles.logo}
+            resizeMode="contain"
+            accessibilityLabel="Logo AGRIM"
+          />
+          <View style={styles.actions}>
+            <Pressable
+              onPress={() => router.push('/contact')}
+              accessibilityRole="button"
+              accessibilityLabel="Aide et contact"
+              style={styles.iconButton}
+            >
+              <Icon name="headset" size={18} color="green" />
+            </Pressable>
+            <Pressable
+              onPress={() => router.push('/panier')}
+              accessibilityRole="button"
+              accessibilityLabel={
+                itemCount > 0
+                  ? `Ouvrir le panier, ${itemCount} article${
+                      itemCount > 1 ? 's' : ''
+                    }`
+                  : 'Ouvrir le panier'
+              }
+              style={styles.iconButton}
+            >
+              <Icon name="shopping-bag" size={19} color="green" />
+              {itemCount > 0 ? (
+                <View style={styles.cartCount}>
+                  <Text variant="micro" style={styles.cartCountText}>
+                    {itemCount > 9 ? '9+' : itemCount}
+                  </Text>
+                </View>
+              ) : null}
+            </Pressable>
           </View>
-          <Pressable
-            onPress={() => router.push('/panier')}
-            accessibilityRole="button"
-            accessibilityLabel={
-              itemCount > 0
-                ? `Ouvrir le panier, ${itemCount} article${
-                    itemCount > 1 ? 's' : ''
-                  }`
-                : 'Ouvrir le panier'
-            }
-            style={styles.cartButton}
-          >
-            <Icon name="shopping-bag" size={19} color="green" />
-            {itemCount > 0 ? (
-              <View style={styles.cartCount}>
-                <Text variant="micro" style={styles.cartCountText}>
-                  {itemCount > 9 ? '9+' : itemCount}
-                </Text>
-              </View>
-            ) : null}
-          </Pressable>
+        </View>
+
+        <View style={styles.titleCopy}>
+          <Text variant="micro" color="green" style={styles.brand}>
+            BÉLIER D’OR
+          </Text>
+          <Text variant="display">Choisissez votre riz</Text>
         </View>
 
         <View style={styles.searchBox}>
@@ -355,14 +372,16 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: spacing.md,
   },
+  logo: { width: 96, height: 32 },
+  actions: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   titleCopy: { gap: 3 },
   brand: { letterSpacing: 1.5 },
-  cartButton: {
-    width: 42,
-    height: 42,
+  iconButton: {
+    width: 48,
+    height: 48,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 21,
+    borderRadius: 24,
     backgroundColor: palette.card,
     borderWidth: 1,
     borderColor: palette.line,

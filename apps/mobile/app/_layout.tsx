@@ -2,7 +2,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Image, StyleSheet, Text, View } from 'react-native';
+import {
+  AccessibilityInfo,
+  Animated,
+  Image,
+  StyleSheet,
+  View,
+} from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { apiRequest } from '@/api/client';
@@ -18,7 +24,7 @@ import {
   restoreCatalogCache,
 } from '@/lib/queryPersistence';
 import { useAuthStore } from '@/store/auth';
-import { palette, spacing } from '@/theme/tokens';
+import { palette } from '@/theme/tokens';
 
 /**
  * Racine de l'application.
@@ -43,8 +49,40 @@ export default function RootLayout() {
   );
 
   const [catalogHydrated, setCatalogHydrated] = useState(false);
+
   const hydrated = useAuthStore((s) => s.hydrated);
   const isAuthenticated = useAuthStore((s) => s.accessToken !== null);
+  const ready = hydrated && catalogHydrated;
+
+  // Lancement : même fond et même logo que le splash natif, puis fondu court
+  // dès que le chargement réel est terminé (jamais de délai artificiel).
+  const [splashVisible, setSplashVisible] = useState(true);
+  const [splashOpacity] = useState(() => new Animated.Value(1));
+  // Dimensions du fichier splash-icon.png (540 × 177) : fixées ici plutôt que
+  // lues à l'exécution, car Image.resolveAssetSource n'existe pas sur le web.
+  const splashWidth = 180;
+  const splashHeight = (splashWidth * 177) / 540;
+
+  useEffect(() => {
+    if (!ready) return;
+    let cancelled = false;
+    // « Réduire les animations » : on coupe le fondu, l'écran change tout de suite.
+    void AccessibilityInfo.isReduceMotionEnabled()
+      .catch(() => false)
+      .then((reduce) => {
+        if (cancelled) return;
+        Animated.timing(splashOpacity, {
+          toValue: 0,
+          duration: reduce ? 0 : 200,
+          useNativeDriver: true,
+        }).start(({ finished }) => {
+          if (finished && !cancelled) setSplashVisible(false);
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, splashOpacity]);
   // L'espace livreur n'a de sens que pour un livreur. Ce guard masque l'onglet
   // et la route ; le serveur reste seul juge des droits réels.
   const isCourier = useAuthStore((s) => s.user?.role === 'LIVREUR');
@@ -135,7 +173,7 @@ export default function RootLayout() {
           <StatusBar style="dark" />
           <View style={styles.app}>
             <OfflineBanner />
-            {hydrated && catalogHydrated ? (
+            {ready ? (
               <Stack
                 screenOptions={{
                   headerShown: false,
@@ -178,23 +216,22 @@ export default function RootLayout() {
                   <Stack.Screen name="gestion" />
                 </Stack.Protected>
               </Stack>
-            ) : (
-              // Session et cache catalogue en cours de restauration : afficher
-              // les écrans maintenant provoquerait une erreur ou une redirection
-              // visible dès que les données locales sont retrouvées.
-              <View style={styles.splash} accessibilityLabel="Chargement AGRIM">
+            ) : null}
+            {splashVisible ? (
+              // Session et cache catalogue en cours de restauration : même
+              // rendu que le splash natif, pour un passage invisible.
+              <Animated.View
+                style={[styles.splash, { opacity: splashOpacity }]}
+                accessibilityLabel="Chargement AGRIM"
+              >
                 <Image
-                  source={require('../assets/logo-agrim.png')}
-                  style={styles.splashLogo}
+                  source={require('../assets/splash-icon.png')}
+                  style={{ width: splashWidth, height: splashHeight }}
                   resizeMode="contain"
                   accessibilityLabel="Logo AGRIM"
                 />
-                <Text style={styles.splashCompany}>
-                  PRÉPARATION DE L’APPLICATION
-                </Text>
-                <ActivityIndicator color={palette.green} />
-              </View>
-            )}
+              </Animated.View>
+            ) : null}
           </View>
         </SafeAreaProvider>
       </QueryClientProvider>
@@ -205,18 +242,13 @@ export default function RootLayout() {
 const styles = StyleSheet.create({
   app: { flex: 1 },
   splash: {
-    flex: 1,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: spacing.sm,
-    backgroundColor: palette.bg,
-  },
-  splashLogo: { width: 228, height: 92 },
-  splashCompany: {
-    color: palette.muted,
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 1.5,
-    marginBottom: spacing.lg,
+    backgroundColor: palette.green,
   },
 });

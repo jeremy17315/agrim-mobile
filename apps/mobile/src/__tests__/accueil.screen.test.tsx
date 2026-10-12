@@ -1,37 +1,36 @@
-import { fireEvent, render, screen } from '@testing-library/react-native';
+import { render, screen } from '@testing-library/react-native';
 
-import WelcomeScreen from '../../app/(tabs)/index';
+import IndexRedirect from '../../app/(tabs)/index';
 
-const mockPush = jest.fn();
+/**
+ * L'écran « Commencer » a été retiré : la route racine renvoie directement au
+ * catalogue, qui est l'accueil du parcours public.
+ */
+const mockRedirect = jest.fn();
 jest.mock('expo-router', () => ({
-  useRouter: () => ({ push: mockPush }),
-}));
-
-jest.mock('react-native-safe-area-context', () => ({
-  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+  Redirect: (props: { href: string }) => {
+    mockRedirect(props);
+    return null;
+  },
 }));
 
 beforeEach(() => {
-  mockPush.mockClear();
+  mockRedirect.mockClear();
 });
 
 describe('Accueil public', () => {
-  it('présente AGRIM et la promesse du parcours invité', () => {
-    render(<WelcomeScreen />);
+  it('renvoie directement au catalogue, sans écran intermédiaire', () => {
+    render(<IndexRedirect />);
 
-    expect(screen.getByLabelText('Logo AGRIM')).toBeTruthy();
-    expect(screen.getByText('Le bon riz,')).toBeTruthy();
-    expect(screen.getByText('simplement.')).toBeTruthy();
-    expect(
-      screen.getByText('Commande sans compte · Livraison ou transfert direct'),
-    ).toBeTruthy();
+    expect(mockRedirect).toHaveBeenCalledWith({ href: '/catalogue' });
+    expect(screen.queryByText('COMMENCER')).toBeNull();
+    expect(screen.queryByText('Le bon riz,')).toBeNull();
   });
 
-  it('mène directement au catalogue sans passer par une connexion', () => {
-    render(<WelcomeScreen />);
+  it('ne montre aucun bouton « Commencer » ni invitation à se connecter', () => {
+    render(<IndexRedirect />);
 
-    fireEvent.press(screen.getByText('COMMENCER'));
-    expect(mockPush).toHaveBeenCalledWith('/catalogue');
+    expect(screen.queryByText(/commencer/i)).toBeNull();
     expect(screen.queryByText(/connexion/i)).toBeNull();
   });
 });

@@ -3,11 +3,14 @@ import { Tabs } from 'expo-router';
 import { palette } from '@/theme/tokens';
 
 /**
- * Les routes historiques restent techniquement présentes pour les équipes et
- * les liens existants, mais la barre de menu disparaît du parcours public.
- * Le client avance uniquement par les actions « Commencer », « Panier » et
- * « Commander ».
+ * Le catalogue est la première route du parcours public : il s'ouvre dès le
+ * lancement, sans écran intermédiaire. La barre de menu disparaît : le client
+ * avance uniquement par les actions « Ajouter », « Panier » et « Commander ».
  */
+export const unstable_settings = {
+  initialRouteName: 'catalogue',
+};
+
 export default function TabsLayout() {
   return (
     <Tabs
@@ -17,7 +20,8 @@ export default function TabsLayout() {
         tabBarStyle: { display: 'none' },
       }}
     >
-      <Tabs.Screen name="index" />
+      {/* Redirection de sécurité vers le catalogue : masquée du parcours. */}
+      <Tabs.Screen name="index" options={{ href: null }} />
       <Tabs.Screen name="catalogue" />
       <Tabs.Screen name="panier" />
       <Tabs.Screen name="compte" />
