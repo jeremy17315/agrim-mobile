@@ -28,7 +28,7 @@ export default function CompteScreen() {
   const isAuthenticated = useAuthStore((s) => s.accessToken !== null);
   const apiUrl =
     (Constants.expoConfig?.extra?.apiUrl as string | undefined) ??
-    'https://agrim-api-production.up.railway.app/api/v1';
+    'https://api.agrimsarl.ci/api/v1';
   const unread = useUnreadCount(isAuthenticated);
 
   const confirmDelete = () => {

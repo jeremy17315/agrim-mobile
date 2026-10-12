@@ -58,7 +58,7 @@ const adapter = new PrismaPg({
  *
  * Les valeurs par défaut de Prisma — 2 s pour obtenir une transaction, 5 s
  * pour la tenir — supposent un PostgreSQL local. Contre une base gérée
- * (Neon en l'occurrence), il faut compter la latence réseau, la poignée de
+ * (base PostgreSQL hébergée à distance), il faut compter la latence réseau, la poignée de
  * main TLS, et le réveil du compute lorsqu'il s'est suspendu. Avec les
  * défauts, le seed échouait en `P2028 : Unable to start a transaction in the
  * given time` avant même d'écrire une ligne.

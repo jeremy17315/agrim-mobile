@@ -73,7 +73,7 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
  * appelle directement EXPO_PUBLIC_API_URL.
  *
  * `API_PROXY_TARGET` accepte une URL complète (http ou https, utile pour
- * pointer vers une API déployée, ex. Railway) ; à défaut, `API_PROXY_HOST`/
+ * pointer vers une API déployée, ex. https://api.agrimsarl.ci) ; à défaut, `API_PROXY_HOST`/
  * `API_PROXY_PORT` retombent sur une API locale en clair.
  */
 const API_TARGET = process.env.API_PROXY_TARGET

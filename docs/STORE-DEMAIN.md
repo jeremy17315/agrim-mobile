@@ -24,8 +24,8 @@ Apple Developer pour signer et soumettre.
 
 - Suppression de compte dans l’app (**Mon compte → Supprimer mon compte**) — **obligatoire Apple**
 - Politique de confidentialité et CGU en HTTPS :
-  `https://agrim-api-production.up.railway.app/api/v1/legal/confidentialite`
-  `https://agrim-api-production.up.railway.app/api/v1/legal/cgu`
+  `https://api.agrimsarl.ci/api/v1/legal/confidentialite`
+  `https://api.agrimsarl.ci/api/v1/legal/cgu`
 - Liens depuis l’écran Compte
 - Localisation seulement « when in use », pas de caméra inutile
 - `ITSAppUsesNonExemptEncryption: false`
@@ -38,25 +38,24 @@ Apple Developer pour signer et soumettre.
 
 ### 0. API en production HTTPS
 
-Railway `agrim-api` :
+Hébergement LWS (Passenger, Node.js) — API `api.agrimsarl.ci` :
 
 ```
 NODE_ENV=production
 DATABASE_URL=...
 JWT_ACCESS_SECRET / JWT_REFRESH_SECRET / ENCRYPTION_KEY   # ≥ 32 car., distincts
-PUBLIC_API_URL=https://agrim-api-production.up.railway.app
-SITE_INTEGRATION_URL=https://<URL du site>
+PUBLIC_API_URL=https://api.agrimsarl.ci
+SITE_INTEGRATION_URL=https://agrimsarl.ci/riz-boagni
 SITE_INTEGRATION_TOKEN=<le même que RB_SYNC_TOKEN>
 PUSH_ENABLED=true
-PAYMENT_PROVIDER=cinetpay          # ou laisser simulation + espèces
-CINETPAY_*                         # compte APP, pas celui du site
+PAYMENT_PROVIDER=simulation        # Mobile Money direct : voir docs/PAIEMENT-DIRECT-MANUEL.md
 ```
 
 Vérifie :
 
 ```
-curl https://agrim-api-production.up.railway.app/api/v1/health
-curl https://agrim-api-production.up.railway.app/api/v1/legal/confidentialite
+curl https://api.agrimsarl.ci/api/v1/health
+curl https://api.agrimsarl.ci/api/v1/legal/confidentialite
 ```
 
 ### 1. Play Store (le plus réaliste demain)

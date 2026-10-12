@@ -376,8 +376,9 @@ Ces points sont listés en §13 comme dépendances, pas comme acquis.
 
 ## 11. Déploiement du backend (livrable 11)
 
-Le dépôt contient déjà `render.yaml` et `railway.json` : la mise en service
-suit le chemin existant.
+Hébergement retenu : LWS (Passenger). Les anciens manifestes `render.yaml` et
+`railway.json` ont été retirés du dépôt ; la mise en service suit
+`docs/refonte/07-deploiement-lws-cpanel.md`.
 
 1. **Base** : créer/mettre à jour PostgreSQL, puis `npx prisma migrate deploy`
    (18 migrations, aucune destructive).

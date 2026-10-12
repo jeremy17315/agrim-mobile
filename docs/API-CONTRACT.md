@@ -8,7 +8,7 @@
 
 | | Site (FastAPI) | Application (NestJS) |
 | --- | --- | --- |
-| Base | `https://agrim-zuxe.onrender.com` | `…/api/v1` |
+| Base | `https://agrimsarl.ci/riz-boagni` | `…/api/v1` (API : `https://api.agrimsarl.ci/api/v1`) |
 | Public | navigateur, back office | application Expo |
 | Routes | 145 | 67 |
 | Langue des chemins | **français** (`/api/produits`) | **anglais** (`/products`) |

@@ -163,13 +163,13 @@ dur dans un composant ou un service**.
 # API
 npm run start:dev -w @agrim/api    # développement (watch)
 npm run build -w @agrim/api        # compilation
-npm run test -w @agrim/api         # tests (243)
+npm run test -w @agrim/api         # tests (435, mesurés avec PostgreSQL + seed)
 npm run lint -w @agrim/api         # ESLint (0 warning toléré)
 npm run typecheck -w @agrim/api    # TypeScript strict
 
 # Mobile
 npm run start -w @agrim/mobile     # Metro
-npm run test -w @agrim/mobile      # tests (238)
+npm run test -w @agrim/mobile      # tests (289, mesurés)
 npm run typecheck -w @agrim/mobile
 
 # Base de données

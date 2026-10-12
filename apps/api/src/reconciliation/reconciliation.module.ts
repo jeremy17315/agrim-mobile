@@ -24,7 +24,8 @@ const DEFAULT_INTERVAL = 10;
  *
  * UN POINT DE DÉPLOIEMENT À NE PAS PERDRE
  * ────────────────────────────────────────
- * L'instance Render du plan gratuit s'endort après 15 min sans requête. Un
+ * Un hébergement qui suspend le processus lorsqu'il est inactif (plan gratuit,
+ * Passenger mis en veille) ne fait plus tourner les minuteurs pendant ce temps. Un
  * minuteur ne tourne pas pendant ce sommeil : une commande dont le paiement
  * expire à 3 h du matin ne serait jamais réconciliée si l'on se contentait de
  * l'intervalle. D'où le passage AU DÉMARRAGE — c'est lui qui rattrape tout ce

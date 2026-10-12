@@ -193,7 +193,7 @@ const CATALOGUE = {
   total: PRODUITS.length,
 };
 
-const URL_SITE = 'https://agrim-zuxe.onrender.com';
+const URL_SITE = 'https://agrimsarl.ci/riz-boagni';
 const CATALOGUE_URL = `${URL_SITE}/api/integration/catalogue`;
 
 function reponse(corps: unknown, init: { ok?: boolean; status?: number } = {}) {
