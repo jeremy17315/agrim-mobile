@@ -45,7 +45,7 @@ NODE_ENV=production
 DATABASE_URL=...
 JWT_ACCESS_SECRET / JWT_REFRESH_SECRET / ENCRYPTION_KEY   # ≥ 32 car., distincts
 PUBLIC_API_URL=https://api.agrimsarl.ci
-SITE_INTEGRATION_URL=https://agrimsarl.ci/riz-boagni
+SITE_INTEGRATION_URL=https://agrimsarl.ci/belier
 SITE_INTEGRATION_TOKEN=<le même que RB_SYNC_TOKEN>
 PUSH_ENABLED=true
 PAYMENT_PROVIDER=simulation        # Mobile Money direct : voir docs/PAIEMENT-DIRECT-MANUEL.md

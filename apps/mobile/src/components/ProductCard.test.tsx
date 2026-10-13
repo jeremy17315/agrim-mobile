@@ -116,7 +116,7 @@ describe('ProductCard', () => {
     );
 
     expect(screen.UNSAFE_getByType(Image).props.source).toEqual({
-      uri: 'https://agrimsarl.ci/media/belier-royal.jpg',
+      uri: 'https://agrimsarl.ci/belier/media/belier-royal.jpg',
     });
   });
 

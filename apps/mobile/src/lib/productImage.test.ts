@@ -9,10 +9,10 @@ describe('resolveProductImageUrl', () => {
 
   it('rend affichable un chemin relatif encore présent dans le cache hors ligne', () => {
     expect(resolveProductImageUrl('/media/riz-belier.jpg')).toBe(
-      'https://agrimsarl.ci/media/riz-belier.jpg',
+      'https://agrimsarl.ci/belier/media/riz-belier.jpg',
     );
     expect(resolveProductImageUrl('media/riz-belier.jpg')).toBe(
-      'https://agrimsarl.ci/media/riz-belier.jpg',
+      'https://agrimsarl.ci/belier/media/riz-belier.jpg',
     );
   });
 
@@ -22,5 +22,20 @@ describe('resolveProductImageUrl', () => {
     );
     expect(resolveProductImageUrl(null)).toBeNull();
     expect(resolveProductImageUrl('   ')).toBeNull();
+  });
+
+  it('garde le sous-dossier du site pour un chemin relatif', () => {
+    expect(resolveProductImageUrl('/media/riz-belier.jpg')).toBe(
+      'https://agrimsarl.ci/belier/media/riz-belier.jpg',
+    );
+    expect(resolveProductImageUrl('media/riz-belier.jpg')).toBe(
+      'https://agrimsarl.ci/belier/media/riz-belier.jpg',
+    );
+  });
+
+  it('ne double pas le sous-dossier si le site l\'a déjà inclus', () => {
+    expect(resolveProductImageUrl('/belier/media/riz-belier.jpg')).toBe(
+      'https://agrimsarl.ci/belier/media/riz-belier.jpg',
+    );
   });
 });

@@ -13,7 +13,7 @@
       },
       "env": {
         "EXPO_PUBLIC_API_URL": "https://api.agrimsarl.ci/api/v1",
-        "EXPO_PUBLIC_SITE_URL": "https://agrimsarl.ci"
+        "EXPO_PUBLIC_SITE_URL": "https://agrimsarl.ci/belier"
       }
     },
     "development": {
@@ -32,7 +32,7 @@
       },
       "env": {
         "EXPO_PUBLIC_API_URL": "https://api.agrimsarl.ci/api/v1",
-        "EXPO_PUBLIC_SITE_URL": "https://agrimsarl.ci"
+        "EXPO_PUBLIC_SITE_URL": "https://agrimsarl.ci/belier"
       }
     },
     "production": {
@@ -43,7 +43,7 @@
       },
       "env": {
         "EXPO_PUBLIC_API_URL": "https://api.agrimsarl.ci/api/v1",
-        "EXPO_PUBLIC_SITE_URL": "https://agrimsarl.ci"
+        "EXPO_PUBLIC_SITE_URL": "https://agrimsarl.ci/belier"
       }
     }
   },
