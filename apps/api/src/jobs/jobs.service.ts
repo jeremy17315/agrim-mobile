@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 
 import { CronLocksService, DEFAULT_LOCK_TTL_SECONDS } from '../common/cron/cron-locks.service';
+import { CatalogSyncService } from '../catalog-sync/catalog-sync.service';
 import { ReconciliationService } from '../reconciliation/reconciliation.service';
 import { drainOutbox } from './outbox-drain';
 
@@ -52,6 +53,18 @@ export class JobsService {
     // Filet de rattrapage de la diffusion : tout événement que le drain
     // post-commit n'a pas pu traiter (processus recyclé, panne des canaux,
     // back-off en cours) est repris ici, à la cadence du cron.
+    // Recopie du catalogue depuis le site. Le setInterval ne tourne pas quand
+    // le processus dort (cPanel/Passenger) : ce job est le vrai mécanisme.
+    'catalog-sync': {
+      ttlSeconds: 300,
+      run: async () => {
+        const rapport = await this.catalogSync.sync();
+        return rapport.ok
+          ? `catalogue synchronisé en ${rapport.durationMs} ms`
+          : `catalogue NON synchronisé : ${rapport.errors.join(' ; ') || 'erreur inconnue'}`;
+      },
+    },
+
     'outbox-drain': {
       ttlSeconds: 120,
       run: async () => {
@@ -67,6 +80,7 @@ export class JobsService {
   constructor(
     private readonly locks: CronLocksService,
     private readonly reconciliation: ReconciliationService,
+    private readonly catalogSync: CatalogSyncService,
   ) {}
 
   /**

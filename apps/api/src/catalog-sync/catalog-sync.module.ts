@@ -7,6 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 
 import { CatalogSyncController } from './catalog-sync.controller';
+import { IntegrationController } from './integration.controller';
 import { CatalogSyncService } from './catalog-sync.service';
 
 /**
@@ -29,7 +30,7 @@ import { CatalogSyncService } from './catalog-sync.service';
  *     servir son catalogue local même quand le site est injoignable.
  */
 @Module({
-  controllers: [CatalogSyncController],
+  controllers: [CatalogSyncController, IntegrationController],
   providers: [CatalogSyncService],
   exports: [CatalogSyncService],
 })

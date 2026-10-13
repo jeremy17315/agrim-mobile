@@ -622,7 +622,23 @@ export class CatalogSyncService {
    *   leur stock, écraser l'un par l'autre effacerait des ventes. À passer à
    *   vrai le jour où le site devient aussi le maître du stock.
    */
+  /**
+   * Synchronisation en cours. Un second appel (cron, déclenchement immédiat
+   * du site, minuteur) REJOINT celle qui tourne au lieu d'en lancer une
+   * autre : deux recopies simultanées se disputeraient les mêmes lignes.
+   */
+  private enCours?: Promise<SyncReport>;
+
   async sync(options: { syncStock?: boolean } = {}): Promise<SyncReport> {
+    if (!this.enCours) {
+      this.enCours = this.recopier(options).finally(() => {
+        this.enCours = undefined;
+      });
+    }
+    return this.enCours;
+  }
+
+  private async recopier(options: { syncStock?: boolean }): Promise<SyncReport> {
     const debut = Date.now();
     const rapport: SyncReport = {
       ok: false,
