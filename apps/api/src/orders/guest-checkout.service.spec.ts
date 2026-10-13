@@ -5,6 +5,7 @@ jest.mock('./orders.service', () => ({
   OrdersService: class OrdersService {},
 }));
 
+import type { NotificationsService } from '../notifications/notifications.service';
 import { BadRequestException } from '@nestjs/common';
 
 import { GuestCheckoutService } from './guest-checkout.service';
@@ -42,8 +43,13 @@ function makeHarness() {
     issue: jest.fn().mockReturnValue('guest-payment-capability'),
   } as unknown as GuestPaymentTokenService;
 
+  const notifications = {
+    attachGuestDevice: jest.fn().mockResolvedValue(undefined),
+  } as unknown as NotificationsService;
+
   return {
-    service: new GuestCheckoutService(prisma, orders, paymentTokens),
+    service: new GuestCheckoutService(prisma, orders, paymentTokens, notifications),
+    notifications,
     prisma,
     orders,
     paymentTokens,

@@ -60,7 +60,12 @@ export class NotificationsController {
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: RegisterTokenDto,
   ) {
-    return this.notifications.registerToken(user.id, dto.token, dto.platform);
+    return this.notifications.registerToken(
+      user.id,
+      dto.token,
+      dto.platform,
+      dto.installationId,
+    );
   }
 
   @Delete('tokens')
@@ -69,6 +74,6 @@ export class NotificationsController {
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: RegisterTokenDto,
   ) {
-    return this.notifications.removeToken(user.id, dto.token);
+    return this.notifications.removeToken(user.id, dto.token, dto.installationId);
   }
 }

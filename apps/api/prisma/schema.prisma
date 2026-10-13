@@ -167,6 +167,8 @@ enum NotificationType {
   /// Campagne commerciale rédigée dans l'administration.
   PROMOTION
   LOW_STOCK
+  /// Prête au retrait en point de vente.
+  ORDER_READY_FOR_PICKUP
 }
 
 /// Statut d'une déclaration de paiement déposée par un client.

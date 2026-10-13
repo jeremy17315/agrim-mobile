@@ -28,6 +28,25 @@ const SMS_WORTHY = new Set<NotificationType>([
   'PAYMENT_FAILED',
 ]);
 
+/** Canal Android : les promotions ont le leur, que le client peut couper. */
+function channelOf(type?: NotificationType): string {
+  return type === 'PROMOTION' ? 'promotions' : 'commandes';
+}
+
+/**
+ * Où mène un toucher. Les commandes ouvrent la page de confirmation, publique :
+ * un client sans compte doit pouvoir la rouvrir.
+ */
+function destinationOf(
+  type: NotificationType | undefined,
+  reference: string | undefined,
+): { target: string; value: string } {
+  if (reference && type && type !== 'PROMOTION' && type !== 'LOW_STOCK') {
+    return { target: 'commande', value: reference };
+  }
+  return { target: 'information', value: '' };
+}
+
 /**
  * Notifications.
  *
@@ -234,8 +253,9 @@ export class NotificationsService {
     title: string,
     body: string,
     data: Record<string, string>,
+    options: { channelId?: string; imageUrl?: string } = {},
   ) {
-    return this.dispatchPush(tokens, title, body, data);
+    return this.dispatchPush(tokens, title, body, data, options);
   }
 
   /** Écrit une ligne du journal unifié des envois (jamais bloquant). */
@@ -281,10 +301,17 @@ export class NotificationsService {
     title: string,
     body: string,
     data: Record<string, string>,
-  ): Promise<{ sent: number; error?: string }> {
-    if (tokens.length === 0) return { sent: 0 };
+    options: { channelId?: string; imageUrl?: string } = {},
+  ): Promise<{ sent: number; invalid: number; error?: string }> {
+    if (tokens.length === 0) return { sent: 0, invalid: 0 };
     try {
-      const result = await this.push.send({ tokens, title, body, data });
+      const result = await this.push.send({
+        tokens,
+        title,
+        body,
+        data,
+        ...options,
+      });
       if (result.invalidTokens.length > 0) {
         await this.prisma.db.pushDevice
           .updateMany({
@@ -296,10 +323,14 @@ export class NotificationsService {
           .deleteMany({ where: { token: { in: result.invalidTokens } } })
           .catch(() => undefined);
       }
-      return { sent: result.sent };
+      return { sent: result.sent, invalid: result.invalidTokens.length };
     } catch {
       this.logger.warn('Service de notifications injoignable.');
-      return { sent: 0, error: 'Service de notifications injoignable.' };
+      return {
+        sent: 0,
+        invalid: 0,
+        error: 'Service de notifications injoignable.',
+      };
     }
   }
 
@@ -350,27 +381,26 @@ export class NotificationsService {
   ) {
     let pushed = 0;
     try {
-      const tokens = await this.prisma.db.pushToken.findMany({
-        where: { userId },
-        select: { token: true },
-      });
+      // Les deux tables : `PushDevice` (installation, rattachée au compte à la
+      // connexion ou à la commande invitée) et `PushToken` (historique compte).
+      const [devices, legacy] = await Promise.all([
+        this.prisma.db.pushDevice.findMany({
+          where: { userId, isActive: true },
+          select: { token: true },
+        }),
+        this.prisma.db.pushToken.findMany({
+          where: { userId },
+          select: { token: true },
+        }),
+      ]);
+      const tokens = [...new Set([...devices, ...legacy].map((row) => row.token))];
 
       if (tokens.length > 0) {
-        const result = await this.push.send({
-          tokens: tokens.map((t) => t.token),
-          title,
-          body,
-          data: reference ? { reference } : undefined,
-        });
+        const result = await this.dispatchPush(tokens, title, body, {
+          reference: reference ?? '',
+          ...destinationOf(type, reference),
+        }, { channelId: channelOf(type) });
         pushed = result.sent;
-
-        // Jetons morts (application désinstallée) : les garder ferait grossir
-        // la table et ralentirait chaque envoi.
-        if (result.invalidTokens.length > 0) {
-          await this.prisma.db.pushToken.deleteMany({
-            where: { token: { in: result.invalidTokens } },
-          });
-        }
       }
     } catch {
       this.logger.warn('Notification non distribuée.');
@@ -490,18 +520,130 @@ export class NotificationsService {
    * l'`upsert` le réattribue au dernier utilisateur connecté plutôt que de
    * laisser deux comptes recevoir les mêmes notifications.
    */
-  async registerToken(userId: string, token: string, platform: string) {
+  async registerToken(
+    userId: string,
+    token: string,
+    platform: string,
+    installationId?: string,
+  ) {
     await this.prisma.db.pushToken.upsert({
       where: { token },
       create: { userId, token, platform },
       update: { userId, platform },
     });
+    if (installationId) {
+      await this.linkDeviceToUser(installationId, userId);
+    }
     return { registered: true };
   }
 
   /** Retire le jeton, typiquement à la déconnexion. */
-  async removeToken(userId: string, token: string) {
+  async removeToken(userId: string, token: string, installationId?: string) {
     await this.prisma.db.pushToken.deleteMany({ where: { userId, token } });
+    if (installationId) {
+      // L'appareil reste joignable en mode invité (commandes sans compte), mais
+      // ne doit plus recevoir les notifications du compte déconnecté.
+      await this.prisma.db.pushDevice.updateMany({
+        where: { installationId, userId },
+        data: { userId: null },
+      });
+    }
     return { removed: true };
+  }
+
+  /* ------------------------- Appareils sans compte ----------------------- */
+
+  /**
+   * Enregistre (ou renouvelle) un appareil identifié par son installation.
+   *
+   * Aucun compte requis : c'est le cas du client qui n'a commandé que sans
+   * compte. Le jeton est réaffecté à l'installation qui le présente en dernier
+   * (réinstallation, changement de téléphone).
+   */
+  async registerDevice(input: {
+    installationId: string;
+    token: string;
+    platform: string;
+  }) {
+    await this.prisma.db.pushDevice.deleteMany({
+      where: {
+        token: input.token,
+        installationId: { not: input.installationId },
+      },
+    });
+    await this.prisma.db.pushDevice.upsert({
+      where: { installationId: input.installationId },
+      create: {
+        installationId: input.installationId,
+        token: input.token,
+        platform: input.platform,
+        isActive: true,
+        // Opt-in : pas de promotion sans choix explicite du client.
+        promoOptIn: false,
+        lastSeenAt: new Date(),
+      },
+      update: {
+        token: input.token,
+        platform: input.platform,
+        isActive: true,
+        lastSeenAt: new Date(),
+      },
+    });
+    return { registered: true };
+  }
+
+  /** Réglage « Recevoir les promotions » : appliqué à l'envoi, pas seulement affiché. */
+  async setPromoPreference(installationId: string, promoOptIn: boolean) {
+    const result = await this.prisma.db.pushDevice.updateMany({
+      where: { installationId },
+      data: { promoOptIn },
+    });
+    return { updated: result.count };
+  }
+
+  /**
+   * Rattache un appareil à un compte connecté.
+   * Sans effet si l'installation est inconnue — l'appareil se réenregistrera.
+   */
+  async linkDeviceToUser(installationId: string, userId: string) {
+    await this.prisma.db.pushDevice.updateMany({
+      where: { installationId },
+      data: { userId },
+    });
+  }
+
+  /**
+   * Rattache l'appareil d'un client invité à l'utilisateur fantôme de sa
+   * commande, et au numéro saisi. Dès lors, `notifyOrderStatus` le joint.
+   */
+  async attachGuestDevice(installationId: string, userId: string, phone: string) {
+    await this.prisma.db.pushDevice.updateMany({
+      where: { installationId },
+      data: { userId, phone: phone.replace(/[\s.-]/g, '') },
+    });
+  }
+
+  /**
+   * Purge des appareils morts (tâche planifiée).
+   *  - Désactive ceux qui ne se sont pas réenregistrés depuis 90 jours.
+   *  - Supprime ceux désactivés depuis plus de 30 jours.
+   * Aucun envoi n'est tenté vers un appareil désactivé.
+   */
+  async purgeStaleDevices(now: Date = new Date()) {
+    const day = 24 * 60 * 60 * 1000;
+    const deactivated = await this.prisma.db.pushDevice.updateMany({
+      where: {
+        isActive: true,
+        lastSeenAt: { lt: new Date(now.getTime() - 90 * day) },
+      },
+      data: { isActive: false },
+    });
+    const deleted = await this.prisma.db.pushDevice.deleteMany({
+      where: {
+        isActive: false,
+        updatedAt: { lt: new Date(now.getTime() - 30 * day) },
+      },
+    });
+    return { deactivated: deactivated.count, deleted: deleted.count };
   }
 }

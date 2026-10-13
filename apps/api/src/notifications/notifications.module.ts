@@ -1,8 +1,11 @@
 import { Global, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
+import { CampaignsController } from './campaigns.controller';
+import { CampaignsService } from './campaigns.service';
 import { NotificationsController } from './notifications.controller';
 import { NotificationsService } from './notifications.service';
+import { PushDevicesController } from './push-devices.controller';
 import {
   ExpoPushProvider,
   NoopPushProvider,
@@ -23,9 +26,10 @@ import { NoopSmsProvider, SiteSmsProvider, SMS_PROVIDER } from './sms.provider';
  */
 @Global()
 @Module({
-  controllers: [NotificationsController],
+  controllers: [NotificationsController, PushDevicesController, CampaignsController],
   providers: [
     NotificationsService,
+    CampaignsService,
     {
       provide: PUSH_PROVIDER,
       inject: [ConfigService],

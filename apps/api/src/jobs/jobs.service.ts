@@ -9,6 +9,7 @@ import { CronLocksService, DEFAULT_LOCK_TTL_SECONDS } from '../common/cron/cron-
 import { CatalogSyncService } from '../catalog-sync/catalog-sync.service';
 import { ReconciliationService } from '../reconciliation/reconciliation.service';
 import { drainOutbox } from './outbox-drain';
+import { NotificationsService } from '../notifications/notifications.service';
 
 /** Résumé retourné au cron (et visible dans `cron_locks.lastStatus`). */
 export interface JobSummary {
@@ -65,6 +66,15 @@ export class JobsService {
       },
     },
 
+    // Appareils morts : désactivés après 90 jours sans réenregistrement,
+    // supprimés 30 jours plus tard. Idempotent.
+    'push-purge': {
+      ttlSeconds: 300,
+      run: async () => {
+        const { deactivated, deleted } = await this.notifications.purgeStaleDevices();
+        return `appareils : ${deactivated} désactivé(s), ${deleted} supprimé(s)`;
+      },
+    },
     'outbox-drain': {
       ttlSeconds: 120,
       run: async () => {
@@ -81,6 +91,7 @@ export class JobsService {
     private readonly locks: CronLocksService,
     private readonly reconciliation: ReconciliationService,
     private readonly catalogSync: CatalogSyncService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /**

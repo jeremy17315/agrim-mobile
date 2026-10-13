@@ -1,13 +1,28 @@
 import { COMPANY } from '@agrim/contracts';
 import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
-import { Alert, Linking, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import {
+  Alert,
+  Linking,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { useUnreadCount } from '@/api/notifications';
+import { setPromoPreference, useUnreadCount } from '@/api/notifications';
 import { Button, Card, Icon, Text, type IconName } from '@/components/ui';
 import { callCompany } from '@/lib/contact';
 import { formatPhone } from '@/lib/format';
+import {
+  getInstallationId,
+  getPromoOptIn,
+  setPromoOptInLocal,
+} from '@/lib/pushInstallation';
+import { askForOrderNotifications } from '@/lib/usePushRegistration';
 import { useAuthStore } from '@/store/auth';
 import { palette, radius, spacing } from '@/theme/tokens';
 
@@ -129,6 +144,14 @@ export default function CompteScreen() {
                   onPress={() => router.push('/direction/promotions')}
                 />
               ) : null}
+              {user.role === 'ADMIN' ? (
+                <MenuRow
+                  icon="bell"
+                  label="Campagnes"
+                  hint="Envoyer une notification aux clients"
+                  onPress={() => router.push('/direction/campagnes')}
+                />
+              ) : null}
               {user.role === 'PRODUCTEUR' ? (
                 <MenuRow
                   icon="sprout"
@@ -248,6 +271,7 @@ export default function CompteScreen() {
             />
           </View>
         </Card>
+        <PromoSetting />
       </ScrollView>
     </View>
   );
@@ -334,3 +358,41 @@ const styles = StyleSheet.create({
   },
   contact: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
 });
+
+/**
+ * Réglage « Recevoir les promotions ». Le serveur ne cible que les appareils
+ * qui l'ont activé : la valeur est donc envoyée, pas seulement stockée.
+ * L'activer demande d'abord la permission de notifier, avec son motif.
+ */
+function PromoSetting() {
+  const [enabled, setEnabled] = useState(false);
+
+  useEffect(() => {
+    void getPromoOptIn().then(setEnabled);
+  }, []);
+
+  const change = async (next: boolean) => {
+    setEnabled(next);
+    await setPromoOptInLocal(next);
+    if (next) await askForOrderNotifications();
+    await setPromoPreference(await getInstallationId(), next).catch(() => undefined);
+  };
+
+  return (
+    <Card style={styles.menuRow}>
+      <View style={styles.flex}>
+        <Text variant="bodyStrong">Recevoir les promotions</Text>
+        <Text variant="caption" color="muted">
+          Offres et nouveautés AGRIM, sur cet appareil. Vos commandes restent
+          suivies dans tous les cas.
+        </Text>
+      </View>
+      <Switch
+        value={enabled}
+        onValueChange={change}
+        trackColor={{ true: palette.green, false: palette.line }}
+        accessibilityLabel="Recevoir les promotions"
+      />
+    </Card>
+  );
+}

@@ -38,6 +38,10 @@ export const NOTIFICATION_TEMPLATES: Record<
     title: 'Commande prête',
     body: 'Votre commande {reference} est prête. Un livreur va la prendre en charge.',
   },
+  ORDER_READY_FOR_PICKUP: {
+    title: 'Commande prête au retrait',
+    body: 'Votre commande {reference} est prête. Vous pouvez venir la retirer.',
+  },
   ORDER_OUT_FOR_DELIVERY: {
     title: 'Livreur en route',
     body: 'Votre commande {reference} est en route. Suivez le livreur dans l’application.',

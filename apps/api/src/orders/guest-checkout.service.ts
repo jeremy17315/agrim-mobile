@@ -6,6 +6,7 @@ import { phoneSchema } from '@agrim/contracts';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CreateOrderDto } from './dto/create-order.dto';
 import type { CreateGuestOrderDto } from './dto/create-guest-order.dto';
+import { NotificationsService } from '../notifications/notifications.service';
 import { normalizeOrderPayment } from '../payments/resolve-method';
 import { OrdersService } from './orders.service';
 import { GuestPaymentTokenService } from './guest-payment-token.service';
@@ -25,6 +26,7 @@ export class GuestCheckoutService {
     private readonly prisma: PrismaService,
     private readonly orders: OrdersService,
     private readonly paymentTokens: GuestPaymentTokenService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async create(dto: CreateGuestOrderDto) {
@@ -123,6 +125,13 @@ export class GuestCheckoutService {
       });
       if (owner?.userId !== guest.id) {
         await this.prisma.db.user.delete({ where: { id: guest.id } });
+      } else if (dto.installationId) {
+        // L'appareil du client rejoint sa commande : les mises à jour de statut
+        // le joindront, même application fermée et sans compte. Un échec ici ne
+        // remet jamais la commande en cause.
+        await this.notifications
+          .attachGuestDevice(dto.installationId, guest.id, phone)
+          .catch(() => undefined);
       }
 
       return this.withPaymentAccess(created);

@@ -15,6 +15,10 @@ export type PushMessage = {
   body: string;
   /** Charge utile de navigation (référence de commande, écran cible). */
   data?: Record<string, string>;
+  /** Canal Android : « commandes » ou « promotions ». Ignoré hors Android. */
+  channelId?: string;
+  /** Image HTTPS facultative (campagnes). */
+  imageUrl?: string;
 };
 
 export type PushResult = {
@@ -73,6 +77,10 @@ export class ExpoPushProvider extends PushProvider {
               data: message.data,
               sound: 'default',
               priority: 'high',
+              ...(message.channelId ? { channelId: message.channelId } : {}),
+              ...(message.imageUrl
+                ? { richContent: { image: message.imageUrl } }
+                : {}),
             })),
           ),
         });

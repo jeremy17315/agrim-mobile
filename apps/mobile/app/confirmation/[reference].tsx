@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useGuestPaymentStatus } from '@/api/payments';
 import { CheckoutProgress } from '@/components/CheckoutProgress';
+import { OrderNotificationsPrompt } from '@/components/OrderNotificationsPrompt';
 import { Button, Card, Icon, Text } from '@/components/ui';
 import {
   clearGuestPaymentAccess,
@@ -104,6 +105,7 @@ export default function ConfirmationScreen() {
         {intro}
       </Text>
 
+      <OrderNotificationsPrompt />
       <Card style={styles.orderCard}>
         <View style={styles.referenceRow}>
           <View>

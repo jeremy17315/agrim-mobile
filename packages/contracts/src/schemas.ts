@@ -288,6 +288,11 @@ export const guestOrderSchema = z
     phone: phoneSchema,
     /** Ville, zone ou repère de livraison saisi simplement par le client. */
     deliveryLocation: z.string().trim().min(2).max(255),
+    /** Identifiant d'installation de l'appareil (aléatoire, non personnel). */
+    installationId: z
+      .string()
+      .regex(/^[A-Za-z0-9-]{16,64}$/)
+      .optional(),
     items: z.array(createOrderItemSchema).min(1).max(50),
     /**
      * Même choix que le site, sans imposer la création d'un compte.

@@ -102,4 +102,11 @@ export class CreateGuestOrderDto {
   @IsString()
   @MaxLength(500)
   note?: string;
+
+  /** Identifiant d'installation de l'appareil : permet les notifications de suivi. */
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[A-Za-z0-9-]{16,64}$/)
+  installationId?: string;
 }

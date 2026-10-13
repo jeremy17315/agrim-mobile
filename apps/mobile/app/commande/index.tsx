@@ -21,6 +21,7 @@ import { saveGuestPaymentAccess } from '@/lib/guestPayment';
 import { useIsOnline } from '@/lib/network';
 import { useCartStore, useCartTotals } from '@/store/cart';
 import { palette, spacing } from '@/theme/tokens';
+import { getInstallationId } from '@/lib/pushInstallation';
 
 /**
  * Deux façons de régler, aucune ne demande de compte : à la livraison, ou par
@@ -133,6 +134,7 @@ export default function CommandeScreen() {
         paymentMethodCode: selectedMethod?.code,
         codePromo: codePromo.trim() ? codePromo.trim() : undefined,
         idempotencyKey: idempotencyKey.current,
+        installationId: await getInstallationId(),
       });
 
       // Le panier est vidé uniquement quand la commande existe. Pour le

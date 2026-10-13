@@ -81,20 +81,58 @@ export function useMarkNotificationsRead() {
  * vie de la session (connexion, déconnexion), pas par le rendu d'un écran.
  */
 
-export function registerPushToken(token: string, platform: 'ios' | 'android') {
+/**
+ * Enregistrement d'appareil SANS compte : l'appareil est joignable dès la
+ * première commande invitée. Route publique, identifiée par l'installation.
+ */
+export function registerDevice(input: {
+  installationId: string;
+  token: string;
+  platform: 'ios' | 'android';
+}) {
+  return apiRequest({
+    path: '/notifications/devices',
+    method: 'POST',
+    body: input,
+    schema: z.object({ registered: z.boolean() }),
+    isPublic: true,
+  });
+}
+
+export function setPromoPreference(installationId: string, promoOptIn: boolean) {
+  return apiRequest({
+    path: '/notifications/devices/preferences',
+    method: 'PATCH',
+    body: { installationId, promoOptIn },
+    schema: z.object({ updated: z.number().int() }),
+    isPublic: true,
+  });
+}
+
+/** Connexion : rattache l'appareil au compte. */
+export function registerPushToken(
+  token: string,
+  platform: 'ios' | 'android',
+  installationId?: string,
+) {
   return apiRequest({
     path: '/notifications/tokens',
     method: 'POST',
-    body: { token, platform },
+    body: { token, platform, installationId },
     schema: z.object({ registered: z.boolean() }),
   });
 }
 
-export function removePushToken(token: string, platform: 'ios' | 'android') {
+/** Déconnexion : détache l'appareil du compte (il reste joignable en invité). */
+export function removePushToken(
+  token: string,
+  platform: 'ios' | 'android',
+  installationId?: string,
+) {
   return apiRequest({
     path: '/notifications/tokens',
     method: 'DELETE',
-    body: { token, platform },
+    body: { token, platform, installationId },
     schema: z.object({ removed: z.boolean() }),
   });
 }

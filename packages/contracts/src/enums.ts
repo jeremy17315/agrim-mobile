@@ -282,6 +282,8 @@ export const NOTIFICATION_TYPES = [
   'ORDER_CONFIRMED',
   'ORDER_PREPARING',
   'ORDER_READY',
+  /** Prête au retrait en point de vente (pas encore de mode « retrait » en base). */
+  'ORDER_READY_FOR_PICKUP',
   'ORDER_OUT_FOR_DELIVERY',
   'ORDER_DELIVERED',
   'ORDER_CANCELLED',

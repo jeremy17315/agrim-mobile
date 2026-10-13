@@ -215,6 +215,10 @@ const PRESENTATION: Record<
     icon: 'package-check',
     tint: { bg: palette.goldSoft, icon: 'gold' },
   },
+  ORDER_READY_FOR_PICKUP: {
+    icon: 'package-check',
+    tint: { bg: palette.goldSoft, icon: 'gold' },
+  },
   ORDER_OUT_FOR_DELIVERY: {
     icon: 'truck',
     tint: { bg: palette.greenSoft, icon: 'green' },
