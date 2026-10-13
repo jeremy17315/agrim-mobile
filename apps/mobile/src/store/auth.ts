@@ -1,4 +1,6 @@
 import { userSchema, type User } from '@agrim/contracts';
+
+import { detachPushDevice } from '@/lib/pushInstallation';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 import { create } from 'zustand';
@@ -234,6 +236,9 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
 
   signOut: async () => {
     const { refreshToken } = get();
+    // L'appareil est détaché AVANT l'effacement de la session : la requête
+    // doit encore être authentifiée, sinon le compte précédent resterait joint.
+    await detachPushDevice();
     // On efface localement d'abord : même si le serveur est injoignable,
     // l'utilisateur doit être déconnecté sur l'appareil.
     set({ user: null, accessToken: null, refreshToken: null });

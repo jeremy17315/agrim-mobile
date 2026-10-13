@@ -2,14 +2,13 @@ import Constants from 'expo-constants';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import { useRouter, type Href } from 'expo-router';
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { Platform } from 'react-native';
 
 import {
   setPromoPreference,
   registerDevice,
   registerPushToken,
-  removePushToken,
 } from '@/api/notifications';
 import { useAuthStore } from '@/store/auth';
 
@@ -18,6 +17,7 @@ import { pushTargetRoute } from './pushRoute';
 import {
   getInstallationId,
   getPromoOptIn,
+  rememberPushToken,
 } from './pushInstallation';
 
 /**
@@ -139,22 +139,6 @@ function routeFromResponse(
 export function usePushRegistration() {
   const router = useRouter();
   const userId = useAuthStore((s) => s.user?.id ?? null);
-  const registeredToken = useRef<string | null>(null);
-  const wasLoggedIn = useRef(false);
-
-  // Déconnexion : détacher l'appareil du compte qui vient de partir.
-  useEffect(() => {
-    const leaving = wasLoggedIn.current && userId === null;
-    wasLoggedIn.current = userId !== null;
-    const token = registeredToken.current;
-    if (leaving && token) {
-      void getInstallationId()
-        .then((installationId) =>
-          removePushToken(token, platformOf(), installationId),
-        )
-        .catch(() => undefined);
-    }
-  }, [userId]);
 
   // Enregistrement au fil de la session, sans demander de permission.
   useEffect(() => {
@@ -163,7 +147,7 @@ export function usePushRegistration() {
       try {
         const token = await registerDeviceIfGranted();
         if (!token || cancelled) return;
-        registeredToken.current = token;
+        rememberPushToken(token);
         if (userId !== null) {
           const installationId = await getInstallationId();
           await registerPushToken(token, platformOf(), installationId);
