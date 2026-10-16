@@ -913,6 +913,7 @@ export class DirectPaymentsService {
             beneficiaryName: true,
             instructions: true,
             ussdTemplate: true,
+            qrPayload: true,
             isActive: true,
           },
         })
@@ -926,6 +927,7 @@ export class DirectPaymentsService {
         beneficiaryName: row.beneficiaryName,
         instructions: row.instructions,
         ussdTemplate: row.ussdTemplate,
+        qrPayload: row.qrPayload,
       };
     }
 

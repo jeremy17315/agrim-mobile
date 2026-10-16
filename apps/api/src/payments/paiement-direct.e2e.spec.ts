@@ -187,6 +187,85 @@ describe('Paiement direct manuel (e2e)', () => {
     expect(methods).toHaveLength(1);
   });
 
+  it('publie le QR marchand renseigné par AGRIM, et le sert au client', async () => {
+    const qr = 'https://pay.wave.com/m/M_agrim_test/c/ci/';
+
+    // AGRIM colle le contenu du QR officiel — espaces autour compris : ils
+    // sont nettoyés, comme pour le numéro de réception.
+    const enregistrement = await server()
+      .post(`${prefix}/management/payments/methods`)
+      .set(auth(adminToken))
+      .send({
+        code: 'ORANGE_MONEY',
+        operatorName: 'Orange Money (test)',
+        receivingNumber: '0700000000',
+        beneficiaryName: 'AGRIM SARL (test)',
+        qrPayload: `  ${qr}  `,
+        isActive: true,
+      });
+    expect(enregistrement.status).toBe(201);
+    const orange = (
+      enregistrement.body as { code: string; qrPayload: string | null }[]
+    ).find((m) => m.code === 'ORANGE_MONEY');
+    expect(orange?.qrPayload).toBe(qr);
+
+    // Le client le reçoit par la route publique, sans compte.
+    const publique = await server().get(`${prefix}/payments/methods`);
+    const servie = (
+      publique.body as { methods: { code: string; qrPayload: string | null }[] }
+    ).methods.find((m) => m.code === 'ORANGE_MONEY');
+    expect(servie?.qrPayload).toBe(qr);
+
+    // …et dans les instructions de SA commande : c'est là qu'il scanne.
+    const commande = await creerCommandeDirecte();
+    expect(commande.status).toBe(201);
+    const reference = (commande.body as { reference: string }).reference;
+    const instructions = await server()
+      .get(`${prefix}/payments/orders/${reference}/instructions`)
+      .set(auth(clientToken));
+    expect(instructions.status).toBe(200);
+    expect(
+      (instructions.body as { method: { qrPayload: string | null } }).method
+        .qrPayload,
+    ).toBe(qr);
+  });
+
+  it('retire le QR publié quand AGRIM vide le champ, et refuse un QR trop long', async () => {
+    const efface = await server()
+      .post(`${prefix}/management/payments/methods`)
+      .set(auth(adminToken))
+      .send({
+        code: 'ORANGE_MONEY',
+        operatorName: 'Orange Money (test)',
+        receivingNumber: '0700000000',
+        qrPayload: '   ',
+      });
+    expect(efface.status).toBe(201);
+    const orange = (
+      efface.body as { code: string; qrPayload: string | null }[]
+    ).find((m) => m.code === 'ORANGE_MONEY');
+    // Un champ vidé RETIRE le QR : l'application n'affiche plus rien, plutôt
+    // qu'un carré vide ou un contenu périmé.
+    expect(orange?.qrPayload).toBeNull();
+
+    const trop = await server()
+      .post(`${prefix}/management/payments/methods`)
+      .set(auth(adminToken))
+      .send({
+        code: 'ORANGE_MONEY',
+        operatorName: 'Orange Money (test)',
+        receivingNumber: '0700000000',
+        qrPayload: 'A'.repeat(1001),
+      });
+    expect(trop.status).toBe(400);
+
+    const publique = await server().get(`${prefix}/payments/methods`);
+    const servie = (
+      publique.body as { methods: { code: string; qrPayload: string | null }[] }
+    ).methods.find((m) => m.code === 'ORANGE_MONEY');
+    expect(servie?.qrPayload).toBeNull();
+  });
+
   it('refuse une commande directe dont le moyen n’est pas configuré', async () => {
     const res = await creerCommandeDirecte({ code: 'OPERATEUR_INCONNU' });
     expect(res.status).toBe(400);

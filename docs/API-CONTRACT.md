@@ -142,16 +142,31 @@ Erreurs propres : `INSUFFICIENT_STOCK` (409, avec le détail par ligne),
 
 ### Paiements — `/payments`
 
+Le transfert direct manuel est le seul chemin de paiement en ligne depuis le
+11 octobre 2026 : le client envoie lui-même le montant vers le compte marchand
+d'AGRIM, puis déclare sa transaction, qu'un responsable vérifie.
+
 | Méthode | Chemin | Accès |
 | --- | --- | --- |
-| GET | `/payments/provider` | public |
-| POST | `/payments/orders/:reference/initiate` | — |
-| GET | `/payments/orders/:reference` | — |
+| GET | `/payments/methods` | public — comptes marchands publiés (numéro, bénéficiaire, instructions, `qrPayload`) |
+| GET | `/payments/orders/:reference/instructions` | compte propriétaire |
+| GET | `/payments/guest/orders/:reference/instructions` | **public**, capacité temporaire liée à la référence |
+| POST | `/payments/orders/:reference/declare` | compte propriétaire |
+| POST | `/payments/guest/orders/:reference/declare` | **public**, même capacité |
+| GET | `/management/payments/methods` | `GESTIONNAIRE`, `ADMIN`, `DG` |
+| POST | `/management/payments/methods` | `ADMIN`, `DG` — créer/mettre à jour, `qrPayload` inclus |
+| DELETE | `/management/payments/methods/:id` | `ADMIN`, `DG` — désactive (ne supprime pas) |
+| POST | `/payments/orders/:reference/initiate` | fermé : répond `PAYMENT_NOT_AGGREGATOR` |
 | POST | `/payments/callback/:provider` | **public**, authentifié par signature |
+
+`qrPayload` est le contenu **exact** du QR marchand remis par l'opérateur : il
+est publié tel quel et l'application le réaffiche en QR. `NULL` = aucun QR
+publié, l'application n'en affiche aucun — elle n'en fabrique jamais.
 
 Le webhook est public parce que l'appelant n'a pas de JWT ; son authenticité
 est établie par la signature du fournisseur. Un succès annoncé n'est **jamais
 cru sur parole** : l'API revérifie auprès du fournisseur avant d'encaisser.
+Un paiement déclaré par le client n'est jamais `SUCCEEDED` sans revue humaine.
 
 ### Livraisons — `/deliveries`
 

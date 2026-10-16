@@ -268,6 +268,19 @@ export default function CompteScreen() {
                 Coordonnées, boutiques et questions fréquentes
               </Text>
             </Pressable>
+            {/* Où envoyer l'argent : les comptes marchands MTN, Orange et Wave
+                avec leur QR. Public lui aussi — un invité qui paie sa commande
+                doit pouvoir vérifier le numéro avant de transférer. */}
+            <Pressable
+              onPress={() => router.push('/paiement/moyens')}
+              accessibilityRole="link"
+              hitSlop={8}
+              style={styles.contactLink}
+            >
+              <Text variant="caption" color="green">
+                Payer AGRIM : MTN, Orange, Wave et QR marchand
+              </Text>
+            </Pressable>
           </View>
         </Card>
       </ScrollView>

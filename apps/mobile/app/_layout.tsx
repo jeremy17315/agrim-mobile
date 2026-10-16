@@ -159,6 +159,9 @@ export default function RootLayout() {
                 <Stack.Screen name="commande" />
                 {/* Contact et aide : public, sans compte. */}
                 <Stack.Screen name="contact" />
+                {/* Payer AGRIM : comptes marchands et QR — public lui aussi,
+                    un invité doit pouvoir vérifier où il envoie son argent. */}
+                <Stack.Screen name="paiement/moyens" />
                 <Stack.Screen name="paiement/[reference]" />
                 <Stack.Screen name="confirmation/[reference]" />
 

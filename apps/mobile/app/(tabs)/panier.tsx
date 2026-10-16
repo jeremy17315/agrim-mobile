@@ -165,6 +165,20 @@ export default function PanierScreen() {
           </Text>
         </Pressable>
 
+        {/* Le client qui s'apprête à payer veut savoir SUR QUEL COMPTE il
+            enverra l'argent : les comptes marchands MTN, Orange et Wave et
+            leur QR sont à un geste, sans quitter le panier. */}
+        <Pressable
+          onPress={() => router.push('/paiement/moyens')}
+          accessibilityRole="link"
+          hitSlop={8}
+          style={styles.helpLink}
+        >
+          <Text variant="caption" color="green">
+            Payer AGRIM : comptes MTN, Orange, Wave et QR marchand
+          </Text>
+        </Pressable>
+
         {items.map((item) => (
           <CartLine
             key={item.variantId}

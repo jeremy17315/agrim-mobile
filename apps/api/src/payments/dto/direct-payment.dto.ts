@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { PAYMENT_DECLARATION_LIMITS } from '@agrim/contracts';
+import { PAYMENT_DECLARATION_LIMITS, PAYMENT_METHOD_LIMITS } from '@agrim/contracts';
 import { Type } from 'class-transformer';
 import {
   IsBoolean,
@@ -61,6 +61,16 @@ export class UpsertPaymentMethodDto {
   @IsString()
   @MaxLength(200)
   ussdTemplate?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Contenu exact du QR marchand de l’opérateur, réaffiché tel quel par l’application. Publier un contenu erroné enverrait l’argent du client à un inconnu.',
+    example: 'https://pay.wave.com/m/M_agrim_demo/c/ci/',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(PAYMENT_METHOD_LIMITS.qrPayloadMax)
+  qrPayload?: string;
 
   @ApiPropertyOptional()
   @IsOptional()

@@ -50,7 +50,31 @@ export interface DirectPaymentMethod {
    * numéro à recopier — elle ne prétend pas déclencher le transfert.
    */
   ussdTemplate: string | null;
+  /**
+   * Contenu EXACT du QR marchand de l'opérateur, quand AGRIM l'a publié.
+   *
+   * C'est le même texte que celui encodé dans le QR remis par MTN, Orange ou
+   * Wave : l'application le réaffiche tel quel, en QR, pour le client qui
+   * préfère scanner plutôt que recopier le numéro. Il n'est PAS fabriqué par
+   * l'application — un contenu inventé enverrait l'argent du client à un
+   * inconnu — et il n'est pas un secret : il ne contient rien de plus que le
+   * numéro marchand déjà affiché.
+   *
+   * `null` = aucun QR publié pour ce compte : l'écran n'en affiche aucun.
+   */
+  qrPayload: string | null;
 }
+
+/**
+ * Bornes partagées du contenu QR : le serveur refuse au-delà, l'écran
+ * d'administration le dit avant l'enregistrement.
+ *
+ * 1000 caractères : les QR marchands des opérateurs (EMVCo) font quelques
+ * centaines de caractères ; au-delà, c'est une erreur de copier-coller.
+ */
+export const PAYMENT_METHOD_LIMITS = {
+  qrPayloadMax: 1000,
+} as const;
 
 /* ─────────────────────── Statuts, côté client ──────────────────────────── */
 

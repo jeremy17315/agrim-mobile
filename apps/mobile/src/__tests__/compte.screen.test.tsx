@@ -76,6 +76,28 @@ it('y mène aussi quand aucun compte n’est connecté', () => {
   expect(mockPush).toHaveBeenCalledWith('/contact');
 });
 
+const PAIEMENT = 'Payer AGRIM : MTN, Orange, Wave et QR marchand';
+
+it('mène aux comptes marchands et à leur QR depuis un compte connecté', () => {
+  render(<CompteScreen />);
+
+  fireEvent.press(screen.getByText(PAIEMENT));
+
+  expect(mockPush).toHaveBeenCalledWith('/paiement/moyens');
+});
+
+it('y mène aussi sans compte : un invité doit voir où il envoie son argent', () => {
+  mockIsAuthenticated = false;
+  render(<CompteScreen />);
+
+  // Le client est bien dans l'état « visiteur »…
+  expect(screen.getByText('Connexion requise')).toBeTruthy();
+
+  // …et l'entrée vers les comptes marchands reste là.
+  fireEvent.press(screen.getByText(PAIEMENT));
+  expect(mockPush).toHaveBeenCalledWith('/paiement/moyens');
+});
+
 it('garde l’appel direct du standard en un seul geste', () => {
   render(<CompteScreen />);
 

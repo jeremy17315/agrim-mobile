@@ -737,6 +737,12 @@ model PaymentMethodConfig {
   /// Modèle ouvrable par l'opérateur, s'il en existe un (`tel:` / USSD).
   ussdTemplate    String? @db.VarChar(200)
 
+  /// Contenu EXACT du QR marchand remis par l'opérateur, tel que le client
+  /// doit le scanner. Saisi par AGRIM (copier-coller depuis le QR officiel),
+  /// jamais inventé par l'application : un contenu erroné enverrait l'argent
+  /// du client à un inconnu. `NULL` = aucun QR publié pour ce compte.
+  qrPayload       String? @db.VarChar(1000)
+
   /// Un moyen créé sans indication explicite est INACTIF : le publier par
   /// défaut l'exposerait aux clients avant relecture.
   isActive  Boolean @default(false)

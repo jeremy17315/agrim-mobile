@@ -12,6 +12,7 @@ import {
   type DirectPaymentMethod,
 } from '@/api/payments';
 import { CheckoutProgress } from '@/components/CheckoutProgress';
+import { PaymentQr } from '@/components/PaymentQr';
 import { Banner, Button, Card, Icon, Input, Text } from '@/components/ui';
 import { callMobileSupport, supportPhone } from '@/lib/contact';
 import { formatXof } from '@/lib/format';
@@ -297,6 +298,22 @@ export default function GuestPaymentScreen() {
                 </Text>
               ) : null}
             </Card>
+
+            {data.method.qrPayload ? (
+              /* Celui qui préfère scanner plutôt que recopier onze chiffres :
+                 le QR est le contenu EXACT publié par AGRIM pour ce compte
+                 marchand — jamais un QR fabriqué par l'application. Sans QR
+                 publié, rien ne s'affiche ici. */
+              <Card style={styles.numberCard}>
+                <Text variant="micro" color="muted">
+                  OU SCANNEZ LE QR DU COMPTE
+                </Text>
+                <PaymentQr
+                  payload={data.method.qrPayload}
+                  operatorName={data.method.operatorName}
+                />
+              </Card>
+            ) : null}
 
             <Button
               label={

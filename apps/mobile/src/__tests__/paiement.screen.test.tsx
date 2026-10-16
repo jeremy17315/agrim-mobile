@@ -26,23 +26,39 @@ jest.mock('expo-clipboard', () => ({
   setStringAsync: jest.fn().mockResolvedValue(true),
 }));
 
+/** Le vrai QR dessine une matrice de points : illisible dans un test. Le faux
+ *  restitue la VALEUR passée au composant — c'est elle qui compte (le contenu
+ *  publié par AGRIM, jamais un QR fabriqué par l'application). */
+jest.mock('react-native-qrcode-svg', () => {
+  const React = require('react') as typeof import('react');
+  const { Text } = require('react-native') as typeof import('react-native');
+  return {
+    __esModule: true,
+    default: ({ value }: { value: string }) =>
+      React.createElement(Text, { testID: 'qr-marchand' }, value),
+  };
+});
+
 /**
  * Instruction de paiement telle que le SERVEUR la renvoie : le numéro affiché
  * est celui de la configuration d'AGRIM, pas une constante de l'application.
  */
+const methodVide = {
+  code: 'ORANGE_MONEY',
+  operatorName: 'Orange Money',
+  receivingNumber: '0700000000',
+  beneficiaryName: 'AGRIM SARL',
+  instructions: 'Choisissez « Transfert », puis saisissez le numéro.',
+  ussdTemplate: null as string | null,
+  qrPayload: null as string | null,
+};
+
 const instruction = {
   reference: 'AGR-2026-0042',
   amount: 18_500,
   currency: 'XOF' as const,
   status: 'PENDING',
-  method: {
-    code: 'ORANGE_MONEY',
-    operatorName: 'Orange Money',
-    receivingNumber: '0700000000',
-    beneficiaryName: 'AGRIM SARL',
-    instructions: 'Choisissez « Transfert », puis saisissez le numéro.',
-    ussdTemplate: null,
-  },
+  method: methodVide,
   paymentReference: 'AGR-2026-0042',
   declarations: 0,
   lastDeclaration: null,
@@ -215,4 +231,26 @@ it('explique la session expirée sans perdre la commande', async () => {
     expect(screen.getByText('Session de paiement expirée')).toBeTruthy(),
   );
   expect(screen.getByText(/votre dossier reste enregistré/i)).toBeTruthy();
+});
+
+it('affiche le QR marchand quand AGRIM l’a publié, tel quel', async () => {
+  const qr = 'https://pay.wave.com/m/M_agrim/c/ci/';
+  mockInstructionState = {
+    data: { ...instruction, method: { ...methodVide, qrPayload: qr } },
+    isError: false,
+  };
+  render(<GuestPaymentScreen />);
+
+  await waitFor(() => expect(screen.getByTestId('qr-marchand')).toBeTruthy());
+  // Le contenu affiché est celui du serveur, à la virgule près.
+  expect(screen.getByText(qr, { exact: true })).toBeTruthy();
+  expect(screen.getByText('OU SCANNEZ LE QR DU COMPTE')).toBeTruthy();
+});
+
+it('sans QR publié, n’affiche aucun QR — le numéro reste la seule voie', async () => {
+  render(<GuestPaymentScreen />);
+
+  await waitFor(() => expect(screen.getByText('0700000000')).toBeTruthy());
+  expect(screen.queryByTestId('qr-marchand')).toBeNull();
+  expect(screen.queryByText('OU SCANNEZ LE QR DU COMPTE')).toBeNull();
 });

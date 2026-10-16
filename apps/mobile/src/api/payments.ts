@@ -229,6 +229,12 @@ const directMethodSchema = z.object({
   beneficiaryName: z.string().nullable(),
   instructions: z.string().nullable(),
   ussdTemplate: z.string().nullable(),
+  /**
+   * Contenu du QR marchand publié par AGRIM — le MÊME texte que le QR de
+   * l'opérateur. `default(null)` : un serveur plus ancien qui ne le publie pas
+   * encore n'empêche pas l'écran de s'afficher, il n'y a simplement pas de QR.
+   */
+  qrPayload: z.string().max(1000).nullable().default(null),
 });
 export type DirectPaymentMethod = z.infer<typeof directMethodSchema>;
 

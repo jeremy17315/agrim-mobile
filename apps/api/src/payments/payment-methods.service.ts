@@ -38,6 +38,7 @@ export class PaymentMethodsService {
         beneficiaryName: true,
         instructions: true,
         ussdTemplate: true,
+        qrPayload: true,
       },
     });
     return methods;
@@ -55,6 +56,7 @@ export class PaymentMethodsService {
         beneficiaryName: true,
         instructions: true,
         ussdTemplate: true,
+        qrPayload: true,
         isActive: true,
         sortOrder: true,
         updatedAt: true,
@@ -107,6 +109,9 @@ export class PaymentMethodsService {
           beneficiaryName: dto.beneficiaryName?.trim() || null,
           instructions: dto.instructions?.trim() || null,
           ussdTemplate: dto.ussdTemplate?.trim() || null,
+          ...(dto.qrPayload !== undefined
+            ? { qrPayload: dto.qrPayload.trim() || null }
+            : {}),
           ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
           ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
           updatedById: actorId,
@@ -121,6 +126,7 @@ export class PaymentMethodsService {
           beneficiaryName: dto.beneficiaryName?.trim() || null,
           instructions: dto.instructions?.trim() || null,
           ussdTemplate: dto.ussdTemplate?.trim() || null,
+          qrPayload: dto.qrPayload?.trim() || null,
           // Un moyen créé sans indication explicite est INACTIF : le publier
           // par défaut l'exposerait aux clients avant relecture.
           isActive: dto.isActive ?? false,

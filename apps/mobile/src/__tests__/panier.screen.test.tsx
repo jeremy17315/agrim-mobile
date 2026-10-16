@@ -138,6 +138,19 @@ it('mène à l’aide et aux coordonnées depuis la question des frais', () => {
   expect(mockPush).toHaveBeenCalledWith('/contact');
 });
 
+it('mène aux comptes marchands et à leur QR depuis le panier', () => {
+  // Avant de payer, le client veut savoir SUR QUEL COMPTE il enverra
+  // l'argent : les comptes MTN, Orange et Wave et leur QR sont à un geste.
+  useCartStore.getState().addItem(product, variant, 1);
+  render(<PanierScreen />);
+
+  fireEvent.press(
+    screen.getByText('Payer AGRIM : comptes MTN, Orange, Wave et QR marchand'),
+  );
+
+  expect(mockPush).toHaveBeenCalledWith('/paiement/moyens');
+});
+
 it('ne promet aucune gratuité sur un gros panier', () => {
   // Sous l'ancienne règle, 30 000 F affichaient « livraison offerte ». Le
   // seuil officiel est désormais un POIDS, et il appartient au site : cet
