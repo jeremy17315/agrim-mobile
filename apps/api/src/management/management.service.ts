@@ -80,6 +80,18 @@ type ManagedOrderRow = {
   } | null;
 } & Record<string, unknown>;
 
+/**
+ * Nom affiché d'un client dans les files de gestion.
+ *
+ * Le compte peut n'avoir ni prénom ni nom : depuis la simplification de
+ * l'inscription, un client crée son compte avec son seul numéro. Afficher
+ * «  » dans la file de préparation serait pire que tout — on retombe alors
+ * sur le téléphone, qui est de toute façon ce avec quoi on joint le client.
+ */
+function nomDuClient(user: { firstName: string; lastName: string; phone: string }): string {
+  return `${user.firstName} ${user.lastName}`.trim() || user.phone;
+}
+
 /** Aplatit les relations pour coller au contrat partagé. */
 function toManagedOrder(row: ManagedOrderRow) {
   const { user, address, items, delivery, guestName, guestPhone, ...rest } =
@@ -87,7 +99,7 @@ function toManagedOrder(row: ManagedOrderRow) {
   const deliveryFailed = delivery?.status === 'FAILED';
   return {
     ...rest,
-    customerName: guestName ?? `${user.firstName} ${user.lastName}`,
+    customerName: guestName ?? nomDuClient(user),
     customerPhone: guestPhone ?? user.phone,
     city: address?.city ?? null,
     itemCount: items.reduce((sum, item) => sum + item.quantity, 0),
@@ -310,7 +322,7 @@ export class ManagementService {
       ...rest,
       items,
       address,
-      customerName: guestName ?? `${user.firstName} ${user.lastName}`,
+      customerName: guestName ?? nomDuClient(user),
       customerPhone: guestPhone ?? user.phone,
       city: address?.city ?? null,
       itemCount: items.reduce((sum, item) => sum + item.quantity, 0),

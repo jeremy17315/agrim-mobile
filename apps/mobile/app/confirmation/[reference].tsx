@@ -11,6 +11,7 @@ import {
   getGuestPaymentAccess,
 } from '@/lib/guestPayment';
 import { callMobileSupport } from '@/lib/contact';
+import { useAuthStore } from '@/store/auth';
 import { palette, radius, shadow, spacing } from '@/theme/tokens';
 
 /**
@@ -27,6 +28,8 @@ export default function ConfirmationScreen() {
   // Le transfert direct suit le même parcours de statut qu'un paiement
   // Mobile Money, mais il n'a pas d'opérateur à interroger : c'est AGRIM qui
   // vérifie la réception des fonds.
+  // Un client déjà connecté n'a pas besoin qu'on lui propose un compte.
+  const isAuthenticated = useAuthStore((state) => state.accessToken !== null);
   const isDirect = paymentType === 'DIRECT_MOBILE_MONEY';
   const isMobileMoney = paymentType === 'MOBILE_MONEY' || isDirect;
   const [accessToken, setAccessToken] = useState<string | null | undefined>(
@@ -203,6 +206,39 @@ export default function ConfirmationScreen() {
         />
       </Card>
 
+      {/* Invitation au meilleur moment : la commande est passée, le client a
+          déjà donné son nom et son numéro — un compte lui sert maintenant à
+          retrouver cet historique, ses adresses et son parrainage. Proposée
+          uniquement à ceux qui n'en ont pas encore. */}
+      {!isAuthenticated ? (
+        <Card style={styles.accountCard}>
+          <View style={styles.accountHead}>
+            <Icon name="circle-user" size={22} color="green" />
+            <Text variant="h3" style={styles.accountTitle}>
+              Gardez la trace de cette commande
+            </Text>
+          </View>
+          <Text variant="caption" color="muted">
+            Créez votre compte avec votre numéro : suivi de vos commandes,
+            adresses enregistrées et parrainage. Cela prend quelques secondes.
+          </Text>
+          <Button
+            label="Créer mon compte"
+            onPress={() => router.push('/(auth)/inscription')}
+          />
+          <Pressable
+            onPress={() => router.push('/(auth)/connexion')}
+            accessibilityRole="button"
+            hitSlop={8}
+            style={styles.accountSecondary}
+          >
+            <Text variant="caption" color="green">
+              J’ai déjà un compte
+            </Text>
+          </Pressable>
+        </Card>
+      ) : null}
+
       <Pressable
         onPress={() => void callMobileSupport()}
         accessibilityRole="button"
@@ -346,6 +382,17 @@ const styles = StyleSheet.create({
     borderColor: palette.green,
   },
   stepCopy: { flex: 1, gap: 2 },
+  accountCard: { gap: spacing.sm },
+  accountHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  accountTitle: { flex: 1 },
+  accountSecondary: {
+    alignItems: 'center',
+    paddingVertical: spacing.xs,
+  },
   help: {
     flexDirection: 'row',
     alignItems: 'flex-start',

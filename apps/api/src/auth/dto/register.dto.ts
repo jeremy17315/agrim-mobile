@@ -11,17 +11,21 @@ import {
 import { NormalizePhone } from '../../common/transforms/normalize-phone';
 
 export class RegisterDto {
-  @ApiProperty({ example: 'Awa' })
+  /**
+   * Facultatif : le compte client se crée avec un numéro et un mot de passe.
+   * Les deux champs restent acceptés pour les outils et les clients existants.
+   */
+  @ApiPropertyOptional({ example: 'Awa' })
+  @IsOptional()
   @IsString()
-  @MinLength(1)
   @MaxLength(80)
-  firstName!: string;
+  firstName?: string;
 
-  @ApiProperty({ example: 'Koné' })
+  @ApiPropertyOptional({ example: 'Koné' })
+  @IsOptional()
   @IsString()
-  @MinLength(1)
   @MaxLength(80)
-  lastName!: string;
+  lastName?: string;
 
   @ApiProperty({ example: '0700000010' })
   @NormalizePhone()

@@ -12,6 +12,12 @@ export type InputProps = TextInputProps & {
   /** Aide affichée sous le champ quand il n'y a pas d'erreur. */
   hint?: string;
   required?: boolean;
+  /**
+   * Accessoire rendu DANS le champ, à droite : bouton « afficher le mot de
+   * passe », unité, action ponctuelle. Purement visuel pour la mise en page —
+   * le champ garde sa bordure et son état, rien ne bouge sans cet accessoire.
+   */
+  trailing?: React.ReactNode;
 };
 
 /**
@@ -26,6 +32,7 @@ export function Input({
   error,
   hint,
   required = false,
+  trailing,
   style,
   onFocus,
   onBlur,
@@ -41,26 +48,31 @@ export function Input({
         {required ? ' *' : ''}
       </Text>
 
-      <TextInput
-        accessibilityLabel={label}
-        accessibilityHint={hint}
-        placeholderTextColor={palette.muted}
-        style={[
-          styles.input,
-          focused && styles.focused,
-          invalid && styles.invalid,
-          style,
-        ]}
-        onFocus={(e) => {
-          setFocused(true);
-          onFocus?.(e);
-        }}
-        onBlur={(e) => {
-          setFocused(false);
-          onBlur?.(e);
-        }}
-        {...rest}
-      />
+      <View style={styles.inputWrap}>
+        <TextInput
+          accessibilityLabel={label}
+          accessibilityHint={hint}
+          placeholderTextColor={palette.muted}
+          style={[
+            styles.input,
+            Boolean(trailing) && styles.inputWithTrailing,
+            focused && styles.focused,
+            invalid && styles.invalid,
+            style,
+          ]}
+          onFocus={(e) => {
+            setFocused(true);
+            onFocus?.(e);
+          }}
+          onBlur={(e) => {
+            setFocused(false);
+            onBlur?.(e);
+          }}
+          {...rest}
+        />
+
+        {trailing ? <View style={styles.trailing}>{trailing}</View> : null}
+      </View>
 
       {invalid ? (
         <Text variant="caption" color="danger" style={styles.helper}>
@@ -81,6 +93,22 @@ const styles = StyleSheet.create({
   },
   label: {
     marginLeft: 2,
+  },
+  inputWrap: {
+    justifyContent: 'center',
+  },
+  // L'accessoire flotte au-dessus du champ : la bordure, l'état de focus et
+  // les tests existants restent inchangés.
+  trailing: {
+    position: 'absolute',
+    right: spacing.sm,
+    height: '100%',
+    justifyContent: 'center',
+  },
+  // Assez de marge à droite pour que le texte saisi ne passe pas SOUS
+  // l'accessoire (bouton « afficher », par exemple).
+  inputWithTrailing: {
+    paddingRight: 46,
   },
   input: {
     minHeight: 48,

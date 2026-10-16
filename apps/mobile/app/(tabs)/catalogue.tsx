@@ -80,27 +80,41 @@ export default function CatalogueScreen() {
             </Text>
             <Text variant="h1">Choisissez votre riz</Text>
           </View>
-          <Pressable
-            onPress={() => router.push('/panier')}
-            accessibilityRole="button"
-            accessibilityLabel={
-              itemCount > 0
-                ? `Ouvrir le panier, ${itemCount} article${
-                    itemCount > 1 ? 's' : ''
-                  }`
-                : 'Ouvrir le panier'
-            }
-            style={styles.cartButton}
-          >
-            <Icon name="shopping-bag" size={19} color="green" />
-            {itemCount > 0 ? (
-              <View style={styles.cartCount}>
-                <Text variant="micro" style={styles.cartCountText}>
-                  {itemCount > 9 ? '9+' : itemCount}
-                </Text>
-              </View>
-            ) : null}
-          </Pressable>
+          <View style={styles.headerActions}>
+            {/* Accès au compte : connexion, création, suivi et parrainage.
+                Le parcours d'achat reste possible sans compte — cette entrée
+                est une porte, pas un mur. */}
+            <Pressable
+              onPress={() => router.push('/compte')}
+              accessibilityRole="button"
+              accessibilityLabel="Mon compte"
+              style={styles.accountButton}
+            >
+              <Icon name="circle-user" size={21} color="green" />
+            </Pressable>
+
+            <Pressable
+              onPress={() => router.push('/panier')}
+              accessibilityRole="button"
+              accessibilityLabel={
+                itemCount > 0
+                  ? `Ouvrir le panier, ${itemCount} article${
+                      itemCount > 1 ? 's' : ''
+                    }`
+                  : 'Ouvrir le panier'
+              }
+              style={styles.cartButton}
+            >
+              <Icon name="shopping-bag" size={19} color="green" />
+              {itemCount > 0 ? (
+                <View style={styles.cartCount}>
+                  <Text variant="micro" style={styles.cartCountText}>
+                    {itemCount > 9 ? '9+' : itemCount}
+                  </Text>
+                </View>
+              ) : null}
+            </Pressable>
+          </View>
         </View>
 
         <View style={styles.searchBox}>
@@ -357,6 +371,22 @@ const styles = StyleSheet.create({
   },
   titleCopy: { gap: 3 },
   brand: { letterSpacing: 1.5 },
+  // Compte puis panier : deux portes, la marque reste à gauche.
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  accountButton: {
+    width: 42,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 21,
+    backgroundColor: palette.card,
+    borderWidth: 1,
+    borderColor: palette.line,
+  },
   cartButton: {
     width: 42,
     height: 42,

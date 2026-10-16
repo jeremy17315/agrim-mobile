@@ -319,3 +319,12 @@ it('affiche une erreur récupérable', () => {
 
   expect(screen.getByText(/Réessayer/i)).toBeTruthy();
 });
+
+it('ouvre l’espace compte depuis l’en-tête', () => {
+  mockProducts = listing([]);
+  render(<CatalogueScreen />);
+
+  fireEvent.press(screen.getByLabelText('Mon compte'));
+
+  expect(mockPush).toHaveBeenCalledWith('/compte');
+});

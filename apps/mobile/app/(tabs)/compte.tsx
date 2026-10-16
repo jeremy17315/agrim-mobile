@@ -80,16 +80,23 @@ export default function CompteScreen() {
             <Card style={styles.identity}>
               <View style={styles.avatar}>
                 <Text variant="h2" color="white">
-                  {initials(user.firstName, user.lastName)}
+                  {initials(user.firstName, user.lastName, user.phone)}
                 </Text>
               </View>
               <View style={styles.flex}>
-                <Text variant="h3">
-                  {user.firstName} {user.lastName}
-                </Text>
-                <Text variant="caption" color="muted">
-                  {formatPhone(user.phone)}
-                </Text>
+                <Text variant="h3">{nomAffiche(user)}</Text>
+                {aUnNom(user) ? (
+                  <Text variant="caption" color="muted">
+                    {formatPhone(user.phone)}
+                  </Text>
+                ) : (
+                  // Compte créé avec le seul numéro : on l'annonce plutôt que
+                  // d'afficher un blanc, et on indique où compléter.
+                  <Text variant="caption" color="muted">
+                    Compte sans nom — il vous sera demandé à la première
+                    commande.
+                  </Text>
+                )}
               </View>
             </Card>
 
@@ -294,8 +301,30 @@ function MenuRow({
   );
 }
 
-function initials(firstName: string, lastName: string): string {
-  return `${firstName.charAt(0)}${lastName.charAt(0)}`.toUpperCase();
+function aUnNom(user: { firstName: string; lastName: string }): boolean {
+  return `${user.firstName} ${user.lastName}`.trim().length > 0;
+}
+
+/** Nom affiché ; à défaut, le téléphone — jamais une ligne vide. */
+function nomAffiche(user: {
+  firstName: string;
+  lastName: string;
+  phone: string;
+}): string {
+  return `${user.firstName} ${user.lastName}`.trim() || formatPhone(user.phone);
+}
+
+/**
+ * Initiales de l'avatar. Un compte sans nom affiche les deux derniers
+ * chiffres du numéro, ce qui reste distinct d'un client à l'autre.
+ */
+function initials(
+  firstName: string,
+  lastName: string,
+  phone: string,
+): string {
+  const nom = `${firstName.charAt(0)}${lastName.charAt(0)}`.toUpperCase();
+  return nom || phone.slice(-2);
 }
 
 const styles = StyleSheet.create({

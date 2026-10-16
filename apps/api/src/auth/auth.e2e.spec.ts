@@ -49,7 +49,11 @@ describe('Authentification (e2e)', () => {
     // C'est exactement ce qui s'est produit sur la suppression de compte.
     await prisma.db.user.deleteMany({
       where: {
-        OR: [{ phone: '0708887766' }, { phone: { startsWith: 'supprime_' } }],
+        OR: [
+          { phone: '0708887766' },
+          { phone: '0705554433' },
+          { phone: { startsWith: 'supprime_' } },
+        ],
       },
     });
 
@@ -171,6 +175,57 @@ describe('Authentification (e2e)', () => {
       .send({ refreshToken: oldRefresh });
     expect(reused.status).toBe(401);
     expect(reused.body.code).toBe('REFRESH_TOKEN_REUSED');
+  });
+
+  it('crée un compte avec le seul numéro et le mot de passe', async () => {
+    const phone = '0705554433';
+
+    const created = await request(app.getHttpServer())
+      .post(`${prefix}/auth/register`)
+      .send({ phone, password: 'Agrim2026!' });
+
+    expect(created.status).toBe(201);
+    // Le nom est vide, jamais absent : le contrat exige les deux champs, et
+    // les écrans d'affichage retombent sur le téléphone.
+    expect(created.body.user.firstName).toBe('');
+    expect(created.body.user.lastName).toBe('');
+    expect(created.body.accessToken).toEqual(expect.any(String));
+
+    // La connexion fonctionne immédiatement avec ces deux informations.
+    const connected = await login(phone);
+    expect(connected.status).toBe(200);
+
+    await prisma.db.user.delete({ where: { phone } });
+  });
+
+  it('rend le profil complet sur /auth/me (et non le contenu du jeton)', async () => {
+    const phone = '0705554433';
+    await prisma.db.user.deleteMany({ where: { phone } });
+
+    const created = await request(app.getHttpServer())
+      .post(`${prefix}/auth/register`)
+      .send({ phone, password: 'Agrim2026!' });
+    const access = created.body.accessToken as string;
+
+    const me = await request(app.getHttpServer())
+      .get(`${prefix}/auth/me`)
+      .set('Authorization', `Bearer ${access}`);
+
+    expect(me.status).toBe(200);
+    // Le contrat mobile (`userSchema`) exige ces champs : sans eux,
+    // `fetchMe()` échouait à la validation de la réponse.
+    expect(me.body).toMatchObject({
+      firstName: '',
+      lastName: '',
+      phone,
+      role: 'CLIENT',
+      isActive: true,
+    });
+    expect(me.body.email).toBeNull();
+    expect(me.body.createdAt).toEqual(expect.any(String));
+    expect(me.body.passwordHash).toBeUndefined();
+
+    await prisma.db.user.delete({ where: { phone } });
   });
 
   it('anonymise un compte à la suppression (exigence magasins)', async () => {

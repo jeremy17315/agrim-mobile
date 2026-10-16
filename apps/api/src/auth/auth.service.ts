@@ -77,8 +77,10 @@ export class AuthService {
 
     const user = await this.prisma.db.user.create({
       data: {
-        firstName: dto.firstName,
-        lastName: dto.lastName,
+        // Chaîne vide, jamais `null` : la colonne est non nulle et les écrans
+        // d'affichage savent retomber sur le téléphone.
+        firstName: dto.firstName?.trim() ?? '',
+        lastName: dto.lastName?.trim() ?? '',
         phone,
         email: dto.email?.trim() ? dto.email.trim() : null,
         passwordHash,
@@ -463,6 +465,26 @@ export class AuthService {
       if (!exists) return code;
     }
     throw new Error('Impossible de générer un code de parrainage unique.');
+  }
+
+  /**
+   * Profil public de la session courante.
+   *
+   * `/auth/me` renvoyait auparavant le contenu du jeton (`id`, `phone`,
+   * `role`), alors que le contrat mobile attend l'utilisateur complet : la
+   * fonction `fetchMe()` de l'application échouait donc à la validation. On
+   * relit la base — c'est la seule source qui connaît le nom, l'e-mail et
+   * l'état du compte à cet instant.
+   */
+  async publicProfile(userId: string) {
+    const user = await this.prisma.db.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new UnauthorizedException({
+        code: 'SESSION_USER_MISSING',
+        message: 'Session invalide.',
+      });
+    }
+    return this.toPublicUser(user);
   }
 
   private toPublicUser(user: {

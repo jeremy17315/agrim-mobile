@@ -64,8 +64,11 @@ export const passwordSchema = z
 
 export const userSchema = z.object({
   id: idSchema,
-  firstName: z.string().min(1).max(80),
-  lastName: z.string().min(1).max(80),
+  // Facultatives depuis la simplification de l'inscription : un client peut
+  // créer son compte avec son seul numéro. Les écrans d'affichage retombent
+  // alors sur le téléphone plutôt que d'afficher un blanc.
+  firstName: z.string().max(80),
+  lastName: z.string().max(80),
   phone: phoneSchema,
   email: z.email().nullable(),
   role: z.enum(ROLES),
@@ -403,10 +406,19 @@ export const loginSchema = z.object({
 });
 export type LoginInput = z.infer<typeof loginSchema>;
 
+/**
+ * Inscription : DEUX informations obligatoires seulement.
+ *
+ * Le téléphone est l'identifiant naturel en Côte d'Ivoire et le mot de passe
+ * suffit à protéger le compte. Le nom, l'e-mail et le code de parrainage sont
+ * FACULTATIFS : le nom est de toute façon demandé au moment de la commande
+ * (comme pour un client sans compte), et exiger trois champs de plus à
+ * l'inscription écartait des clients sans rien apporter à la livraison.
+ */
 export const registerSchema = z
   .object({
-    firstName: z.string().min(1, 'Prénom requis').max(80),
-    lastName: z.string().min(1, 'Nom requis').max(80),
+    firstName: z.string().max(80).optional(),
+    lastName: z.string().max(80).optional(),
     phone: phoneSchema,
     email: z.email('Email invalide').optional().or(z.literal('')),
     password: passwordSchema,

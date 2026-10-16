@@ -71,7 +71,9 @@ export class AuthController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Profil de la session courante' })
   me(@CurrentUser() user: AuthenticatedUser) {
-    return user;
+    // Profil complet, et non le contenu du jeton : le contrat mobile attend
+    // `firstName`/`lastName`/`email`/`isActive`/`createdAt`.
+    return this.auth.publicProfile(user.id);
   }
 
   @Post('me/delete')

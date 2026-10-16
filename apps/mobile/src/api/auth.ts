@@ -17,12 +17,17 @@ export type AuthResponse = z.infer<typeof authResponseSchema>;
 
 export type LoginPayload = { phone: string; password: string };
 
+/**
+ * Inscription : seuls le téléphone et le mot de passe sont exigés.
+ * Le nom, l'e-mail et le code de parrainage ne sont envoyés que s'ils ont été
+ * saisis — le serveur les accepte désormais facultatifs.
+ */
 export type RegisterPayload = {
-  firstName: string;
-  lastName: string;
   phone: string;
-  email?: string;
   password: string;
+  firstName?: string;
+  lastName?: string;
+  email?: string;
   referralCode?: string;
 };
 

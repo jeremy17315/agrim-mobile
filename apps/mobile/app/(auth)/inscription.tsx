@@ -21,40 +21,41 @@ import { useAuthStore } from '@/store/auth';
 import { palette, spacing } from '@/theme/tokens';
 
 /**
- * Création de compte.
+ * Création de compte — DEUX champs seulement.
  *
- * L'e-mail est facultatif : l'exiger exclurait une partie des clients. Les
- * règles de mot de passe reproduisent celles du serveur pour que l'utilisateur
- * voie l'erreur avant l'aller-retour réseau — la validation qui fait foi reste
- * évidemment celle du backend.
+ * Le téléphone est déjà l'identifiant de connexion en Côte d'Ivoire, et le mot
+ * de passe suffit à protéger le compte : exiger un prénom, un nom et une
+ * seconde saisie du mot de passe écartait des clients sans rien apporter à la
+ * livraison. Le nom est demandé au moment de la commande, exactement comme
+ * pour un client sans compte.
+ *
+ * Les informations facultatives (nom, e-mail, code de parrainage) restent
+ * accessibles, mais repliées : elles n'encombrent pas le parcours par défaut.
+ *
+ * La validation reproduit celle du serveur pour montrer l'erreur avant
+ * l'aller-retour réseau — la règle qui fait foi reste celle du backend.
  */
 
-const schema = z
-  .object({
-    firstName: z.string().trim().min(1, 'Prénom requis').max(80),
-    lastName: z.string().trim().min(1, 'Nom requis').max(80),
-    // Règle partagée : normalise les espaces de saisie et valide le format.
-    phone: phoneSchema,
-    email: z.union([z.literal(''), z.email('Email invalide')]).optional(),
-    password: passwordSchema,
-    confirmPassword: z.string(),
-    referralCode: z
-      .union([
-        z.literal(''),
-        z
-          .string()
-          .trim()
-          .regex(
-            new RegExp(`^[A-Za-z0-9]{${REFERRAL_CODE_LENGTH}}$`),
-            `Code à ${REFERRAL_CODE_LENGTH} caractères`,
-          ),
-      ])
-      .optional(),
-  })
-  .refine((values) => values.password === values.confirmPassword, {
-    path: ['confirmPassword'],
-    message: 'Les mots de passe ne correspondent pas',
-  });
+const schema = z.object({
+  // Règle partagée : normalise les espaces de saisie et valide le format.
+  phone: phoneSchema,
+  password: passwordSchema,
+  firstName: z.string().trim().max(80).optional(),
+  lastName: z.string().trim().max(80).optional(),
+  email: z.union([z.literal(''), z.email('Email invalide')]).optional(),
+  referralCode: z
+    .union([
+      z.literal(''),
+      z
+        .string()
+        .trim()
+        .regex(
+          new RegExp(`^[A-Za-z0-9]{${REFERRAL_CODE_LENGTH}}$`),
+          `Code à ${REFERRAL_CODE_LENGTH} caractères`,
+        ),
+    ])
+    .optional(),
+});
 
 type FormValues = z.infer<typeof schema>;
 
@@ -64,6 +65,8 @@ export default function InscriptionScreen() {
   const signUp = useAuthStore((s) => s.signUp);
 
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showOptional, setShowOptional] = useState(false);
 
   const {
     control,
@@ -72,12 +75,11 @@ export default function InscriptionScreen() {
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
+      phone: '',
+      password: '',
       firstName: '',
       lastName: '',
-      phone: '',
       email: '',
-      password: '',
-      confirmPassword: '',
       referralCode: '',
     },
   });
@@ -86,17 +88,22 @@ export default function InscriptionScreen() {
     setSubmitError(null);
     try {
       await signUp({
-        firstName: values.firstName.trim(),
-        lastName: values.lastName.trim(),
         phone: values.phone,
-        // Chaîne vide = pas d'email : on n'envoie pas un champ vide au serveur.
-        ...(values.email ? { email: values.email.trim() } : {}),
         password: values.password,
+        // Chaîne vide = information non fournie : on n'envoie pas de champ
+        // vide au serveur, qui les accepte désormais facultatifs.
+        ...(values.firstName ? { firstName: values.firstName } : {}),
+        ...(values.lastName ? { lastName: values.lastName } : {}),
+        ...(values.email ? { email: values.email } : {}),
         ...(values.referralCode
-          ? { referralCode: values.referralCode.trim().toUpperCase() }
+          ? { referralCode: values.referralCode.toUpperCase() }
           : {}),
       });
-      router.replace('/(tabs)');
+
+      // On revient d'où l'on vient : du catalogue, on retrouve le catalogue ;
+      // de l'écran de confirmation, la commande qui vient d'être passée.
+      if (router.canGoBack?.()) router.back();
+      else router.replace('/(tabs)');
     } catch (error) {
       setSubmitError(describeError(error));
     }
@@ -128,7 +135,7 @@ export default function InscriptionScreen() {
         <View style={styles.form}>
           <Text variant="h1">Créer un compte</Text>
           <Text variant="caption" color="muted">
-            Quelques informations suffisent pour commander.
+            Votre numéro et un mot de passe suffisent.
           </Text>
 
           {submitError ? (
@@ -138,40 +145,6 @@ export default function InscriptionScreen() {
               icon={<Icon name="triangle-alert" size={14} color="danger" />}
             />
           ) : null}
-
-          <Controller
-            control={control}
-            name="firstName"
-            render={({ field: { onChange, onBlur, value } }) => (
-              <Input
-                label="Prénom"
-                placeholder="Awa"
-                required
-                autoComplete="given-name"
-                value={value}
-                onChangeText={onChange}
-                onBlur={onBlur}
-                error={errors.firstName?.message}
-              />
-            )}
-          />
-
-          <Controller
-            control={control}
-            name="lastName"
-            render={({ field: { onChange, onBlur, value } }) => (
-              <Input
-                label="Nom"
-                placeholder="Koné"
-                required
-                autoComplete="family-name"
-                value={value}
-                onChangeText={onChange}
-                onBlur={onBlur}
-                error={errors.lastName?.message}
-              />
-            )}
-          />
 
           <Controller
             control={control}
@@ -187,25 +160,7 @@ export default function InscriptionScreen() {
                 onChangeText={onChange}
                 onBlur={onBlur}
                 error={errors.phone?.message}
-              />
-            )}
-          />
-
-          <Controller
-            control={control}
-            name="email"
-            render={({ field: { onChange, onBlur, value } }) => (
-              <Input
-                label="Email"
-                placeholder="awa.kone@example.ci"
-                hint="Facultatif"
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoComplete="email"
-                value={value ?? ''}
-                onChangeText={onChange}
-                onBlur={onBlur}
-                error={errors.email?.message}
+                hint="Il servira à vous connecter."
               />
             )}
           />
@@ -218,50 +173,125 @@ export default function InscriptionScreen() {
                 label="Mot de passe"
                 placeholder="8 caractères minimum"
                 required
-                secureTextEntry
+                secureTextEntry={!showPassword}
                 autoComplete="new-password"
                 value={value}
                 onChangeText={onChange}
                 onBlur={onBlur}
                 error={errors.password?.message}
-                hint="Au moins une lettre et un chiffre"
+                hint="Au moins une lettre et un chiffre."
+                trailing={
+                  <Pressable
+                    onPress={() => setShowPassword((visible) => !visible)}
+                    accessibilityRole="button"
+                    accessibilityLabel={
+                      showPassword
+                        ? 'Masquer le mot de passe'
+                        : 'Afficher le mot de passe'
+                    }
+                    hitSlop={10}
+                  >
+                    <Icon
+                      name={showPassword ? 'eye-off' : 'eye'}
+                      size={19}
+                      color="muted"
+                    />
+                  </Pressable>
+                }
               />
             )}
           />
 
-          <Controller
-            control={control}
-            name="confirmPassword"
-            render={({ field: { onChange, onBlur, value } }) => (
-              <Input
-                label="Confirmer le mot de passe"
-                required
-                secureTextEntry
-                autoComplete="new-password"
-                value={value}
-                onChangeText={onChange}
-                onBlur={onBlur}
-                error={errors.confirmPassword?.message}
-              />
-            )}
-          />
+          <Pressable
+            onPress={() => setShowOptional((open) => !open)}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: showOptional }}
+            accessibilityLabel="Ajouter des informations facultatives"
+            hitSlop={8}
+            style={styles.optionalToggle}
+          >
+            <Icon
+              name={showOptional ? 'chevron-up' : 'chevron-down'}
+              size={15}
+              color="green"
+            />
+            <Text variant="caption" color="green">
+              Ajouter mon nom, mon e-mail ou un code de parrainage
+            </Text>
+          </Pressable>
 
-          <Controller
-            control={control}
-            name="referralCode"
-            render={({ field: { onChange, onBlur, value } }) => (
-              <Input
-                label="Code de parrainage"
-                placeholder="AB12CD"
-                hint="Facultatif — donné par la personne qui vous a invité"
-                autoCapitalize="characters"
-                value={value ?? ''}
-                onChangeText={onChange}
-                onBlur={onBlur}
-                error={errors.referralCode?.message}
+          {showOptional ? (
+            <View style={styles.optional}>
+              <Controller
+                control={control}
+                name="firstName"
+                render={({ field: { onChange, onBlur, value } }) => (
+                  <Input
+                    label="Prénom"
+                    placeholder="Awa"
+                    autoComplete="given-name"
+                    value={value ?? ''}
+                    onChangeText={onChange}
+                    onBlur={onBlur}
+                    error={errors.firstName?.message}
+                  />
+                )}
               />
-            )}
-          />
+
+              <Controller
+                control={control}
+                name="lastName"
+                render={({ field: { onChange, onBlur, value } }) => (
+                  <Input
+                    label="Nom"
+                    placeholder="Koné"
+                    autoComplete="family-name"
+                    value={value ?? ''}
+                    onChangeText={onChange}
+                    onBlur={onBlur}
+                    error={errors.lastName?.message}
+                    hint="Facultatif — demandé à la commande de toute façon."
+                  />
+                )}
+              />
+
+              <Controller
+                control={control}
+                name="email"
+                render={({ field: { onChange, onBlur, value } }) => (
+                  <Input
+                    label="Email"
+                    placeholder="awa.kone@example.ci"
+                    hint="Facultatif"
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    autoComplete="email"
+                    value={value ?? ''}
+                    onChangeText={onChange}
+                    onBlur={onBlur}
+                    error={errors.email?.message}
+                  />
+                )}
+              />
+
+              <Controller
+                control={control}
+                name="referralCode"
+                render={({ field: { onChange, onBlur, value } }) => (
+                  <Input
+                    label="Code de parrainage"
+                    placeholder="AB12CD"
+                    hint="Facultatif — donné par la personne qui vous a invité"
+                    autoCapitalize="characters"
+                    value={value ?? ''}
+                    onChangeText={onChange}
+                    onBlur={onBlur}
+                    error={errors.referralCode?.message}
+                  />
+                )}
+              />
+            </View>
+          ) : null}
 
           <Button
             label={isSubmitting ? 'Création…' : 'Créer mon compte'}
@@ -283,4 +313,11 @@ const styles = StyleSheet.create({
   },
   header: { flexDirection: 'row' },
   form: { gap: spacing.md },
+  optionalToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingVertical: spacing.xs,
+  },
+  optional: { gap: spacing.md },
 });

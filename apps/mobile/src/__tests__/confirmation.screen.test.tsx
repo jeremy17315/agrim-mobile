@@ -11,9 +11,16 @@ const mockReplace = jest.fn();
 const params: { reference: string; payment?: string } = {
   reference: 'AGR-2026-0042',
 };
+const mockPush = jest.fn();
 jest.mock('expo-router', () => ({
-  useRouter: () => ({ replace: mockReplace }),
+  useRouter: () => ({ replace: mockReplace, push: mockPush }),
   useLocalSearchParams: () => params,
+}));
+
+// Le client vient de commander sans compte : l'invitation s'affiche.
+jest.mock('@/store/auth', () => ({
+  useAuthStore: (selector: (state: unknown) => unknown) =>
+    selector({ accessToken: null }),
 }));
 
 jest.mock('react-native-safe-area-context', () => ({
@@ -95,4 +102,14 @@ it('n’affiche un Mobile Money comme payé qu’après le statut serveur réuss
   expect(screen.getByText('Paiement confirmé !')).toBeTruthy();
   expect(screen.getByText('PAYÉ')).toBeTruthy();
   expect(screen.getByText('Paiement Mobile Money confirmé')).toBeTruthy();
+});
+
+it('propose de créer un compte pour garder la commande', () => {
+  render(<ConfirmationScreen />);
+
+  fireEvent.press(screen.getByText('Créer mon compte'));
+  expect(mockPush).toHaveBeenCalledWith('/(auth)/inscription');
+
+  fireEvent.press(screen.getByText('J’ai déjà un compte'));
+  expect(mockPush).toHaveBeenCalledWith('/(auth)/connexion');
 });
