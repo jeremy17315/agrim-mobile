@@ -122,6 +122,22 @@ it('annonce que les frais dépendent de la zone, sans les ajouter au total', () 
   expect(screen.getByText('Applicable selon la zone')).toBeTruthy();
 });
 
+it('mène à l’aide et aux coordonnées depuis la question des frais', () => {
+  // C'est précisément au moment où l'on se demande combien coûtera la
+  // livraison qu'on a besoin de joindre AGRIM : le lien ouvre la page
+  // Contact et aide (numéros, WhatsApp, boutiques, questions fréquentes).
+  useCartStore.getState().addItem(product, variant, 1);
+  render(<PanierScreen />);
+
+  fireEvent.press(
+    screen.getByText(
+      'Une question sur la livraison ? Voir l’aide et les coordonnées',
+    ),
+  );
+
+  expect(mockPush).toHaveBeenCalledWith('/contact');
+});
+
 it('ne promet aucune gratuité sur un gros panier', () => {
   // Sous l'ancienne règle, 30 000 F affichaient « livraison offerte ». Le
   // seuil officiel est désormais un POIDS, et il appartient au site : cet

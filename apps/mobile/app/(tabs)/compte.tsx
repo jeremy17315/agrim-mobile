@@ -253,6 +253,21 @@ export default function CompteScreen() {
               icon={<Icon name="phone" size={14} color="green" />}
               onPress={() => void callCompany()}
             />
+            {/* La page complète — WhatsApp, e-mail, boutiques, questions
+                fréquentes — est ouverte à TOUT LE MONDE, connecté ou non : un
+                visiteur qui n'arrive pas à commander a autant besoin de ces
+                coordonnées qu'un client. Le lecteur d'écran l'annonce comme un
+                lien, pas comme un bouton d'action. */}
+            <Pressable
+              onPress={() => router.push('/contact')}
+              accessibilityRole="link"
+              hitSlop={8}
+              style={styles.contactLink}
+            >
+              <Text variant="caption" color="green">
+                Coordonnées, boutiques et questions fréquentes
+              </Text>
+            </Pressable>
           </View>
         </Card>
       </ScrollView>
@@ -362,4 +377,5 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   contact: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  contactLink: { paddingTop: spacing.sm },
 });

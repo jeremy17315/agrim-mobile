@@ -150,6 +150,21 @@ export default function PanierScreen() {
           icon={<Icon name="truck" size={15} color="info" />}
         />
 
+        {/* Celui qui se pose la question des frais a justement besoin de
+            joindre AGRIM : la page Contact et aide donne les numéros,
+            WhatsApp, les boutiques et les questions fréquentes — sans quitter
+            le panier pour aller les chercher dans un autre écran. */}
+        <Pressable
+          onPress={() => router.push('/contact')}
+          accessibilityRole="link"
+          hitSlop={8}
+          style={styles.helpLink}
+        >
+          <Text variant="caption" color="green">
+            Une question sur la livraison ? Voir l’aide et les coordonnées
+          </Text>
+        </Pressable>
+
         {items.map((item) => (
           <CartLine
             key={item.variantId}
@@ -350,6 +365,7 @@ const styles = StyleSheet.create({
   },
   progress: { paddingHorizontal: spacing.lg, paddingTop: spacing.md },
   offlineSupport: { gap: spacing.sm, alignItems: 'flex-start' },
+  helpLink: { alignSelf: 'flex-start' },
   loading: { padding: spacing.lg, gap: spacing.md },
   list: { padding: spacing.lg, gap: spacing.md, paddingBottom: spacing.xxxl },
   flex: { flex: 1 },
