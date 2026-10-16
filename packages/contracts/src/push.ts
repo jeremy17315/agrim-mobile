@@ -13,21 +13,6 @@
  *     d'administration ne doit pas laisser croire autre chose.
  */
 
-/** Catégories proposées à la rédaction d'une campagne. */
-export const NOTIFICATION_CATEGORIES = [
-  'PROMOTION',
-  'NOUVEAU_PRODUIT',
-  'PROMO_CODE',
-  'INFORMATION',
-] as const;
-export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];
-
-export const NOTIFICATION_CATEGORY_LABELS: Record<NotificationCategory, string> = {
-  PROMOTION: 'Promotion',
-  NOUVEAU_PRODUIT: 'Nouveau produit ou format',
-  PROMO_CODE: 'Code promo',
-  INFORMATION: 'Information importante',
-};
 
 /**
  * Destination d'une notification.
@@ -42,8 +27,33 @@ export const NOTIFICATION_TARGETS = [
   'categorie',
   'commande',
   'information',
+  /** Espace interne : une notification d'équipe ouvre la commande à traiter. */
+  'gestion',
 ] as const;
 export type NotificationTarget = (typeof NOTIFICATION_TARGETS)[number];
+
+/** Libellés proposés à la rédaction d'une campagne. */
+export const NOTIFICATION_TARGET_LABELS: Record<NotificationTarget, string> = {
+  produit: 'Une fiche produit',
+  offre: 'Le catalogue (offres en cours)',
+  categorie: 'Une catégorie du catalogue',
+  commande: 'Une commande du client',
+  information: 'La liste des notifications',
+  gestion: 'Une commande à traiter (équipe)',
+};
+
+/** Ce que `value` doit contenir pour chaque destination. */
+export const NOTIFICATION_TARGET_VALUE_HINTS: Record<
+  NotificationTarget,
+  string
+> = {
+  produit: 'identifiant du produit (slug)',
+  offre: 'aucune valeur',
+  categorie: 'identifiant de la catégorie (slug)',
+  commande: 'référence de commande, ex. AGR-2026-0042',
+  information: 'aucune valeur',
+  gestion: 'référence de commande, ex. AGR-2026-0042',
+};
 
 export interface NotificationDeepLink {
   target: NotificationTarget;
@@ -75,17 +85,87 @@ export function deepLinkFromData(
   if (!data) return null;
   const target = data['target'];
   const value = data['value'];
-  if (typeof target !== 'string' || typeof value !== 'string') return null;
-  if (!(NOTIFICATION_TARGETS as readonly string[]).includes(target)) return null;
-  const extra = data['extra'];
-  return {
-    target: target as NotificationTarget,
-    value,
-    ...(typeof extra === 'string' && extra.length > 0 ? { extra } : {}),
-  };
+  if (
+    typeof target === 'string' &&
+    typeof value === 'string' &&
+    (NOTIFICATION_TARGETS as readonly string[]).includes(target)
+  ) {
+    const extra = data['extra'];
+    return {
+      target: target as NotificationTarget,
+      value,
+      ...(typeof extra === 'string' && extra.length > 0 ? { extra } : {}),
+    };
+  }
+
+  // Compatibilité : une notification envoyée AVANT ce contrat ne portait
+  // qu'une référence de commande. Un client qui touche une notification encore
+  // présente dans le centre de son téléphone doit atterrir sur sa commande, pas
+  // sur la liste.
+  const reference = data['reference'];
+  if (typeof reference === 'string' && reference.length > 0) {
+    return { target: 'commande', value: reference };
+  }
+
+  return null;
 }
 
+/**
+ * Route de l'application correspondant à une destination.
+ *
+ * C'est le SEUL endroit qui traduit « produit:nouveau-riz » en une adresse
+ * d'écran : la liste des notifications, le tap sur une notification poussée et
+ * l'aperçu d'une campagne utilisent la même fonction. Sans elle, un lien
+ * enregistré en base ne mènerait nulle part.
+ *
+ * `null` signifie « destination inconnue ou inexploitable » : l'appelant ouvre
+ * alors la liste des notifications plutôt qu'un écran vide.
+ */
+export function deepLinkToPath(link: NotificationDeepLink): string | null {
+  const value = link.value.trim();
+
+  switch (link.target) {
+    case 'produit':
+      return value ? `/produit/${encodeURIComponent(value)}` : null;
+    case 'categorie':
+      return value
+        ? `/catalogue?category=${encodeURIComponent(value)}`
+        : '/catalogue';
+    // Aucun écran ne liste les offres à part : le catalogue est l'endroit où
+    // les promotions s'affichent (prix barrés, badge).
+    case 'offre':
+      return '/catalogue';
+    case 'commande':
+      return value ? `/commandes/${encodeURIComponent(value)}` : null;
+    case 'gestion':
+      return value ? `/gestion/${encodeURIComponent(value)}` : null;
+    case 'information':
+      return '/notifications';
+    default:
+      return null;
+  }
+}
+
+/** Route de secours quand la destination est absente ou inconnue. */
+export const NOTIFICATION_FALLBACK_PATH = '/notifications';
+
 /* ───────────────────────────── Campagnes ───────────────────────────────── */
+
+/** Catégories proposées à la rédaction d'une campagne. */
+export const NOTIFICATION_CATEGORIES = [
+  'PROMOTION',
+  'NOUVEAU_PRODUIT',
+  'PROMO_CODE',
+  'INFORMATION',
+] as const;
+export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];
+
+export const NOTIFICATION_CATEGORY_LABELS: Record<NotificationCategory, string> = {
+  PROMOTION: 'Promotion',
+  NOUVEAU_PRODUIT: 'Nouveau produit ou format',
+  PROMO_CODE: 'Code promo',
+  INFORMATION: 'Information importante',
+};
 
 export const CAMPAIGN_STATUSES = [
   'DRAFT',

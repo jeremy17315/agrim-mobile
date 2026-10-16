@@ -22,6 +22,14 @@ import {
   PRODUCTION_LIMITS,
   PRODUCTION_STATUSES,
 } from './production';
+import {
+  CAMPAIGN_AUDIENCES,
+  CAMPAIGN_LIMITS,
+  CAMPAIGN_STATUSES,
+  NOTIFICATION_CATEGORIES,
+  NOTIFICATION_TARGETS,
+  NOTIFICATION_TARGET_VALUE_HINTS,
+} from './push';
 
 /* ────────────────────────────── Primitives ────────────────────────────── */
 
@@ -394,9 +402,79 @@ export const notificationSchema = z.object({
   body: z.string().max(500),
   isRead: z.boolean(),
   orderId: idSchema.nullable(),
+  /**
+   * Destination enregistrée au moment de l'écriture (`produit:nouveau-riz`,
+   * `commande:AGR-2026-0042`…). Facultative et tolérante : une API plus
+   * ancienne qui ne la renvoie pas laisse simplement la notification mener à
+   * la liste, comme avant.
+   */
+  linkTarget: z.enum(NOTIFICATION_TARGETS).nullable().default(null),
+  linkValue: z.string().max(120).nullable().default(null),
   createdAt: z.iso.datetime(),
 });
 export type Notification = z.infer<typeof notificationSchema>;
+
+/* ──────────────────────────────── Campagnes ────────────────────────────── */
+
+/**
+ * Une campagne telle qu'elle revient de l'administration.
+ *
+ * Les compteurs disent ce que le service de notifications a ACCEPTÉ
+ * (`sentCount`) et REFUSÉ (`failedCount`) : aucun ne prétend dire « lu ».
+ */
+export const campaignSchema = z.object({
+  id: idSchema,
+  title: z.string().max(120),
+  body: z.string().max(500),
+  category: z.enum(NOTIFICATION_CATEGORIES),
+  linkTarget: z.enum(NOTIFICATION_TARGETS).nullable(),
+  linkValue: z.string().max(120).nullable(),
+  audience: z.enum(CAMPAIGN_AUDIENCES),
+  status: z.enum(CAMPAIGN_STATUSES),
+  targetCount: z.number().int().min(0),
+  sentCount: z.number().int().min(0),
+  failedCount: z.number().int().min(0),
+  invalidCount: z.number().int().min(0),
+  lastError: z.string().max(500).nullable(),
+  sentAt: z.iso.datetime().nullable(),
+  createdAt: z.iso.datetime(),
+});
+export type Campaign = z.infer<typeof campaignSchema>;
+
+/**
+ * Rédaction d'une campagne. Les bornes viennent de `CAMPAIGN_LIMITS` : le
+ * formulaire et le serveur appliquent exactement les mêmes.
+ */
+export const createCampaignSchema = z
+  .object({
+    title: z
+      .string()
+      .trim()
+      .min(CAMPAIGN_LIMITS.titleMin, 'Titre trop court.')
+      .max(CAMPAIGN_LIMITS.titleMax, 'Titre trop long.'),
+    body: z
+      .string()
+      .trim()
+      .min(CAMPAIGN_LIMITS.bodyMin, 'Message trop court.')
+      .max(CAMPAIGN_LIMITS.bodyMax, 'Message trop long.'),
+    category: z.enum(NOTIFICATION_CATEGORIES),
+    linkTarget: z.enum(NOTIFICATION_TARGETS),
+    linkValue: z.string().trim().max(120).optional(),
+    audience: z.enum(CAMPAIGN_AUDIENCES),
+  })
+  // Une destination qui a besoin d'une valeur sans en avoir ne mène nulle part :
+  // mieux vaut refuser à la rédaction que d'envoyer un lien mort.
+  .refine(
+    (campagne) =>
+      NOTIFICATION_TARGET_VALUE_HINTS[campagne.linkTarget] === 'aucune valeur'
+        ? true
+        : (campagne.linkValue ?? '').length > 0,
+    {
+      path: ['linkValue'],
+      message: 'Cette destination a besoin d’une valeur (slug, référence…).',
+    },
+  );
+export type CreateCampaignInput = z.infer<typeof createCampaignSchema>;
 
 /* ──────────────────────────── Authentification ─────────────────────────── */
 

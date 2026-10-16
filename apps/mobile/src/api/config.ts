@@ -50,6 +50,14 @@ export const appConfigSchema = z.object({
       answer: z.string(),
     }),
   ),
+  /**
+   * État du push publié par le serveur. Valeur par défaut si l'API ne la
+   * connaît pas encore : « désactivé ». L'application ne demandera donc pas la
+   * permission de notifier sur la foi d'une supposition.
+   */
+  push: z
+    .object({ enabled: z.boolean() })
+    .default({ enabled: false }),
   announcement: z.string().nullable(),
   updatedAt: z.string(),
 });

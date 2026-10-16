@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   COMPANY,
   type AppConfig,
@@ -32,7 +33,10 @@ import type {
  */
 @Injectable()
 export class AppConfigService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+  ) {}
 
   /** Ce que l'application affiche : contact, points de vente, livraison, FAQ. */
   async publicConfig(): Promise<AppConfig> {
@@ -71,6 +75,12 @@ export class AppConfigService {
       pointsOfSale: points as PointOfSale[],
       delivery: settings.delivery ?? DEFAULT_DELIVERY,
       faq: settings.faq ?? [],
+      // L'état du push vient de la configuration du SERVEUR, pas d'une
+      // supposition de l'application : elle ne demandera pas la permission de
+      // notifier si rien ne peut être envoyé.
+      push: {
+        enabled: this.config.get<string>('PUSH_ENABLED') === 'true',
+      },
       announcement: settings.announcement ?? null,
       updatedAt: new Date().toISOString(),
     };

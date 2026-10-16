@@ -19,6 +19,7 @@ import { callMobileSupport, supportPhone } from '@/lib/contact';
 import { formatXof } from '@/lib/format';
 import { saveGuestPaymentAccess } from '@/lib/guestPayment';
 import { useIsOnline } from '@/lib/network';
+import { declareGuestPhone } from '@/lib/pushDevice';
 import { useCartStore, useCartTotals } from '@/store/cart';
 import { palette, spacing } from '@/theme/tokens';
 
@@ -134,6 +135,11 @@ export default function CommandeScreen() {
         codePromo: codePromo.trim() ? codePromo.trim() : undefined,
         idempotencyKey: idempotencyKey.current,
       });
+
+      // L'appareil de l'invité devient joignable : le numéro saisi ici est
+      // celui qu'il faudra prévenir (paiement confirmé, livreur en route).
+      // Sans compte, c'est la seule façon de le joindre autrement que par SMS.
+      void declareGuestPhone(parsedPhone.data).catch(() => undefined);
 
       // Le panier est vidé uniquement quand la commande existe. Pour le
       // transfert direct, la capacité temporaire est stockée AVANT d'aller

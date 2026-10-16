@@ -107,11 +107,16 @@ export class ExpoPushProvider extends PushProvider {
 
 /**
  * Pilote inerte, pour les tests et les environnements sans réseau sortant.
- * Il journalise sans rien envoyer.
+ *
+ * Il n'envoie RIEN et ne prétend pas le contraire : `sent: 0`. Annoncer un
+ * envoi qui n'a pas eu lieu rendrait faux tout ce qui s'appuie dessus — les
+ * compteurs d'une campagne, le repli SMS (déclenché quand aucun push n'est
+ * parti), et le journal des envois. Un échec honnête vaut mieux qu'un succès
+ * inventé.
  */
 @Injectable()
 export class NoopPushProvider extends PushProvider {
-  send(message: PushMessage): Promise<PushResult> {
-    return Promise.resolve({ sent: message.tokens.length, invalidTokens: [] });
+  send(_message: PushMessage): Promise<PushResult> {
+    return Promise.resolve({ sent: 0, invalidTokens: [] });
   }
 }

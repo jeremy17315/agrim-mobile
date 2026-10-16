@@ -1,7 +1,9 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import {
+  deepLinkToData,
   ORDER_STATUS_NOTIFICATION,
   renderNotification,
+  type NotificationDeepLink,
   type NotificationType,
   type OrderStatus,
 } from '@agrim/contracts';
@@ -57,11 +59,26 @@ export class NotificationsService {
     orderId?: string;
     /** Valeurs injectées dans le gabarit (ex. le code de livraison). */
     values?: { code?: string };
+    /**
+     * Destination au tap. Par défaut, une notification qui porte une référence
+     * de commande ouvre cette commande : c'est ce que le client cherche
+     * lorsqu'il touche « Commande confirmée ».
+     */
+    link?: NotificationDeepLink;
   }) {
     const { title, body } = renderNotification(input.type, {
       reference: input.reference,
       code: input.values?.code,
     });
+
+    // Lien par défaut : la commande concernée. Une notification sans
+    // destination enregistrée obligeait le mobile à recroiser les identifiants
+    // côté client pour deviner où aller — et il se trompait pour l'équipe.
+    const link =
+      input.link ??
+      (input.reference
+        ? { target: 'commande' as const, value: input.reference }
+        : undefined);
 
     const notification = await this.prisma.db.notification.create({
       data: {
@@ -70,8 +87,17 @@ export class NotificationsService {
         title,
         body,
         orderId: input.orderId ?? null,
+        linkTarget: link?.target ?? null,
+        linkValue: link?.value ?? null,
       },
-      select: { id: true, type: true, title: true, body: true },
+      select: {
+        id: true,
+        type: true,
+        title: true,
+        body: true,
+        linkTarget: true,
+        linkValue: true,
+      },
     });
 
     // Le code de livraison ne part JAMAIS en notification poussée : celle-ci
@@ -86,7 +112,12 @@ export class NotificationsService {
       isSensitive
         ? 'Ouvrez l’application pour voir votre code de livraison.'
         : body,
-      input.reference,
+      {
+        ...(link ? deepLinkToData(link) : {}),
+        // Conservé pour les applications déjà installées, qui lisent
+        // `data.reference` et ignorent `target`/`value`.
+        ...(input.reference ? { reference: input.reference } : {}),
+      },
       input.type,
       notification.id,
     );
@@ -112,6 +143,7 @@ export class NotificationsService {
       type,
       reference: input.reference,
       orderId: input.orderId,
+      link: { target: 'commande', value: input.reference },
     });
   }
 
@@ -145,6 +177,13 @@ export class NotificationsService {
       code: input.values?.code,
     });
 
+    // L'équipe n'a pas d'historique de commandes client : sans destination
+    // explicite, ces notifications ne menaient nulle part. Elles ouvrent
+    // désormais la commande à traiter dans l'espace gestion.
+    const link: NotificationDeepLink = input.reference
+      ? { target: 'gestion', value: input.reference }
+      : { target: 'information', value: '' };
+
     try {
       await this.prisma.db.notification.createMany({
         data: staff.map((user) => ({
@@ -153,6 +192,8 @@ export class NotificationsService {
           title: rendered.title,
           body: rendered.body,
           orderId: input.orderId ?? null,
+          linkTarget: link.target,
+          linkValue: link.value,
         })),
       });
     } catch {
@@ -163,11 +204,7 @@ export class NotificationsService {
     void this.deliverToUsers(
       staff.map((user) => user.id),
       rendered,
-      {
-        reference: input.reference ?? '',
-        target: 'information',
-        value: input.orderId ?? input.reference ?? '',
-      },
+      deepLinkToData(link),
       input.type,
     );
 
@@ -204,9 +241,13 @@ export class NotificationsService {
       title,
       body,
       {
+        ...deepLinkToData({
+          target: 'commande',
+          value: input.reference ?? '',
+        }),
+        // Compatibilité avec les applications installées qui lisent
+        // `data.reference` sans connaître `target`/`value`.
         reference: input.reference ?? '',
-        target: 'commande',
-        value: input.reference ?? '',
       },
     );
 
@@ -281,8 +322,8 @@ export class NotificationsService {
     title: string,
     body: string,
     data: Record<string, string>,
-  ): Promise<{ sent: number; error?: string }> {
-    if (tokens.length === 0) return { sent: 0 };
+  ): Promise<{ sent: number; invalidTokens: string[]; error?: string }> {
+    if (tokens.length === 0) return { sent: 0, invalidTokens: [] };
     try {
       const result = await this.push.send({ tokens, title, body, data });
       if (result.invalidTokens.length > 0) {
@@ -296,10 +337,14 @@ export class NotificationsService {
           .deleteMany({ where: { token: { in: result.invalidTokens } } })
           .catch(() => undefined);
       }
-      return { sent: result.sent };
+      return { sent: result.sent, invalidTokens: result.invalidTokens };
     } catch {
       this.logger.warn('Service de notifications injoignable.');
-      return { sent: 0, error: 'Service de notifications injoignable.' };
+      return {
+        sent: 0,
+        invalidTokens: [],
+        error: 'Service de notifications injoignable.',
+      };
     }
   }
 
@@ -344,29 +389,47 @@ export class NotificationsService {
     userId: string,
     title: string,
     body: string,
-    reference?: string,
+    data: Record<string, string>,
     type?: NotificationType,
     notificationId?: string,
   ) {
     let pushed = 0;
     try {
-      const tokens = await this.prisma.db.pushToken.findMany({
-        where: { userId },
-        select: { token: true },
-      });
+      // DEUX sources, une seule liste : les appareils enregistrés par
+      // installation (`push_devices`, y compris ceux d'un client sans compte
+      // qui s'est ensuite connecté) et l'ancienne table de compte
+      // (`PushToken`), conservée pour les applications déjà installées. Un
+      // même jeton présent dans les deux tables ne doit recevoir qu'un envoi.
+      const [devices, legacy] = await Promise.all([
+        this.prisma.db.pushDevice.findMany({
+          where: { userId, isActive: true },
+          select: { token: true },
+        }),
+        this.prisma.db.pushToken.findMany({
+          where: { userId },
+          select: { token: true },
+        }),
+      ]);
+      const tokens = [...new Set([...devices, ...legacy].map((r) => r.token))];
 
       if (tokens.length > 0) {
         const result = await this.push.send({
-          tokens: tokens.map((t) => t.token),
+          tokens,
           title,
           body,
-          data: reference ? { reference } : undefined,
+          data: Object.keys(data).length > 0 ? data : undefined,
         });
         pushed = result.sent;
 
         // Jetons morts (application désinstallée) : les garder ferait grossir
-        // la table et ralentirait chaque envoi.
+        // les tables et ralentirait chaque envoi.
         if (result.invalidTokens.length > 0) {
+          await this.prisma.db.pushDevice
+            .updateMany({
+              where: { token: { in: result.invalidTokens } },
+              data: { isActive: false },
+            })
+            .catch(() => undefined);
           await this.prisma.db.pushToken.deleteMany({
             where: { token: { in: result.invalidTokens } },
           });
@@ -381,7 +444,15 @@ export class NotificationsService {
     // `deliver` s'arrêtait là, en silence. C'est précisément le client qu'il
     // faut joindre autrement.
     if (pushed === 0 && type && this.meriteUnSms(type)) {
-      await this.envoyerSms(userId, body, type, reference, notificationId);
+      // La référence de commande vient de la charge utile : c'est elle qui
+      // permet au site d'écrire « votre commande AGR-… est confirmée ».
+      await this.envoyerSms(
+        userId,
+        body,
+        type,
+        data['reference'],
+        notificationId,
+      );
     }
   }
 
@@ -452,6 +523,10 @@ export class NotificationsService {
           body: true,
           isRead: true,
           orderId: true,
+          // La destination enregistrée à l'écriture : c'est elle qui permet
+          // d'ouvrir la bonne fiche au tap, sans recroiser quoi que ce soit.
+          linkTarget: true,
+          linkValue: true,
           createdAt: true,
         },
       }),
@@ -483,12 +558,124 @@ export class NotificationsService {
 
   /* ------------------------------ Jetons push ---------------------------- */
 
+  /* --------------------------- Appareils (sans compte) -------------------- */
+
   /**
-   * Enregistre le jeton d'un appareil.
+   * Enregistre une INSTALLATION, compte ou pas.
    *
-   * Un jeton peut migrer d'un compte à l'autre sur un téléphone partagé :
-   * l'`upsert` le réattribue au dernier utilisateur connecté plutôt que de
-   * laisser deux comptes recevoir les mêmes notifications.
+   * C'est ce qui rend le push possible sans compte : le téléphone d'un client
+   * qui commande en invité est identifié par son installation, et le numéro
+   * qu'il saisit à la commande y est rattaché. Le compte connecté, lui, est
+   * déduit de la session par l'appelant — jamais envoyé par le client.
+   *
+   * Un même téléphone peut changer de main : l'`upsert` par installation
+   * réattribue proprement le compte et le jeton au lieu d'empiler les lignes.
+   */
+  async registerDevice(input: {
+    installationId: string;
+    token: string;
+    platform: string;
+    userId?: string | null;
+    phone?: string | null;
+    appVersion?: string | null;
+    promoOptIn?: boolean;
+  }) {
+    const { installationId, token, platform } = input;
+
+    // Le jeton est UNIQUE : s'il appartenait à une autre installation (même
+    // appareil réinstallé, identifiant perdu), on la déplace au lieu de lever
+    // une erreur de contrainte — le client, lui, ne peut rien y faire.
+    await this.prisma.db.pushDevice.deleteMany({
+      where: { token, installationId: { not: installationId } },
+    });
+
+    await this.prisma.db.pushDevice.upsert({
+      where: { installationId },
+      create: {
+        installationId,
+        token,
+        platform,
+        userId: input.userId ?? null,
+        phone: input.phone ?? null,
+        appVersion: input.appVersion ?? null,
+        promoOptIn: input.promoOptIn ?? true,
+      },
+      update: {
+        token,
+        platform,
+        // `undefined` (champ absent) laisse la valeur en place ; `null` efface.
+        ...(input.userId !== undefined ? { userId: input.userId } : {}),
+        ...(input.phone !== undefined ? { phone: input.phone } : {}),
+        ...(input.appVersion !== undefined
+          ? { appVersion: input.appVersion }
+          : {}),
+        ...(input.promoOptIn !== undefined
+          ? { promoOptIn: input.promoOptIn }
+          : {}),
+        isActive: true,
+        lastSeenAt: new Date(),
+      },
+    });
+
+    return { registered: true };
+  }
+
+  /**
+   * Détache l'appareil du compte connecté (déconnexion).
+   *
+   * L'appareil reste ACTIF : il continuera de recevoir les notifications des
+   * commandes invitées passées depuis ce téléphone. Seul le rattachement au
+   * compte disparaît — sinon le compte suivant recevrait les notifications du
+   * précédent.
+   */
+  async unlinkDevice(installationId: string, token: string) {
+    const result = await this.prisma.db.pushDevice.updateMany({
+      where: { installationId, token },
+      data: { userId: null, lastSeenAt: new Date() },
+    });
+    // `PushToken` (ancienne table) reste purgé comme avant.
+    await this.prisma.db.pushToken.deleteMany({ where: { token } });
+    return { removed: result.count > 0 };
+  }
+
+  /**
+   * Met à jour un appareil DÉJÀ enregistré.
+   *
+   * Sert à deux choses, et rien d'autre :
+   *  - le numéro qu'un invité vient de saisir à la commande — c'est lui que
+   *    `notifyPhone` cherchera pour prévenir d'un paiement confirmé ou d'un
+   *    livreur en route ;
+   *  - le refus des promotions, que les campagnes commerciales respectent.
+   *
+   * Aucun jeton n'est exigé : l'installation identifie l'appareil. La route
+   * n'accorde aucun droit — elle n'écrit qu'un numéro ou une préférence.
+   */
+  async updateDevice(input: {
+    installationId: string;
+    phone?: string | null;
+    promoOptIn?: boolean;
+  }) {
+    const data: { phone?: string | null; promoOptIn?: boolean } = {};
+    if (input.phone !== undefined) data.phone = input.phone;
+    if (input.promoOptIn !== undefined) data.promoOptIn = input.promoOptIn;
+    if (Object.keys(data).length === 0) return { updated: false };
+
+    const result = await this.prisma.db.pushDevice.updateMany({
+      where: { installationId: input.installationId },
+      data: { ...data, lastSeenAt: new Date() },
+    });
+    // `false` = installation inconnue : l'application n'a pas encore de jeton
+    // (permission refusée, simulateur). Ce n'est pas une erreur, et il n'y a
+    // rien à réparer côté client.
+    return { updated: result.count > 0 };
+  }
+
+  /**
+   * Enregistre le jeton d'un appareil rattaché à un compte.
+   *
+   * Conservé pour les applications déjà installées. La nouvelle route
+   * `/notifications/devices` fait mieux : elle enregistre l'installation, ce
+   * qui permet de recevoir aussi les notifications d'une commande invitée.
    */
   async registerToken(userId: string, token: string, platform: string) {
     await this.prisma.db.pushToken.upsert({

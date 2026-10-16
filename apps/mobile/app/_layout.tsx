@@ -21,6 +21,15 @@ import { useAuthStore } from '@/store/auth';
 import { palette, spacing } from '@/theme/tokens';
 
 /**
+ * Pont sans interface : suit le cycle de vie de l'appareil (enregistrement,
+ * rattachement au compte, détachement) et ouvre la destination d'un tap.
+ */
+function PushRegistration() {
+  usePushRegistration();
+  return null;
+}
+
+/**
  * Racine de l'application.
  *
  * Le QueryClient est créé dans un état local et non au niveau module : sinon
@@ -125,12 +134,13 @@ export default function RootLayout() {
       });
   }, [catalogHydrated, queryClient]);
 
-  // Jeton de notification : lié à la session, pas à un écran.
-  usePushRegistration();
-
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
+        {/* Le push a besoin de l'état publié par `GET /config/app` (le serveur
+            peut-il seulement envoyer ?) : il vit donc DANS le fournisseur de
+            requêtes, pas à côté. */}
+        <PushRegistration />
         <SafeAreaProvider>
           <StatusBar style="dark" />
           <View style={styles.app}>

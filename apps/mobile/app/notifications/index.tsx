@@ -1,9 +1,14 @@
-import type { NotificationType } from '@agrim/contracts';
-import { useFocusEffect, useRouter } from 'expo-router';
+import {
+  deepLinkToPath,
+  NOTIFICATION_FALLBACK_PATH,
+  type NotificationType,
+} from '@agrim/contracts';
+import { useFocusEffect, useRouter, type Href } from 'expo-router';
 import { useCallback, useEffect, useRef } from 'react';
 import { FlatList, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { useAppConfig } from '@/api/config';
 import {
   useMarkNotificationsRead,
   useNotifications,
@@ -31,6 +36,10 @@ export default function NotificationsScreen() {
   const notifications = useNotifications(isAuthenticated);
   const markRead = useMarkNotificationsRead();
   const orders = useOrders(isAuthenticated);
+  const config = useAppConfig();
+  // `null` tant que le serveur n'a pas répondu : on n'annonce pas l'absence
+  // d'alertes avant de la connaître.
+  const pushEnabled = config.data?.push.enabled ?? null;
 
   const hasUnread = (notifications.data?.meta.unread ?? 0) > 0;
 
@@ -54,11 +63,31 @@ export default function NotificationsScreen() {
   );
 
   /**
-   * Une notification liée à une commande doit y mener. L'identifiant interne
-   * ne sert à rien à la navigation : on retrouve la référence dans
-   * l'historique déjà chargé, et à défaut on ouvre la liste.
+   * Une notification mène à la destination enregistrée par le serveur
+   * (`target`/`value`) : fiche produit, catalogue, suivi de commande, dossier
+   * interne. La traduction en route est celle du contrat partagé — un lien
+   * écrit en base ne peut pas mener ailleurs que là où le mobile sait aller.
+   *
+   * Les notifications antérieures n'ont pas de destination : on retombe alors
+   * sur la commande, retrouvée par son identifiant dans l'historique chargé.
    */
   const openTarget = (item: NotificationItem) => {
+    const path =
+      item.linkTarget !== null
+        ? deepLinkToPath({
+            target: item.linkTarget,
+            value: item.linkValue ?? '',
+          })
+        : null;
+
+    // La liste n'est pas une destination : appuyer dessus ne doit rien faire
+    // plutôt que renvoyer l'écran sur lui-même.
+    if (path && path !== NOTIFICATION_FALLBACK_PATH) {
+      // Route produite par le contrat partagé : le mobile sait l'ouvrir.
+      router.push(path as Href);
+      return;
+    }
+
     if (!item.orderId) return;
     const match = orders.data?.data.find((order) => order.id === item.orderId);
 
@@ -114,7 +143,11 @@ export default function NotificationsScreen() {
             <EmptyState
               icon="bell"
               title="Aucune notification"
-              message="Vous serez prévenu de chaque étape de vos commandes."
+              message={
+                pushEnabled === false
+                  ? 'Les alertes automatiques ne sont pas encore activées : vos notifications s’affichent ici.'
+                  : 'Vous serez prévenu de chaque étape de vos commandes.'
+              }
             />
           }
           renderItem={({ item }) => (
@@ -134,7 +167,9 @@ function NotificationRow({
   onPress: () => void;
 }) {
   const { icon, tint } = PRESENTATION[item.type];
-  const actionable = item.orderId !== null;
+  // Une destination enregistrée vaut un appui, même sans commande liée : une
+  // campagne qui ouvre une fiche produit doit être cliquable.
+  const actionable = item.linkTarget !== null || item.orderId !== null;
 
   return (
     <Pressable

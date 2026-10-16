@@ -186,7 +186,9 @@ livreur n'y donne accès : le livreur le saisit sous la dictée.
 | Revue de production | `/producers/productions/**` | `GESTIONNAIRE`, `ADMIN`, `DG` |
 | Direction | `/analytics/dashboard` | `DG`, `ADMIN` |
 | Synchronisation | `/catalog-sync`, `/catalog-sync/diff` | `ADMIN`, `DG` |
-| Notifications | `/notifications`, `/notifications/tokens` | — |
+| Notifications | `/notifications`, `/notifications/read` | compte |
+| Appareil (jeton push) | `/notifications/devices` | public — l'installation suffit ; le compte est déduit du jeton s'il est présent. `/notifications/tokens` reste pour les applications déjà installées |
+| Campagnes | `/campaigns`, `/campaigns/:id/send` | `ADMIN`, `DG` — brouillon puis envoi, deux gestes distincts |
 | Parrainage | `/referrals/me` | — |
 | Santé, mentions | `/health`, `/legal/**` | public |
 

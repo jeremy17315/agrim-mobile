@@ -48,6 +48,11 @@ jest.mock('@/api/notifications', () => ({
   useMarkNotificationsRead: () => ({ mutate: mockMarkMutate }),
 }));
 
+let mockPushEnabled = true;
+jest.mock('@/api/config', () => ({
+  useAppConfig: () => ({ data: { push: { enabled: mockPushEnabled } } }),
+}));
+
 jest.mock('@/api/orders', () => ({
   useOrders: () => ({
     data: {
@@ -79,6 +84,10 @@ const notification = (
   body: 'Votre commande AGR-2026-0007 est en cours de préparation.',
   isRead: false,
   orderId: 'order-1',
+  // Notifications antérieures au contrat de destination : elles se rabattent
+  // sur la commande liée.
+  linkTarget: null,
+  linkValue: null,
   createdAt: new Date().toISOString(),
   ...overrides,
 });
@@ -94,6 +103,7 @@ const listState = (items: NotificationItem[], unread: number) => ({
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockPushEnabled = true;
   mockList = listState([notification()], 1);
 });
 
@@ -147,6 +157,55 @@ it('renvoie vers l’historique quand la commande n’est pas connue', () => {
   );
 
   expect(mockPush).toHaveBeenCalledWith('/commandes');
+});
+
+it('ouvre la destination enregistrée par le serveur, pas seulement la commande', () => {
+  mockList = listState(
+    [
+      notification({
+        type: 'PROMOTION',
+        title: 'Nouveau format',
+        linkTarget: 'produit',
+        linkValue: 'riz-royal-grains',
+        orderId: null,
+      }),
+    ],
+    1,
+  );
+
+  render(<NotificationsScreen />);
+  fireEvent.press(screen.getByLabelText(/Nouveau format\./));
+
+  expect(mockPush).toHaveBeenCalledWith('/produit/riz-royal-grains');
+});
+
+it('ouvre le suivi d’une commande invitée, absente de l’historique chargé', () => {
+  mockList = listState(
+    [
+      notification({
+        linkTarget: 'commande',
+        linkValue: 'AGR-2026-0099',
+        orderId: null,
+      }),
+    ],
+    1,
+  );
+
+  render(<NotificationsScreen />);
+  fireEvent.press(
+    screen.getByLabelText(/Commande en préparation\. Votre commande/),
+  );
+
+  expect(mockPush).toHaveBeenCalledWith('/commandes/AGR-2026-0099');
+});
+
+it('ne promet pas d’alertes quand le serveur n’en envoie pas', () => {
+  mockPushEnabled = false;
+  mockList = listState([], 0);
+
+  render(<NotificationsScreen />);
+
+  expect(screen.getByText(/alertes automatiques ne sont pas encore activées/)).toBeTruthy();
 });
 
 it('affiche un état vide explicite', () => {

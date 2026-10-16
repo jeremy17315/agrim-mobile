@@ -62,6 +62,24 @@ export interface FaqEntry {
   answer: string;
 }
 
+/**
+ * État des notifications poussées, publié par le serveur.
+ *
+ * L'application ne peut pas le deviner : `PUSH_ENABLED=false` (développement,
+ * recette) signifie qu'aucun envoi ne partira. Dans ce cas, demander la
+ * permission à l'utilisateur serait malhonnête — on lui ferait accepter des
+ * alertes qui n'arriveront pas. L'écran de notifications le dit alors
+ * franchement, et les notifications restent consultables dans l'application.
+ *
+ * Volontairement SANS clé VAPID : le push navigateur n'entre pas dans ce
+ * périmètre (l'application web n'a pas de jeton de notification), et publier
+ * une clé que personne ne consomme serait un mensonge de plus.
+ */
+export interface PushSettings {
+  /** Le serveur peut-il réellement envoyer des notifications ? */
+  enabled: boolean;
+}
+
 /** Tout ce que l'application reçoit pour se présenter au client. */
 export interface AppConfig {
   version: number;
@@ -69,6 +87,8 @@ export interface AppConfig {
   pointsOfSale: PointOfSale[];
   delivery: DeliveryInfo;
   faq: FaqEntry[];
+  /** État du push : l'application ne promet pas ce que le serveur ne fait pas. */
+  push: PushSettings;
   /**
    * Message affiché en haut du catalogue (annonce, rupture, information).
    * Vide = pas de bandeau.

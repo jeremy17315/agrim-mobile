@@ -74,27 +74,63 @@ export function useMarkNotificationsRead() {
   });
 }
 
-/* ----------------------------- Jetons push ------------------------------ */
+/* ------------------------------ Appareils -------------------------------- */
 
 /**
- * Ces deux appels ne sont pas des hooks : ils sont déclenchés par le cycle de
- * vie de la session (connexion, déconnexion), pas par le rendu d'un écran.
+ * Ces appels ne sont pas des hooks : ils sont déclenchés par le cycle de vie
+ * de l'appareil (démarrage, connexion, déconnexion) et par la commande d'un
+ * invité, jamais par le rendu.
+ *
+ * Les trois routes sont publiques ET acceptent la session : un invité
+ * enregistre son appareil sans compte, et un client connecté voit le sien
+ * rattaché à son compte — le compte est déduit du jeton de session par le
+ * serveur, jamais envoyé dans le corps de la requête.
  */
 
-export function registerPushToken(token: string, platform: 'ios' | 'android') {
+export function registerPushDevice(input: {
+  installationId: string;
+  token: string;
+  platform: 'ios' | 'android';
+  phone?: string;
+  promoOptIn?: boolean;
+}) {
   return apiRequest({
-    path: '/notifications/tokens',
+    path: '/notifications/devices',
     method: 'POST',
-    body: { token, platform },
+    body: input,
     schema: z.object({ registered: z.boolean() }),
+    isPublic: true,
+    withOptionalAuth: true,
   });
 }
 
-export function removePushToken(token: string, platform: 'ios' | 'android') {
+/** Déconnexion : l'appareil reste actif, mais détaché du compte précédent. */
+export function unlinkPushDevice(input: {
+  installationId: string;
+  token: string;
+}) {
   return apiRequest({
-    path: '/notifications/tokens',
+    path: '/notifications/devices',
     method: 'DELETE',
-    body: { token, platform },
+    body: input,
     schema: z.object({ removed: z.boolean() }),
+    isPublic: true,
+    withOptionalAuth: true,
+  });
+}
+
+/** Numéro d'un invité (pour le joindre) ou préférence promotions. */
+export function updatePushDevice(input: {
+  installationId: string;
+  phone?: string;
+  promoOptIn?: boolean;
+}) {
+  return apiRequest({
+    path: '/notifications/devices',
+    method: 'PATCH',
+    body: input,
+    schema: z.object({ updated: z.boolean() }),
+    isPublic: true,
+    withOptionalAuth: true,
   });
 }
