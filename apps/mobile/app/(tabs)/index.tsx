@@ -1,87 +1,188 @@
-import { COMPANY } from '@agrim/contracts';
 import { useRouter } from 'expo-router';
-import { Image, Pressable, StyleSheet, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useEffect, useState } from 'react';
+import {
+  AccessibilityInfo,
+  Animated,
+  Easing,
+  Image,
+  Platform,
+  StyleSheet,
+  View,
+} from 'react-native';
 
 import { Button, Icon, Text } from '@/components/ui';
 import { palette, radius, shadow, spacing } from '@/theme/tokens';
 
 /**
- * Première étape du parcours d'achat.
+ * Porte d'entrée du parcours : un seul geste, un grand bouton COMMENCER.
  *
- * Inspiré d'un écran d'accueil éditorial : une identité forte, une seule
- * promesse et une seule action. Aucun menu ni compte ne coupe l'élan vers le
- * catalogue.
+ * La page est dépouillée de tout ce qui retardait l'entrée — ni menu, ni
+ * compte, ni argumentaire — et rhabillée du strict nécessaire : le logo, un
+ * filet doré, le bouton. Deux halos très pâles donnent de la profondeur au
+ * fond ivoire sans rien ajouter à lire. Rien à décider, une seule action.
+ *
+ * Animations : le bloc se pose en fondu au chargement, le bouton respire
+ * lentement pour attirer l'œil vers la seule action possible, et il s'enfonce
+ * sous le doigt. L'ensemble est neutralisé si le système demande de réduire
+ * les animations (accessibilité) — l'écran reste alors pleinement lisible.
  */
+
+/**
+ * Le pilote natif n'existe pas sur le web : l'activer y ferait basculer
+ * l'animation en JavaScript en émettant un avertissement à chaque image.
+ * Sur téléphone, il fait porter le calcul par la couche native (aucun travail
+ * sur le fil JavaScript pendant la pulsation).
+ */
+const PILOTE_NATIF = Platform.OS !== 'web';
+
+/** Durée d'un aller ou d'un retour de la respiration du bouton. */
+const RESPIRATION_MS = 1500;
+
+/** Demande du système, sans jamais faire échouer l'écran si elle est absente. */
+async function mouvementReduitDemande(): Promise<boolean> {
+  try {
+    return await AccessibilityInfo.isReduceMotionEnabled();
+  } catch {
+    return false;
+  }
+}
+
 export default function WelcomeScreen() {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
+
+  /**
+   * Valeurs animées, créées une seule fois.
+   *
+   * `useState` avec initialisation paresseuse plutôt que `useRef(...).current` :
+   * la valeur doit être lue PENDANT le rendu pour alimenter les styles, ce que
+   * les règles React Compiler du projet interdisent à un `ref`.
+   */
+  /** 0 → 1 : apparition du bloc. */
+  const [entree] = useState(() => new Animated.Value(0));
+  /** 0 → 1 → 0 : respiration du bouton, en boucle. */
+  const [respiration] = useState(() => new Animated.Value(0));
+  /** Échelle appliquée sous le doigt. */
+  const [pression] = useState(() => new Animated.Value(1));
+
+  useEffect(() => {
+    let vivant = true;
+    let boucle: Animated.CompositeAnimation | null = null;
+
+    const demarrer = (mouvementReduit: boolean) => {
+      if (!vivant) return;
+
+      // Mouvement réduit demandé par le système : on affiche directement
+      // l'état final, sans fondu ni pulsation.
+      if (mouvementReduit) {
+        entree.setValue(1);
+        return;
+      }
+
+      Animated.timing(entree, {
+        toValue: 1,
+        duration: 420,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: PILOTE_NATIF,
+      }).start();
+
+      boucle = Animated.loop(
+        Animated.sequence([
+          Animated.timing(respiration, {
+            toValue: 1,
+            duration: RESPIRATION_MS,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: PILOTE_NATIF,
+          }),
+          Animated.timing(respiration, {
+            toValue: 0,
+            duration: RESPIRATION_MS,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: PILOTE_NATIF,
+          }),
+        ]),
+      );
+      boucle.start();
+    };
+
+    void mouvementReduitDemande().then(demarrer);
+
+    // Sans cet arrêt, la boucle continuerait après le démontage de l'écran
+    // (changement d'écran, rechargement à chaud) : travail pour rien.
+    return () => {
+      vivant = false;
+      boucle?.stop();
+    };
+  }, [entree, respiration]);
+
+  // Respiration (amplitude discrète : 3,5 %) multipliée par l'enfoncement.
+  const echelle = Animated.multiply(
+    respiration.interpolate({ inputRange: [0, 1], outputRange: [1, 1.035] }),
+    pression,
+  );
+
+  const apparition = {
+    opacity: entree,
+    transform: [
+      {
+        translateY: entree.interpolate({
+          inputRange: [0, 1],
+          outputRange: [16, 0],
+        }),
+      },
+    ],
+  };
 
   return (
-    <View style={[styles.screen, { paddingTop: insets.top + spacing.lg }]}>
-      <View style={styles.topLine}>
-        <Text variant="micro" color="green" style={styles.company}>
-          AGRIM
-        </Text>
-        <Text variant="caption" color="muted">
-          Riz local de Côte d’Ivoire
-        </Text>
-      </View>
+    <View style={styles.screen} testID="accueil">
+      {/* Décor : deux halos pâles, purement visuels et hors du parcours de
+          lecture (les lecteurs d'écran les ignorent). */}
+      <View style={styles.haloOr} />
+      <View style={styles.haloVert} />
 
-      <View style={styles.intro}>
-        <Text variant="display">Le bon riz,</Text>
-        <Text variant="display" color="green">
-          simplement.
-        </Text>
-        <Text variant="body" color="body" style={styles.copy}>
-          Choisissez votre riz Bélier d’Or et faites-vous livrer en quelques
-          clics.
-        </Text>
-      </View>
-
-      <View style={styles.visual}>
-        <View style={styles.logoHalo}>
-          <Image
-            source={require('../../assets/logo-agrim.png')}
-            style={styles.logo}
-            resizeMode="contain"
-            accessibilityLabel="Logo AGRIM"
-          />
-        </View>
-        <View style={styles.brandStamp}>
-          <Text variant="micro" style={styles.brandName}>
-            {COMPANY.brandName.toUpperCase()}
-          </Text>
-          <Text variant="caption" style={styles.brandSignature}>
-            {COMPANY.brandSignature}
-          </Text>
-        </View>
-      </View>
-
-      <View style={styles.bottom}>
-        <View style={styles.dots} accessibilityLabel="Parcours express">
-          <View style={[styles.dot, styles.dotActive]} />
-        </View>
-        <Button
-          label="COMMENCER"
-          onPress={() => router.push('/catalogue')}
-          icon={<Icon name="arrow-right" size={19} color="white" />}
+      <Animated.View style={[styles.bloc, apparition]}>
+        <Image
+          source={require('../../assets/logo-agrim.png')}
+          style={styles.logo}
+          resizeMode="contain"
+          accessibilityLabel="Logo AGRIM"
         />
-        <Text variant="micro" color="muted" center>
-          Commande sans compte · Livraison ou transfert direct
-        </Text>
-        <Pressable
-          onPress={() => router.push('/contact')}
-          accessibilityRole="button"
-          accessibilityLabel="Contact et aide"
-          style={styles.contact}
+
+        <View style={styles.filet} />
+
+        {/* L'ombre portée fait décoller le bouton du fond ivoire ; l'échelle
+            animée, elle, est portée par ce conteneur, pas par le bouton
+            partagé — le reste de l'application garde son rendu habituel. */}
+        <Animated.View
+          style={[styles.action, { transform: [{ scale: echelle }] }]}
         >
-          <Icon name="headset" size={15} color="green" />
-          <Text variant="caption" color="green">
-            Contact et aide
-          </Text>
-        </Pressable>
-      </View>
+          <Button
+            label="COMMENCER"
+            size="lg"
+            icon={<Icon name="arrow-right" size={20} color="white" />}
+            onPress={() => router.push('/catalogue')}
+            onPressIn={() =>
+              Animated.spring(pression, {
+                toValue: 0.97,
+                speed: 40,
+                bounciness: 0,
+                useNativeDriver: PILOTE_NATIF,
+              }).start()
+            }
+            onPressOut={() =>
+              Animated.spring(pression, {
+                toValue: 1,
+                speed: 20,
+                bounciness: 8,
+                useNativeDriver: PILOTE_NATIF,
+              }).start()
+            }
+          />
+        </Animated.View>
+
+        <Text variant="caption" color="muted" center style={styles.note}>
+          Commandez en toute sécurité
+        </Text>
+      </Animated.View>
     </View>
   );
 }
@@ -89,68 +190,54 @@ export default function WelcomeScreen() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.xxl,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.xl,
     backgroundColor: palette.bg,
-  },
-  topLine: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  company: { letterSpacing: 2.5 },
-  contact: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.xs,
-    paddingVertical: spacing.sm,
-  },
-  intro: { marginTop: spacing.xxxl, gap: spacing.xs },
-  copy: { maxWidth: 285, marginTop: spacing.sm, lineHeight: 20 },
-  visual: {
-    flex: 1,
-    minHeight: 260,
-    marginTop: spacing.xl,
-    alignItems: 'center',
-    justifyContent: 'center',
+    // Les halos sont posés à cheval sur les bords et rognés au cadre : sans
+    // cela, ils déborderaient et créeraient une barre de défilement web.
     overflow: 'hidden',
-    borderRadius: radius.xl,
-    backgroundColor: palette.greenDeep,
+  },
+  haloOr: {
+    position: 'absolute',
+    top: -96,
+    right: -72,
+    width: 240,
+    height: 240,
+    borderRadius: radius.pill,
+    backgroundColor: palette.goldSoft,
+    pointerEvents: 'none',
+  },
+  haloVert: {
+    position: 'absolute',
+    bottom: -120,
+    left: -88,
+    width: 288,
+    height: 288,
+    borderRadius: radius.pill,
+    backgroundColor: palette.greenSoft,
+    pointerEvents: 'none',
+  },
+  bloc: {
+    alignItems: 'center',
+    width: '100%',
+    maxWidth: 340,
+    gap: spacing.md,
+  },
+  logo: { width: 136, height: 54 },
+  filet: {
+    width: 32,
+    height: 3,
+    borderRadius: radius.pill,
+    backgroundColor: palette.gold,
+    marginBottom: spacing.md,
+  },
+  // Sur une tablette ou dans l'aperçu web, un bouton pleine largeur serait
+  // démesuré : il reste grand, mais borné, et toujours centré.
+  action: {
+    width: '100%',
+    borderRadius: radius.lg,
     ...shadow.card,
   },
-  logoHalo: {
-    width: 280,
-    height: 142,
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-    borderRadius: radius.lg,
-    backgroundColor: 'rgba(255,255,255,0.10)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.18)',
-  },
-  logo: { width: 248, height: 100 },
-  brandStamp: {
-    position: 'absolute',
-    right: spacing.lg,
-    bottom: spacing.lg,
-    alignItems: 'flex-end',
-  },
-  brandName: { color: palette.gold, letterSpacing: 1.4 },
-  brandSignature: { color: 'rgba(255,255,255,0.78)' },
-  bottom: { gap: spacing.md, paddingTop: spacing.xl },
-  dots: {
-    flexDirection: 'row',
-    alignSelf: 'center',
-    alignItems: 'center',
-    gap: 6,
-  },
-  dot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: palette.line,
-  },
-  dotActive: { width: 18, backgroundColor: palette.green },
+  note: { marginTop: spacing.sm },
 });

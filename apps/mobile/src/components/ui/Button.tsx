@@ -6,12 +6,17 @@ import {
   View,
 } from 'react-native';
 
-import { palette, radius, spacing } from '@/theme/tokens';
+import { palette, radius, spacing, type TypographyVariant } from '@/theme/tokens';
 
 import { Text } from './Text';
 
 export type ButtonVariant = 'primary' | 'outline' | 'ghost' | 'danger';
-export type ButtonSize = 'sm' | 'md';
+/**
+ * `lg` : le grand bouton des écrans à une seule action (porte d'entrée du
+ * parcours). Le libellé y est plus grand et la cible plus haute, sans qu'aucun
+ * écran n'ait à écrire une taille ou une couleur en dur.
+ */
+export type ButtonSize = 'sm' | 'md' | 'lg';
 
 export type ButtonProps = Omit<PressableProps, 'style' | 'children'> & {
   label: string;
@@ -66,7 +71,7 @@ export function Button({
       disabled={isDisabled}
       style={({ pressed }) => [
         styles.base,
-        size === 'sm' ? styles.sm : styles.md,
+        boiteDeTaille(size),
         { backgroundColor: BG[variant] },
         variant === 'outline' && styles.outline,
         fullWidth && styles.fullWidth,
@@ -82,7 +87,7 @@ export function Button({
           <>
             {icon}
             <Text
-              variant={size === 'sm' ? 'h3' : 'h3'}
+              variant={libelleDeTaille(size)}
               style={[styles.label, { color: FG[variant] }]}
             >
               {label}
@@ -94,6 +99,18 @@ export function Button({
   );
 }
 
+/** Boîte du bouton selon sa taille. */
+function boiteDeTaille(size: ButtonSize) {
+  if (size === 'lg') return styles.lg;
+  if (size === 'sm') return styles.sm;
+  return styles.md;
+}
+
+/** Un grand bouton porte un libellé plus grand, pas seulement plus d'air. */
+function libelleDeTaille(size: ButtonSize): TypographyVariant {
+  return size === 'lg' ? 'h1' : 'h3';
+}
+
 const styles = StyleSheet.create({
   base: {
     borderRadius: radius.md,
@@ -103,6 +120,11 @@ const styles = StyleSheet.create({
   md: {
     minHeight: 48,
     paddingHorizontal: spacing.lg,
+  },
+  lg: {
+    minHeight: 68,
+    paddingHorizontal: spacing.xl,
+    borderRadius: radius.lg,
   },
   sm: {
     minHeight: 36,
