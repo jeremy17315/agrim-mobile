@@ -266,6 +266,73 @@ describe('Paiement direct manuel (e2e)', () => {
     expect(servie?.qrPayload).toBeNull();
   });
 
+  it('publie le LIEN de paiement, seul moyen de payer depuis ce téléphone', async () => {
+    const lien = 'https://pay.wave.com/m/M_agrim_test/c/ci/';
+    const enregistrement = await server()
+      .post(`${prefix}/management/payments/methods`)
+      .set(auth(adminToken))
+      .send({
+        code: 'ORANGE_MONEY',
+        operatorName: 'Orange Money (test)',
+        receivingNumber: '0700000000',
+        paymentUrl: `  ${lien}  `,
+      });
+    expect(enregistrement.status).toBe(201);
+    const orange = (
+      enregistrement.body as { code: string; paymentUrl: string | null }[]
+    ).find((m) => m.code === 'ORANGE_MONEY');
+    expect(orange?.paymentUrl).toBe(lien);
+
+    const publique = await server().get(`${prefix}/payments/methods`);
+    const servie = (
+      publique.body as { methods: { code: string; paymentUrl: string | null }[] }
+    ).methods.find((m) => m.code === 'ORANGE_MONEY');
+    expect(servie?.paymentUrl).toBe(lien);
+
+    // …et dans les instructions de la commande : c'est là que le client paie.
+    const commande = await creerCommandeDirecte();
+    const reference = (commande.body as { reference: string }).reference;
+    const instructions = await server()
+      .get(`${prefix}/payments/orders/${reference}/instructions`)
+      .set(auth(clientToken));
+    expect(
+      (instructions.body as { method: { paymentUrl: string | null } }).method
+        .paymentUrl,
+    ).toBe(lien);
+  });
+
+  it('refuse un lien au schéma inconnu, et retire le lien quand AGRIM le vide', async () => {
+    // `javascript:` ou `file:` ne doivent JAMAIS pouvoir être ouverts par
+    // l'application : le refus est ici, pas dans l'écran.
+    for (const dangereux of ['javascript:alert(1)', 'file:///etc/passwd']) {
+      const refus = await server()
+        .post(`${prefix}/management/payments/methods`)
+        .set(auth(adminToken))
+        .send({
+          code: 'ORANGE_MONEY',
+          operatorName: 'Orange Money (test)',
+          receivingNumber: '0700000000',
+          paymentUrl: dangereux,
+        });
+      expect(refus.status).toBe(400);
+    }
+
+    const efface = await server()
+      .post(`${prefix}/management/payments/methods`)
+      .set(auth(adminToken))
+      .send({
+        code: 'ORANGE_MONEY',
+        operatorName: 'Orange Money (test)',
+        receivingNumber: '0700000000',
+        paymentUrl: '   ',
+      });
+    expect(efface.status).toBe(201);
+    const orange = (
+      efface.body as { code: string; paymentUrl: string | null }[]
+    ).find((m) => m.code === 'ORANGE_MONEY');
+    expect(orange?.paymentUrl).toBeNull();
+  });
+
   it('refuse une commande directe dont le moyen n’est pas configuré', async () => {
     const res = await creerCommandeDirecte({ code: 'OPERATEUR_INCONNU' });
     expect(res.status).toBe(400);

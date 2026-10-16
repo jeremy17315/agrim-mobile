@@ -56,9 +56,10 @@ export function PaymentQr({
       <View style={styles.note}>
         <Icon name="scan-line" size={14} color="muted" />
         <Text variant="caption" color="muted" style={styles.flex}>
-          Scannez avec l’application {operatorName} : le compte marchand d’AGRIM
-          se remplit tout seul. Le montant exact et la référence restent à
-          saisir.
+          À scanner avec l’application {operatorName} : le compte marchand
+          d’AGRIM se remplit tout seul. Il faut un AUTRE écran que ce
+          téléphone — pour payer d’ici, utilisez plutôt le lien ou le code
+          ci-dessus.
         </Text>
       </View>
     </View>

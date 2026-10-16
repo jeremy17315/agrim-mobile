@@ -63,18 +63,104 @@ export interface DirectPaymentMethod {
    * `null` = aucun QR publié pour ce compte : l'écran n'en affiche aucun.
    */
   qrPayload: string | null;
+
+  /**
+   * Lien de paiement publié par AGRIM, quand l'opérateur en fournit un.
+   *
+   * C'est la réponse au cas le plus courant : **un seul téléphone**. Un QR
+   * affiché sur l'écran ne peut pas être scanné par ce même téléphone ; un
+   * lien, si. L'application l'ouvre avec `Linking.openURL` — l'application de
+   * l'opérateur (ou le navigateur) prend le relais et le client paie là-bas.
+   *
+   * Seuls `http://`, `https://` et `tel:` sont acceptés : un schéma inconnu
+   * (`javascript:`, `file:`…) ne doit jamais pouvoir être ouvert.
+   *
+   * `null` = aucun lien publié : l'écran n'affiche pas de bouton.
+   */
+  paymentUrl: string | null;
 }
 
 /**
- * Bornes partagées du contenu QR : le serveur refuse au-delà, l'écran
- * d'administration le dit avant l'enregistrement.
+ * Bornes partagées : le serveur refuse au-delà, l'écran d'administration le
+ * dit avant l'enregistrement.
  *
- * 1000 caractères : les QR marchands des opérateurs (EMVCo) font quelques
- * centaines de caractères ; au-delà, c'est une erreur de copier-coller.
+ * - 1000 caractères pour le QR : les QR marchands des opérateurs (EMVCo) font
+ *   quelques centaines de caractères ; au-delà, c'est une erreur de
+ *   copier-coller.
+ * - 500 pour le lien de paiement : une URL d'opérateur tient largement.
  */
 export const PAYMENT_METHOD_LIMITS = {
   qrPayloadMax: 1000,
+  paymentUrlMax: 500,
 } as const;
+
+/** Schémas qu'une application a le droit d'OUVRIR, et rien d'autre. */
+export const PAYMENT_LINK_SCHEMES = ['https://', 'http://', 'tel:'] as const;
+
+/** Ce texte est-il un lien ouvrable (et pas une donnée de QR brute) ? */
+export function isOpenablePaymentLink(value: string | null): boolean {
+  if (!value) return false;
+  const propre = value.trim().toLowerCase();
+  return PAYMENT_LINK_SCHEMES.some((scheme) => propre.startsWith(scheme));
+}
+
+/**
+ * Le lien à ouvrir pour payer DEPUIS CE TÉLÉPHONE, ou `null`.
+ *
+ * Deux sources, dans cet ordre :
+ *  1. `paymentUrl`, publié pour ça ;
+ *  2. à défaut, le contenu du QR **s'il est lui-même un lien** — c'est le cas
+ *     de Wave, dont le QR marchand contient l'URL de paiement. On ne demande
+ *     donc pas à AGRIM de saisir deux fois la même information.
+ *
+ * Un QR au format EMVCo (`0002010102…`), que seul le scanner de l'opérateur
+ * sait lire, ne donne AUCUN lien : renvoyer `null` est la seule réponse
+ * honnête, et l'écran propose alors les autres voies (code USSD, numéro).
+ */
+export function paymentLinkToOpen(
+  method: Pick<DirectPaymentMethod, 'paymentUrl' | 'qrPayload'>,
+): string | null {
+  if (isOpenablePaymentLink(method.paymentUrl)) {
+    return method.paymentUrl?.trim() ?? null;
+  }
+  if (isOpenablePaymentLink(method.qrPayload)) {
+    return method.qrPayload?.trim() ?? null;
+  }
+  return null;
+}
+
+/**
+ * Code USSD à composer, jetons remplacés.
+ *
+ * `{number}` → numéro de réception, `{amount}` → montant entier, sans
+ * séparateur (les opérateurs n'en veulent pas). Un modèle sans jeton (code
+ * fixe, ex. `#144#`) est légitime et rendu tel quel.
+ *
+ * `null` = pas de code publié : le client compose le numéro à la main.
+ */
+export function buildUssdCode(
+  template: string | null,
+  values: { number: string; amount: number },
+): string | null {
+  const modele = template?.trim();
+  if (!modele) return null;
+  return modele
+    .split('{number}')
+    .join(values.number)
+    .split('{amount}')
+    .join(String(Math.max(0, Math.trunc(values.amount))));
+}
+
+/**
+ * URL à ouvrir pour que le téléphone COMPOSE le code USSD.
+ *
+ * `#` doit être encodé (`%23`), sinon la fin du code est perdue : le `#` nu
+ * termine l'URL. ⚠️ iOS refuse les codes USSD (Apple les bloque) : c'est à
+ * l'appelant de n'offrir ce geste que là où il aboutit, et de le dire.
+ */
+export function ussdDialUrl(code: string): string {
+  return `tel:${code.replace(/#/g, '%23')}`;
+}
 
 /* ─────────────────────── Statuts, côté client ──────────────────────────── */
 

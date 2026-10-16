@@ -914,6 +914,7 @@ export class DirectPaymentsService {
             instructions: true,
             ussdTemplate: true,
             qrPayload: true,
+            paymentUrl: true,
             isActive: true,
           },
         })
@@ -928,6 +929,7 @@ export class DirectPaymentsService {
         instructions: row.instructions,
         ussdTemplate: row.ussdTemplate,
         qrPayload: row.qrPayload,
+        paymentUrl: row.paymentUrl,
       };
     }
 

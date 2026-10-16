@@ -36,6 +36,18 @@ jest.mock('@/lib/network', () => ({
 }));
 
 /**
+ * Les gestes « un seul téléphone » : on observe ce que l'application DEMANDE
+ * d'ouvrir — c'est la seule chose qui compte (jamais un lien fabriqué), et la
+ * décision iOS/Android est testée à part, dans `paymentActions.test.ts`.
+ */
+const mockOpen = jest.fn(async (_url: string) => true);
+let mockCanDial = true;
+jest.mock('@/lib/paymentActions', () => ({
+  openPublishedLink: (url: string) => mockOpen(url),
+  canDialUssd: () => mockCanDial,
+}));
+
+/**
  * Le vrai composant dessine une matrice de points : illisible dans un test.
  * Le faux restitue la VALEUR qu'on lui passe — c'est exactement ce que le test
  * doit vérifier (le contenu publié par le serveur, tel quel).
@@ -58,6 +70,7 @@ type Method = {
   instructions: string | null;
   ussdTemplate: string | null;
   qrPayload: string | null;
+  paymentUrl: string | null;
 };
 
 const orange: Method = {
@@ -67,7 +80,8 @@ const orange: Method = {
   beneficiaryName: 'AGRIM SARL',
   instructions: 'Choisissez « Transfert », puis saisissez le numéro.',
   ussdTemplate: null,
-  qrPayload: 'https://pay.orange.ci/m/AGRIM',
+  qrPayload: '00020101021126360013ci.orange.merchant5204000053039865802CI',
+  paymentUrl: null,
 };
 
 let mockMethods: {
@@ -84,6 +98,8 @@ jest.mock('@/api/payments', () => ({
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockCanDial = true;
+  mockOpen.mockResolvedValue(true);
   mockMethods = {
     data: { methods: [orange] },
     isLoading: false,
@@ -109,7 +125,9 @@ describe('Écran « Payer AGRIM »', () => {
 
     expect(screen.getByTestId('qr-marchand')).toBeTruthy();
     expect(
-      screen.getByText('https://pay.orange.ci/m/AGRIM', { exact: true }),
+      screen.getByText('00020101021126360013ci.orange.merchant5204000053039865802CI', {
+        exact: true,
+      }),
     ).toBeTruthy();
   });
 
@@ -154,5 +172,84 @@ describe('Écran « Payer AGRIM »', () => {
 
     expect(screen.queryByTestId('qr-marchand')).toBeNull();
     expect(screen.queryByText('Orange Money')).toBeNull();
+  });
+});
+
+describe('Payer avec ce téléphone (un seul appareil)', () => {
+  it('ouvre le lien de paiement publié par AGRIM, tel quel', async () => {
+    const lien = 'https://pay.wave.com/m/M_agrim/c/ci/';
+    mockMethods.data = { methods: [{ ...orange, paymentUrl: lien }] };
+    render(<MoyensDePaiementScreen />);
+
+    fireEvent.press(screen.getByText('PAYER AVEC ORANGE MONEY'));
+
+    await waitFor(() => expect(mockOpen).toHaveBeenCalledWith(lien));
+  });
+
+  it('retombe sur le QR quand c’est LUI le lien (cas Wave), sans double saisie', async () => {
+    mockMethods.data = {
+      methods: [{ ...orange, qrPayload: 'https://pay.wave.com/m/M_agrim/c/ci/' }],
+    };
+    render(<MoyensDePaiementScreen />);
+
+    fireEvent.press(screen.getByText('PAYER AVEC ORANGE MONEY'));
+
+    await waitFor(() =>
+      expect(mockOpen).toHaveBeenCalledWith('https://pay.wave.com/m/M_agrim/c/ci/'),
+    );
+  });
+
+  it('sans lien publié, n’offre aucun bouton d’ouverture', () => {
+    render(<MoyensDePaiementScreen />);
+
+    // Le QR de la fixture est un format brut : il ne devient jamais un lien.
+    expect(screen.queryByText('PAYER AVEC ORANGE MONEY')).toBeNull();
+    expect(mockOpen).not.toHaveBeenCalled();
+  });
+
+  it('dit la vérité quand l’ouverture échoue, sans promettre', async () => {
+    mockOpen.mockResolvedValue(false);
+    mockMethods.data = {
+      methods: [{ ...orange, paymentUrl: 'https://pay.wave.com/m/M_agrim/c/ci/' }],
+    };
+    render(<MoyensDePaiementScreen />);
+
+    fireEvent.press(screen.getByText('PAYER AVEC ORANGE MONEY'));
+
+    await screen.findByText(/Impossible d’ouvrir Orange Money/);
+  });
+
+  it('hors commande, ne propose AUCUN code qui réclame le montant', () => {
+    mockMethods.data = {
+      methods: [{ ...orange, ussdTemplate: '#144*1*1*{number}*{amount}#' }],
+    };
+    render(<MoyensDePaiementScreen />);
+
+    // Le montant n'existe pas hors commande : proposer un code incomplet
+    // ferait composer un code faux.
+    expect(screen.queryByText('CODE À COMPOSER')).toBeNull();
+  });
+
+  it('compose un code fixe, et le propose au composeur sur Android', async () => {
+    mockMethods.data = { methods: [{ ...orange, ussdTemplate: '#144#' }] };
+    render(<MoyensDePaiementScreen />);
+
+    expect(screen.getByText('#144#')).toBeTruthy();
+    fireEvent.press(screen.getByText('COMPOSER'));
+
+    await waitFor(() => expect(mockOpen).toHaveBeenCalledWith('tel:%23144%23'));
+  });
+
+  it('sur iPhone, annonce qu’iOS n’ouvre pas les codes USSD', () => {
+    mockCanDial = false;
+    mockMethods.data = { methods: [{ ...orange, ussdTemplate: '#144#' }] };
+    render(<MoyensDePaiementScreen />);
+
+    expect(screen.queryByText('COMPOSER')).toBeNull();
+    expect(
+      screen.getByText(/Sur iPhone, composez ce code vous-même/),
+    ).toBeTruthy();
+    // Le code reste copiable : c'est la voie qui marche partout.
+    expect(screen.getByText('COPIER LE CODE')).toBeTruthy();
   });
 });

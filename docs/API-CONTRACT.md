@@ -163,6 +163,18 @@ d'AGRIM, puis déclare sa transaction, qu'un responsable vérifie.
 est publié tel quel et l'application le réaffiche en QR. `NULL` = aucun QR
 publié, l'application n'en affiche aucun — elle n'en fabrique jamais.
 
+`paymentUrl` est le **lien de paiement** de l'opérateur, pour les clients qui
+n'ont qu'un seul téléphone (un QR affiché à l'écran ne se scanne pas depuis ce
+téléphone). Seuls `http://`, `https://` et `tel:` sont acceptés — tout autre
+schéma est refusé à l'enregistrement. Quand `paymentUrl` est absent mais que
+`qrPayload` est lui-même une URL (cas Wave), l'application ouvre cette URL ;
+un QR au format EMVCo (`000201…`) ne devient jamais un lien.
+
+`ussdTemplate` est le code à composer, `{number}` et `{amount}` étant remplacés
+par le numéro marchand et le montant entier. L'application ne le propose au
+composeur que là où le système l'autorise (jamais sur iOS, qui bloque les codes
+USSD) ; sinon elle affiche le code et le rend copiable.
+
 Le webhook est public parce que l'appelant n'a pas de JWT ; son authenticité
 est établie par la signature du fournisseur. Un succès annoncé n'est **jamais
 cru sur parole** : l'API revérifie auprès du fournisseur avant d'encaisser.

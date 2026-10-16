@@ -5,6 +5,7 @@ import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { usePaymentMethods, type DirectPaymentMethod } from '@/api/payments';
+import { PaymentMethodActions } from '@/components/PaymentMethodActions';
 import { PaymentQr } from '@/components/PaymentQr';
 import { ErrorState, Skeleton } from '@/components/states';
 import { Banner, Button, Icon, Text } from '@/components/ui';
@@ -156,6 +157,11 @@ export default function MoyensDePaiementScreen() {
                 {method.instructions}
               </Text>
             ) : null}
+
+            {/* Payer AVEC CE TÉLÉPHONE : ouvrir le lien de l'opérateur, ou
+                composer son code. Hors commande, aucun montant n'existe : un
+                code qui réclame le montant n'est donc pas proposé ici. */}
+            <PaymentMethodActions method={method} amount={null} />
 
             {method.qrPayload ? (
               <PaymentQr

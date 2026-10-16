@@ -26,6 +26,13 @@ jest.mock('expo-clipboard', () => ({
   setStringAsync: jest.fn().mockResolvedValue(true),
 }));
 
+/** Les gestes « un seul téléphone » : on observe ce qui est demandé d'ouvrir. */
+const mockOpenLink = jest.fn(async (_url: string) => true);
+jest.mock('@/lib/paymentActions', () => ({
+  openPublishedLink: (url: string) => mockOpenLink(url),
+  canDialUssd: () => true,
+}));
+
 /** Le vrai QR dessine une matrice de points : illisible dans un test. Le faux
  *  restitue la VALEUR passée au composant — c'est elle qui compte (le contenu
  *  publié par AGRIM, jamais un QR fabriqué par l'application). */
@@ -51,6 +58,7 @@ const methodVide = {
   instructions: 'Choisissez « Transfert », puis saisissez le numéro.',
   ussdTemplate: null as string | null,
   qrPayload: null as string | null,
+  paymentUrl: null as string | null,
 };
 
 const instruction = {
@@ -253,4 +261,50 @@ it('sans QR publié, n’affiche aucun QR — le numéro reste la seule voie', a
   await waitFor(() => expect(screen.getByText('0700000000')).toBeTruthy());
   expect(screen.queryByTestId('qr-marchand')).toBeNull();
   expect(screen.queryByText('OU SCANNEZ LE QR DU COMPTE')).toBeNull();
+});
+
+it('propose d’ouvrir le lien de paiement publié, montant déjà connu', async () => {
+  const lien = 'https://pay.wave.com/m/M_agrim/c/ci/';
+  mockInstructionState = {
+    data: { ...instruction, method: { ...methodVide, paymentUrl: lien } },
+    isError: false,
+  };
+  render(<GuestPaymentScreen />);
+
+  await waitFor(() =>
+    expect(screen.getByText('PAYER AVEC ORANGE MONEY')).toBeTruthy(),
+  );
+  fireEvent.press(screen.getByText('PAYER AVEC ORANGE MONEY'));
+
+  await waitFor(() => expect(mockOpenLink).toHaveBeenCalledWith(lien));
+});
+
+it('compose le code du compte AVEC le montant exact de la commande', async () => {
+  mockInstructionState = {
+    data: {
+      ...instruction,
+      method: { ...methodVide, ussdTemplate: '#144*1*1*{number}*{amount}#' },
+    },
+    isError: false,
+  };
+  render(<GuestPaymentScreen />);
+
+  await waitFor(() =>
+    expect(screen.getByText('#144*1*1*0700000000*18500#')).toBeTruthy(),
+  );
+
+  fireEvent.press(screen.getByText('COMPOSER'));
+  await waitFor(() =>
+    expect(mockOpenLink).toHaveBeenCalledWith(
+      'tel:%23144*1*1*0700000000*18500%23',
+    ),
+  );
+});
+
+it('sans lien ni code publiés, n’ajoute aucun bouton', async () => {
+  render(<GuestPaymentScreen />);
+
+  await waitFor(() => expect(screen.getByText('0700000000')).toBeTruthy());
+  expect(screen.queryByText(/PAYER AVEC/)).toBeNull();
+  expect(screen.queryByText('CODE À COMPOSER')).toBeNull();
 });

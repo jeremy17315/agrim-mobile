@@ -12,6 +12,7 @@ import {
   type DirectPaymentMethod,
 } from '@/api/payments';
 import { CheckoutProgress } from '@/components/CheckoutProgress';
+import { PaymentMethodActions } from '@/components/PaymentMethodActions';
 import { PaymentQr } from '@/components/PaymentQr';
 import { Banner, Button, Card, Icon, Input, Text } from '@/components/ui';
 import { callMobileSupport, supportPhone } from '@/lib/contact';
@@ -298,6 +299,11 @@ export default function GuestPaymentScreen() {
                 </Text>
               ) : null}
             </Card>
+
+            {/* Le geste le plus simple quand on n'a qu'un téléphone :
+                ouvrir l'application de l'opérateur (lien publié) ou composer
+                son code, montant exact et référence déjà écrits. */}
+            <PaymentMethodActions method={data.method} amount={data.amount} />
 
             {data.method.qrPayload ? (
               /* Celui qui préfère scanner plutôt que recopier onze chiffres :

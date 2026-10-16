@@ -235,6 +235,12 @@ const directMethodSchema = z.object({
    * encore n'empêche pas l'écran de s'afficher, il n'y a simplement pas de QR.
    */
   qrPayload: z.string().max(1000).nullable().default(null),
+  /**
+   * Lien de paiement de l'opérateur : c'est lui qui permet de payer AVEC CE
+   * TÉLÉPHONE (un QR affiché à l'écran ne peut pas être scanné par ce même
+   * téléphone). `default(null)` : un serveur plus ancien n'empêche rien.
+   */
+  paymentUrl: z.string().max(500).nullable().default(null),
 });
 export type DirectPaymentMethod = z.infer<typeof directMethodSchema>;
 

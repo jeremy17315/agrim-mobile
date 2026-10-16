@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PAYMENT_DECLARATION_LIMITS, PAYMENT_METHOD_LIMITS } from '@agrim/contracts';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsBoolean,
   IsInt,
@@ -8,6 +8,7 @@ import {
   IsOptional,
   IsString,
   Matches,
+  ValidateIf,
   Max,
   MaxLength,
   Min,
@@ -71,6 +72,28 @@ export class UpsertPaymentMethodDto {
   @IsString()
   @MaxLength(PAYMENT_METHOD_LIMITS.qrPayloadMax)
   qrPayload?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Lien de paiement de l’opérateur, ouvrable depuis le téléphone du client. Seuls http, https et tel sont acceptés.',
+    example: 'https://pay.wave.com/m/M_agrim/c/ci/',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(PAYMENT_METHOD_LIMITS.paymentUrlMax)
+  // Un lien collé depuis un navigateur arrive avec des espaces autour : elles
+  // sont retirées AVANT la validation, sinon le refus serait incompréhensible.
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  // Champ vidé = lien retiré : geste légitime, pas une erreur de saisie.
+  @ValidateIf((dto: UpsertPaymentMethodDto) => dto.paymentUrl !== '')
+  // Un schéma inconnu (`javascript:`, `file:`…) ne doit JAMAIS pouvoir être
+  // ouvert par l'application : le refus est ici, à l'enregistrement, et non
+  // dans l'écran qui se contenterait de faire confiance à la base.
+  @Matches(/^(https?:\/\/|tel:)/i, {
+    message:
+      'Le lien de paiement doit commencer par http://, https:// ou tel:.',
+  })
+  paymentUrl?: string;
 
   @ApiPropertyOptional()
   @IsOptional()

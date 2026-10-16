@@ -743,6 +743,12 @@ model PaymentMethodConfig {
   /// du client à un inconnu. `NULL` = aucun QR publié pour ce compte.
   qrPayload       String? @db.VarChar(1000)
 
+  /// Lien de paiement de l'opérateur, quand il en existe un : c'est ce qui
+  /// permet de payer AVEC LE MÊME TÉLÉPHONE (un QR affiché à l'écran ne peut
+  /// pas être scanné par ce téléphone). Schémas autorisés : http, https, tel.
+  /// `NULL` = aucun lien : l'application n'ouvre rien et n'invente rien.
+  paymentUrl      String? @db.VarChar(500)
+
   /// Un moyen créé sans indication explicite est INACTIF : le publier par
   /// défaut l'exposerait aux clients avant relecture.
   isActive  Boolean @default(false)
