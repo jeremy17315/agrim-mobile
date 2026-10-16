@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { CatalogSyncModule } from '../catalog-sync/catalog-sync.module';
 import { DeliveriesModule } from '../deliveries/deliveries.module';
 import { PromoCodesModule } from '../promo-codes/promo-codes.module';
+import { ReferralsModule } from '../referrals/referrals.module';
 import { SitePricingModule } from '../site-pricing/site-pricing.module';
 import { SieveModule } from '../sieve/sieve.module';
 import { OrdersController } from './orders.controller';
@@ -20,6 +21,7 @@ import { GuestPaymentTokenService } from './guest-payment-token.service';
     CatalogSyncModule,
     SitePricingModule,
     PromoCodesModule,
+    ReferralsModule,
   ],
   controllers: [OrdersController, CartQuoteController],
   providers: [

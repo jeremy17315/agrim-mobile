@@ -27,7 +27,13 @@ export class GuestCheckoutService {
     private readonly paymentTokens: GuestPaymentTokenService,
   ) {}
 
-  async create(dto: CreateGuestOrderDto) {
+  /**
+   * @param creditUserId compte CONNECTÉ dont le crédit de parrainage peut être
+   *   consommé (`null` : commande anonyme, aucun crédit). Le profil technique
+   *   créé ici a un solde nul : le crédit ne peut donc venir que de ce
+   *   compte-là, jamais d'un numéro de téléphone envoyé par le client.
+   */
+  async create(dto: CreateGuestOrderDto, creditUserId: string | null = null) {
     const customerName = dto.customerName.trim().replace(/\s+/g, ' ');
     const deliveryLocation = dto.deliveryLocation.trim().replace(/\s+/g, ' ');
     const phoneResult = phoneSchema.safeParse(dto.phone);
@@ -108,11 +114,17 @@ export class GuestCheckoutService {
         codePromo: dto.codePromo,
         note: dto.note,
       };
-      const created = await this.orders.create(guest.id, order, {
-        name: customerName,
-        phone,
-        deliveryLocation,
-      });
+      const created = await this.orders.create(
+        guest.id,
+        order,
+        {
+          name: customerName,
+          phone,
+          deliveryLocation,
+        },
+        // Le solde appartient au compte connecté, pas au profil de livraison.
+        creditUserId,
+      );
 
       // Deux taps simultanés peuvent partager la même idempotencyKey. Le
       // second reçoit la première commande, mais son profil technique ne porte

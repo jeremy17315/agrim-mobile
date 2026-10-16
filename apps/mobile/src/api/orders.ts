@@ -46,6 +46,11 @@ const orderDetailSchema = z.object({
   subtotal: z.number().int(),
   deliveryFee: z.number().int(),
   total: z.number().int(),
+  /**
+   * Crédit de parrainage consommé par cette commande (`0` : aucun). Champ
+   * optionnel côté client pour rester lisible par une API plus ancienne.
+   */
+  credit: z.number().int().min(0).default(0),
   note: z.string().nullable(),
   createdAt: z.iso.datetime(),
   items: z.array(
@@ -176,6 +181,14 @@ const cartQuoteSchema = z.object({
   promoCode: z.string().nullable().default(null),
   promoMessage: z.string().nullable().default(null),
   delivery: deliveryQuoteSchema,
+  /**
+   * Crédit de parrainage appliqué à CE panier. Il n'est renseigné que pour un
+   * client connecté : le serveur le lit sur le compte, jamais sur un numéro
+   * envoyé par le téléphone.
+   */
+  credit: z.number().int().min(0).default(0),
+  /** Solde du compte AVANT application : permet d'annoncer ce qu'il restera. */
+  creditBalanceXof: z.number().int().min(0).default(0),
   /** Toujours 0 : aucun frais n'est encaissé en ligne. */
   deliveryFee: z.number().int(),
   total: z.number().int(),
@@ -259,6 +272,10 @@ export function quoteGuestCart(payload: {
     body: payload,
     schema: cartQuoteSchema,
     isPublic: true,
+    // Le devis reste ouvert à tous, mais s'il y a une session, le serveur y
+    // ajoute le crédit de parrainage du compte : le montant annoncé ici est
+    // alors celui qui sera réellement facturé, crédit compris.
+    withOptionalAuth: true,
   });
 }
 
@@ -271,6 +288,9 @@ export function createGuestOrder(
     body: payload,
     schema: guestOrderResponseSchema,
     isPublic: true,
+    // La commande reste possible SANS compte ; avec une session, le crédit du
+    // client connecté paie une partie du total, côté serveur.
+    withOptionalAuth: true,
   });
 }
 

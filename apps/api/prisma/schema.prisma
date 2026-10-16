@@ -611,7 +611,23 @@ model Order {
   // Prix figés au moment de la commande (ne suivent pas le catalogue).
   subtotal    Int
   deliveryFee Int
-  total       Int
+  /// Total réellement réclamé au client : `subtotal − remise − credit`.
+  /// La remise promo n'a pas de colonne (elle est implicite dans ce total) ;
+  /// le crédit de parrainage, lui, en a une — sans quoi une annulation serait
+  /// incapable de savoir combien rendre, ni à qui.
+  total Int
+
+  /// Crédit de parrainage CONSOMMÉ par cette commande, en XOF.
+  credit Int @default(0)
+
+  /// Compte dont le crédit a été débité. Une commande invitée passée par un
+  /// client CONNECTÉ garde `userId` = profil technique de livraison ; c'est ce
+  /// champ qui désigne le vrai compte, donc le destinataire d'un remboursement.
+  creditUserId String? @db.Uuid
+
+  /// Date à laquelle le crédit a été rendu au compte (annulation). Sert de
+  /// verrou d'idempotence : un crédit ne se rend jamais deux fois.
+  creditRefundedAt DateTime?
 
   addressId String  @db.Uuid
   address   Address @relation(fields: [addressId], references: [id])

@@ -24,6 +24,7 @@ import {
   resolveOrderPaymentMethod,
 } from '../payments/resolve-method';
 import { PromoCodesService } from '../promo-codes/promo-codes.service';
+import { ReferralCreditService } from '../referrals/referral-credit.service';
 import { SieveSession } from '../sieve/model';
 import type { CreateOrderDto } from './dto/create-order.dto';
 import type { GuestOrderCustomer } from './orders.service';
@@ -37,6 +38,8 @@ const orderSelect = {
   subtotal: true,
   deliveryFee: true,
   total: true,
+  /// Crédit de parrainage consommé par la commande (voir OrdersService).
+  credit: true,
   note: true,
   guestName: true,
   guestPhone: true,
@@ -87,6 +90,9 @@ export class CheckoutService {
     private readonly prisma: PrismaService,
     private readonly promos: PromoCodesService,
     private readonly sieveSession: SieveSession,
+    // Même service qu'en mode `site` : une seule règle de consommation du
+    // crédit, quel que soit le propriétaire du stock.
+    private readonly credit: ReferralCreditService,
   ) {}
 
   /**
@@ -199,7 +205,12 @@ export class CheckoutService {
     userId: string,
     dto: CreateOrderDto,
     guest?: GuestOrderCustomer,
+    creditUserId?: string | null,
   ) {
+    // Même règle qu'en mode `site` : sans invité, le crédit appartient au
+    // compte appelant ; avec invité, il vient du compte connecté que
+    // l'appelant désigne (le profil technique de livraison a un solde nul).
+    const creditOwnerId = guest ? (creditUserId ?? null) : userId;
     const requestHash = this.fingerprint(userId, dto, guest);
 
     // Réseau AVANT verrous : voir `prepare`.
@@ -310,13 +321,38 @@ export class CheckoutService {
         };
       });
 
-      const totals = computeCartTotals(
-        lines.map((l) => ({ unitPrice: l.unitPrice, quantity: l.quantity })),
+      const lignes = lines.map((l) => ({
+        unitPrice: l.unitPrice,
+        quantity: l.quantity,
+      }));
+
+      // ── Crédit de parrainage : consommé SOUS LE VERROU de cette tx ───────
+      //
+      // Le solde est lu ici, dans la transaction : en mode `local`, la base
+      // est la seule autorité, il n'y a aucune raison d'aller le chercher
+      // ailleurs. La consommation est conditionnelle (`consume`), et si une
+      // commande concurrente du même compte a pris le crédit entre-temps, on
+      // REFACTURE avec ce qui a réellement été obtenu.
+      const soldeCredit = creditOwnerId
+        ? await this.credit.balance(creditOwnerId)
+        : 0;
+      const totals = computeCartTotals(lignes, {
         // Remise décidée par le site, lue avant la transaction. Les frais de
         // livraison, eux, ne sont JAMAIS additionnés : le site n'en facture
         // aucun en ligne.
-        { remise: preflight.remise },
-      );
+        remise: preflight.remise,
+        credit: soldeCredit,
+      });
+      const creditConsomme = creditOwnerId
+        ? await this.credit.consume(tx, creditOwnerId, totals.credit)
+        : 0;
+      const factures =
+        creditConsomme === totals.credit
+          ? totals
+          : computeCartTotals(lignes, {
+              remise: preflight.remise,
+              credit: creditConsomme,
+            });
 
       // Compteur annuel atomique AVANT la réservation : la référence existe
       // dès l'écriture du journal de stock.
@@ -366,9 +402,13 @@ export class CheckoutService {
             userId,
             addressId: dto.addressId,
             status: 'PENDING',
-            subtotal: totals.subtotal,
-            deliveryFee: totals.deliveryFee,
-            total: totals.total,
+            subtotal: factures.subtotal,
+            deliveryFee: factures.deliveryFee,
+            total: factures.total,
+            // Crédit consommé + son propriétaire : une annulation doit pouvoir
+            // rendre exactement ce montant-là, à ce compte-là.
+            credit: factures.credit,
+            creditUserId: creditOwnerId,
             note: dto.note ?? null,
             guestName: guest?.name ?? null,
             guestPhone: guest?.phone ?? null,
@@ -392,7 +432,8 @@ export class CheckoutService {
                 provider: null,
                 methodCode: directMethod?.code ?? null,
                 receivingNumber: directMethod?.receivingNumber ?? null,
-                amount: totals.total,
+                // Le crédit a déjà réduit le total : c'est lui qui est réclamé.
+                amount: factures.total,
                 status: 'PENDING',
               },
             },

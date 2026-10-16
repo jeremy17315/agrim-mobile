@@ -79,6 +79,8 @@ function buildOrder(
     subtotal: 12_000,
     deliveryFee: 1000,
     total: 13_000,
+    // Commande sans crédit parrainage : le serveur renvoie toujours ce champ.
+    credit: 0,
     note: null,
     createdAt: '2026-08-18T09:00:00.000Z',
     items: [

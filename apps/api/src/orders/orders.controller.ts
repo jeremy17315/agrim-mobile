@@ -7,6 +7,7 @@ import {
   ParseIntPipe,
   Post,
   Query,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -17,9 +18,11 @@ import {
 
 import {
   CurrentUser,
+  OptionalUser,
   type AuthenticatedUser,
 } from '../common/decorators/current-user.decorator';
 import { Public } from '../common/decorators/public.decorator';
+import { OptionalJwtAuthGuard } from '../common/guards/optional-jwt-auth.guard';
 import { CreateGuestOrderDto } from './dto/create-guest-order.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { TrackingService } from '../deliveries/tracking.service';
@@ -42,14 +45,24 @@ export class OrdersController {
     private readonly guestCheckout: GuestCheckoutService,
   ) {}
 
-  /** Checkout express : aucun compte ni jeton n'est requis. */
+  /**
+   * Checkout express : aucun compte ni jeton n'est requis.
+   *
+   * Le jeton est FACULTATIF mais lu quand il est là : c'est ce qui permet à un
+   * client connecté de payer sa commande invitée avec son crédit de parrainage.
+   * Sans jeton, la commande se déroule exactement comme avant, sans crédit.
+   */
   @Public()
+  @UseGuards(OptionalJwtAuthGuard)
   @Post('guest')
   @ApiOperation({
     summary: 'Créer une commande invitée (nom, téléphone et zone de livraison)',
   })
-  createGuest(@Body() dto: CreateGuestOrderDto) {
-    return this.guestCheckout.create(dto);
+  createGuest(
+    @OptionalUser() user: AuthenticatedUser | null,
+    @Body() dto: CreateGuestOrderDto,
+  ) {
+    return this.guestCheckout.create(dto, user?.id ?? null);
   }
 
   @Post()

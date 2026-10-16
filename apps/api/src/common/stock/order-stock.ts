@@ -1,5 +1,6 @@
 import { Prisma } from '../../../generated/prisma/client';
 import { currentStockMode } from '../../config/stock-mode';
+import { refundOrderCredit } from '../../referrals/credit-refund';
 import { recordStockMovement } from './stock-movement';
 import { releaseStockForOrder } from './reserve-stock';
 
@@ -90,6 +91,17 @@ export async function cancelOrderAndReleaseStock(
     data: { status: 'CANCELLED' },
   });
   if (claimed.count === 0) return { released: false };
+
+  // ── Le crédit de parrainage revient au compte, une seule fois ────────────
+  //
+  // Une commande payée avec du crédit a DÉJÀ débité le compte du client. Si
+  // l'annulation ne le rendait pas, le client perdrait son crédit en même temps
+  // que sa commande — pour un parrain, ce serait 1 000 F envolés sans recours.
+  //
+  // Le remboursement se fait ici, et pas dans chacun des trois appelants,
+  // parce que cet endroit est déjà le point de passage unique de l'annulation :
+  // la même écriture conditionnelle qui décide qui annule décide qui rembourse.
+  await refundOrderCredit(tx, orderId);
 
   // Deux lectures SÉQUENTIELLES, et non un `Promise.all`.
   //

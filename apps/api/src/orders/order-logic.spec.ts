@@ -1,6 +1,10 @@
 import { canTransition, type OrderStatus } from '@agrim/contracts';
 
-import { computeCartTotals, computeLineTotal } from './cart-totals';
+import {
+  applicableCredit,
+  computeCartTotals,
+  computeLineTotal,
+} from './cart-totals';
 import { formatOrderReference } from './order-reference';
 
 describe('Référence de commande', () => {
@@ -34,6 +38,7 @@ describe('Calculs du panier', () => {
     expect(t).toEqual({
       subtotal: 12_000,
       remise: 0,
+      credit: 0,
       deliveryFee: 0,
       total: 12_000,
     });
@@ -47,6 +52,7 @@ describe('Calculs du panier', () => {
     expect(t).toEqual({
       subtotal: 20_000,
       remise: 1_000,
+      credit: 0,
       deliveryFee: 0,
       total: 19_000,
     });
@@ -65,6 +71,7 @@ describe('Calculs du panier', () => {
     expect(computeCartTotals([], { remise: 1_000 })).toEqual({
       subtotal: 0,
       remise: 0,
+      credit: 0,
       deliveryFee: 0,
       total: 0,
     });
@@ -81,6 +88,57 @@ describe('Calculs du panier', () => {
     expect(t.subtotal).toBe(10_800);
     expect(t.total).toBe(10_000);
     expect(Number.isInteger(t.total)).toBe(true);
+  });
+
+  // ── Crédit de parrainage (16 octobre 2026) ────────────────────────────
+  // Le crédit était incrémenté et affiché, mais n'entrait dans AUCUN total :
+  // le parrain ne pouvait pas le dépenser. Ces règles-là sont celles qui le
+  // rendent dépensable, et elles vivent dans le contrat PARTAGÉ — mobile et
+  // API ne peuvent donc pas diverger sur ce que le client doit.
+
+  it('soustrait le crédit parrainage du total', () => {
+    const t = computeCartTotals([{ unitPrice: 6_000, quantity: 1 }], {
+      credit: 1_000,
+    });
+    expect(t).toEqual({
+      subtotal: 6_000,
+      remise: 0,
+      credit: 1_000,
+      deliveryFee: 0,
+      total: 5_000,
+    });
+  });
+
+  it('ne consomme QUE ce qui reste à payer : un crédit plus gros n’est pas perdu', () => {
+    const t = computeCartTotals([{ unitPrice: 1_000, quantity: 1 }], {
+      credit: 5_000,
+    });
+    // 1 000 consommés — pas 5 000. Le reste demeure sur le compte et servira à
+    // la commande suivante : l'application ne « rend » jamais la monnaie d'un
+    // avoir.
+    expect(t.credit).toBe(1_000);
+    expect(t.total).toBe(0);
+  });
+
+  it('empile remise et crédit sans passer sous zéro', () => {
+    const t = computeCartTotals([{ unitPrice: 10_000, quantity: 1 }], {
+      remise: 8_000,
+      credit: 8_000,
+    });
+    expect(t.remise).toBe(8_000);
+    expect(t.credit).toBe(2_000);
+    expect(t.total).toBe(0);
+  });
+
+  it('un solde négatif ou un panier nul n’augmente jamais la facture', () => {
+    expect(applicableCredit(-500, 6_000)).toBe(0);
+    expect(applicableCredit(1_000, 0)).toBe(0);
+    expect(applicableCredit(0, 6_000)).toBe(0);
+    const t = computeCartTotals([{ unitPrice: 6_000, quantity: 1 }], {
+      credit: -500,
+    });
+    expect(t.credit).toBe(0);
+    expect(t.total).toBe(6_000);
   });
 
   it('rejette une quantité nulle ou négative', () => {

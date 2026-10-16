@@ -7,6 +7,7 @@ import {
 } from '@testing-library/react-native';
 
 import { ApiError, NetworkError } from '@/api/errors';
+import { formatXof } from '@/lib/format';
 import { useCartStore } from '@/store/cart';
 
 import CommandeScreen from '../../app/commande/index';
@@ -52,6 +53,9 @@ let mockQuoteData:
       };
       deliveryFee: number;
       total: number;
+      /** Crédit parrainage appliqué par le serveur (compte connecté). */
+      credit?: number;
+      creditBalanceXof?: number;
       currency: 'XOF';
       zone: string;
     }
@@ -157,6 +161,69 @@ beforeEach(() => {
   useCartStore.setState({ items: [], hydrated: true });
   useCartStore.getState().addItem(product, variant, 2);
   mockCreateGuestOrder.mockResolvedValue({ reference: 'AGR-2026-0001' });
+});
+
+it('affiche le crédit de parrainage déduit du total, et ce qu’il en reste', async () => {
+  mockQuoteData = {
+    subtotal: 12_000,
+    remise: 0,
+    remiseStatus: 'ok',
+    promoCode: null,
+    promoMessage: null,
+    delivery: {
+      mode: 'domicile',
+      zone: 'Abidjan',
+      libelle: 'Livraison à domicile',
+      delai: '48 h',
+      statut: 'A_CONFIRMER',
+      message: 'À confirmer',
+      frais: 0,
+    },
+    credit: 1_000,
+    creditBalanceXof: 1_000,
+    deliveryFee: 0,
+    total: 11_000,
+    currency: 'XOF',
+    zone: 'Abidjan',
+  };
+  render(<CommandeScreen />);
+
+  // Le crédit est visible comme une ligne de la récapitulation : le client doit
+  // pouvoir vérifier que son avoir a bien servi, et de combien.
+  expect(screen.getByText('Crédit parrainage')).toBeTruthy();
+  // Le montant suit `formatXof` (espace insécable étroit) et le signe « − »
+  // de la ligne de remise : la récapitulation se lit d'un seul coup d'œil.
+  expect(screen.getByText(`− ${formatXof(1_000)}`)).toBeTruthy();
+  expect(
+    screen.getByText('Votre crédit de parrainage est utilisé en totalité par cette commande.'),
+  ).toBeTruthy();
+});
+
+it('sans crédit (visiteur ou solde nul), aucune ligne n’est affichée', async () => {
+  mockQuoteData = {
+    subtotal: 12_000,
+    remise: 0,
+    remiseStatus: 'ok',
+    promoCode: null,
+    promoMessage: null,
+    delivery: {
+      mode: 'domicile',
+      zone: 'Abidjan',
+      libelle: 'Livraison à domicile',
+      delai: '48 h',
+      statut: 'A_CONFIRMER',
+      message: 'À confirmer',
+      frais: 0,
+    },
+    deliveryFee: 0,
+    total: 12_000,
+    currency: 'XOF',
+    zone: 'Abidjan',
+  };
+  render(<CommandeScreen />);
+
+  // Rien à montrer : un « crédit 0 F » ferait croire à un avantage inexistant.
+  expect(screen.queryByText('Crédit parrainage')).toBeNull();
 });
 
 it('affiche l’étape livraison et le devis confirmé par le serveur', async () => {

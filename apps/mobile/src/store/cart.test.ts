@@ -161,6 +161,11 @@ describe('totaux', () => {
     expect(selectTotals(useCartStore.getState())).toEqual({
       subtotal: 0,
       remise: 0,
+      // Le crédit parrainage n'est jamais calculé sur le téléphone : il vient
+      // du serveur, qui seul connaît le solde du compte. Le panier local
+      // affiche donc toujours 0 ici (la ligne apparaît au checkout, sur le
+      // devis serveur).
+      credit: 0,
       deliveryFee: 0,
       total: 0,
     });

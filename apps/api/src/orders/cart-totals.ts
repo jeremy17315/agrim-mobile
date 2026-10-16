@@ -9,6 +9,7 @@
  * prend plus qu'une REMISE, et rend toujours `deliveryFee: 0`.
  */
 export {
+  applicableCredit,
   computeCartTotals,
   computeDeliveryFee,
   computeLineTotal,

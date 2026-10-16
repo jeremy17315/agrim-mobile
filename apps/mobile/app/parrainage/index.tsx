@@ -94,6 +94,12 @@ export default function ParrainageScreen() {
               première commande est livrée, vous recevez{' '}
               {formatXof(PROVISIONAL_REFERRAL.referrerRewardXof)} de crédit.
             </Text>
+            <Text variant="caption" color="body">
+              Ce crédit est déduit automatiquement du total de votre prochaine
+              commande, dès que vous êtes connecté — rien à activer. Ce qu’il
+              ne couvre pas reste à payer, et un crédit plus gros que la
+              commande garde son reste sur votre compte.
+            </Text>
           </Card>
         </View>
       )}

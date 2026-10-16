@@ -96,6 +96,16 @@ export type RequestOptions<TSchema extends z.ZodTypeAny> = {
   schema: TSchema;
   /** Requête publique : n'attache pas le token même s'il existe. */
   isPublic?: boolean;
+  /**
+   * Requête publique qui ACCEPTE la session quand elle existe.
+   *
+   * Le devis et la commande invitée sont ouverts à tous, mais le crédit de
+   * parrainage appartient à un compte : le jeton est donc joint s'il est là,
+   * et la réponse en tient compte. Sans jeton, la requête est servie
+   * exactement comme avant — et un 401 ne déconnecte pas : il n'y avait rien
+   * à exiger.
+   */
+  withOptionalAuth?: boolean;
   /** Capacité ponctuelle (checkout invité, upload signé…) distincte du JWT. */
   headers?: Record<string, string>;
   timeoutMs?: number;
@@ -135,6 +145,7 @@ async function performRequest<TSchema extends z.ZodTypeAny>(
     body,
     schema,
     isPublic = false,
+    withOptionalAuth = false,
     headers: extraHeaders,
     timeoutMs = DEFAULT_TIMEOUT_MS,
     signal,
@@ -152,7 +163,9 @@ async function performRequest<TSchema extends z.ZodTypeAny>(
   };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
 
-  if (!isPublic) {
+  // Une requête publique n'attache PAS le jeton — sauf si elle accepte la
+  // session, auquel cas la session est ce qui ouvre le crédit de parrainage.
+  if (withOptionalAuth || !isPublic) {
     const token = getAccessToken();
     if (token) headers.Authorization = `Bearer ${token}`;
   }
@@ -185,7 +198,11 @@ async function performRequest<TSchema extends z.ZodTypeAny>(
   if (!response.ok) {
     // Session expirée : on renouvelle une seule fois puis on rejoue. Sans
     // cela, l'utilisateur perdrait son panier au milieu du tunnel.
-    if (response.status === 401 && allowRetry && !isPublic) {
+    //
+    // Jamais sur une route publique : il n'y a aucune session à sauver, et
+    // faire échouer une commande invité parce qu'un vieux jeton traînait
+    // serait exactement le contraire du service rendu.
+    if (response.status === 401 && allowRetry && !isPublic && !withOptionalAuth) {
       const renewed = await refreshOnce();
       if (renewed) return performRequest(options, false);
     }

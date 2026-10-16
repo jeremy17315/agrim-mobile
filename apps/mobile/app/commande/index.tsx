@@ -394,12 +394,31 @@ export default function CommandeScreen() {
                   value={`− ${formatXof(quote.data.remise)}`}
                 />
               ) : null}
+              {/* Crédit de parrainage : calculé par le serveur sur le COMPTE
+                  connecté, jamais sur le numéro saisi ci-dessus. Il est
+                  appliqué automatiquement — le client n'a rien à activer — et
+                  plafonné à ce qui reste à payer. */}
+              {quote.data.credit > 0 ? (
+                <SummaryLine
+                  label="Crédit parrainage"
+                  value={`− ${formatXof(quote.data.credit)}`}
+                />
+              ) : null}
               <View style={styles.summaryDivider} />
               <SummaryLine
                 label="Total à payer"
                 value={formatXof(quote.data.total)}
                 strong
               />
+              {quote.data.credit > 0 ? (
+                <Text variant="caption" color="muted">
+                  {quote.data.creditBalanceXof - quote.data.credit > 0
+                    ? `Il vous restera ${formatXof(
+                        quote.data.creditBalanceXof - quote.data.credit,
+                      )} de crédit de parrainage.`
+                    : 'Votre crédit de parrainage est utilisé en totalité par cette commande.'}
+                </Text>
+              ) : null}
               {quote.data.promoMessage || quote.data.remiseStatus === 'refused' ? (
                 <Banner
                   tone={quote.data.remiseStatus === 'refused' ? 'danger' : 'warning'}

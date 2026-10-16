@@ -9,6 +9,7 @@ import {
 import { prixEffectif, promosActives } from '../common/pricing/effective-price';
 import { PrismaService } from '../prisma/prisma.service';
 import { PromoCodesService } from '../promo-codes/promo-codes.service';
+import { ReferralCreditService } from '../referrals/referral-credit.service';
 import { readDeliveryGrid } from './delivery-grid';
 import type { CartQuoteDto } from './dto/cart-quote.dto';
 
@@ -54,6 +55,7 @@ export class CartQuoteService {
     // automatiques. Un code refusé au devis ne peut donc pas passer à la
     // commande, et un code accepté garde la même valeur des deux côtés.
     private readonly promos: PromoCodesService,
+    private readonly credit: ReferralCreditService,
   ) {}
 
   /**
@@ -77,7 +79,13 @@ export class CartQuoteService {
     };
   }
 
-  async quote(dto: CartQuoteDto) {
+  /**
+   * @param userId compte connecté (facultatif) : lui seul peut faire entrer son
+   *   crédit de parrainage dans le devis. Le `phone` du corps de requête ne
+   *   désigne JAMAIS un crédit — il n'est utilisé que pour le quota d'un code
+   *   promo, et un numéro déclaré ne prouve rien.
+   */
+  async quote(dto: CartQuoteDto, userId?: string | null) {
     // Quantités fusionnées par variante : « 2 + 3 » est « 5 », pas deux
     // lignes — même règle que le checkout, même montant affiché.
     const merged = new Map<string, number>();
@@ -164,9 +172,20 @@ export class CartQuoteService {
       phone: dto.phone,
     });
 
+    // ── Crédit de parrainage : lu pour le compte connecté, et lui seul ────
+    //
+    // Le devis reste PUBLIC : un visiteur chiffre son panier sans compte, et il
+    // n'a alors aucun crédit. Un client connecté voit le sien appliqué ici —
+    // exactement le montant que la commande consommera, plafonné de la même
+    // façon (le calcul est partagé, `computeCartTotals`).
+    const soldeCredit = userId ? await this.credit.balance(userId) : 0;
+
     const totals = computeCartTotals(
       lines.map((l) => ({ unitPrice: l.unitPrice, quantity: l.quantity })),
-      { remise: remise.status === 'refused' ? 0 : remise.remise },
+      {
+        remise: remise.status === 'refused' ? 0 : remise.remise,
+        credit: soldeCredit,
+      },
     );
 
     return {
@@ -179,6 +198,12 @@ export class CartQuoteService {
       weightUntilFreeDeliveryKg: weightUntilFreeDelivery(weightKg, grid),
       subtotal: totals.subtotal,
       remise: totals.remise,
+      // Montant de crédit parrainage appliqué à CE panier (= 0 sans compte).
+      credit: totals.credit,
+      // Solde du compte avant application : c'est lui qui permet à l'écran
+      // d'annoncer « il vous restera X » plutôt qu'un montant sans suite.
+      // `0` pour un visiteur — il n'a pas de solde, il n'est pas « à zéro ».
+      creditBalanceXof: soldeCredit,
       // `refused` : le client doit retirer son code (il paie plein tarif).
       // `unavailable` : le calculateur du site n'a pas répondu — le dire est
       // plus honnête que d'afficher un total qui bougera peut-être.

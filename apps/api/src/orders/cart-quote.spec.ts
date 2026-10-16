@@ -6,6 +6,7 @@ jest.mock('../../generated/prisma/client', () => ({
 }), { virtual: true });
 
 import { CartQuoteService } from './cart-quote.service';
+import type { ReferralCreditService } from '../referrals/referral-credit.service';
 import type { PrismaService } from '../prisma/prisma.service';
 import type {
   PromoCodesService,
@@ -70,6 +71,8 @@ function harnais(opts: {
    * pour les codes d'AGRIM et n'interroge le site que pour le reste.
    */
   remise?: Partial<RemiseResolution>;
+  /** Solde de crédit de parrainage du compte connecté (`undefined` = visiteur). */
+  creditBalanceXof?: number;
 } = {}) {
   const db = {
     productVariant: {
@@ -94,10 +97,16 @@ function harnais(opts: {
     ...opts.remise,
   };
   const resolveRemise = jest.fn(async () => resolved);
-  const service = new CartQuoteService({ db } as unknown as PrismaService, {
-    resolveRemise,
-  } as unknown as PromoCodesService);
-  return { service, db, resolveRemise };
+  // Le crédit n'est lu QUE pour un compte connecté : le faux service note
+  // pour quel compte il a été interrogé, ce qui permet d'affirmer qu'un
+  // devis anonyme ne lit jamais de solde.
+  const balance = jest.fn(async () => opts.creditBalanceXof ?? 0);
+  const service = new CartQuoteService(
+    { db } as unknown as PrismaService,
+    { resolveRemise } as unknown as PromoCodesService,
+    { balance } as unknown as ReferralCreditService,
+  );
+  return { service, db, resolveRemise, balance };
 }
 
 /** Code métier attendu : les exceptions NestJS portent le code dans
@@ -382,5 +391,78 @@ describe('CartQuoteService — contract de service', () => {
     });
 
     expect(devis.items[0].stock).toBe(3);
+  });
+});
+
+describe('CartQuoteService — le crédit de parrainage entre dans le devis', () => {
+  it('un devis ANONYME ne lit aucun solde et ne déduit rien', async () => {
+    const { service, balance } = harnais({ variants: [variante({ price: 6000 })] });
+
+    const devis = await service.quote({
+      items: items(['var-1', 1]),
+      city: 'Abidjan',
+    });
+
+    // Le crédit appartient à un COMPTE : sans session, il n'y a rien à lire.
+    // C'est la règle qui empêche qu'un numéro déclaré dans le corps de la
+    // requête donne accès au crédit de quelqu'un d'autre.
+    expect(balance).not.toHaveBeenCalled();
+    expect(devis.credit).toBe(0);
+    expect(devis.creditBalanceXof).toBe(0);
+    expect(devis.total).toBe(6000);
+  });
+
+  it('applique le crédit du compte connecté et annonce le solde restant', async () => {
+    const { service } = harnais({
+      variants: [variante({ price: 6000 })],
+      creditBalanceXof: 1_000,
+    });
+
+    const devis = await service.quote(
+      { items: items(['var-1', 1]), city: 'Abidjan' },
+      'compte-1',
+    );
+
+    expect(devis.subtotal).toBe(6000);
+    expect(devis.credit).toBe(1_000);
+    // Le solde est celui d'AVANT application : l'écran peut dire « il vous
+    // restera 0 » sans relire le compte.
+    expect(devis.creditBalanceXof).toBe(1_000);
+    expect(devis.total).toBe(5000);
+  });
+
+  it('plafonne le crédit au reste à payer : un panier ne devient jamais négatif', async () => {
+    const { service } = harnais({
+      variants: [variante({ price: 1_000 })],
+      creditBalanceXof: 5_000,
+    });
+
+    const devis = await service.quote(
+      { items: items(['var-1', 1]), city: 'Abidjan' },
+      'compte-1',
+    );
+
+    // 1 000 de panier, 5 000 de crédit : 1 000 consommés, PAS 5 000. Le solde
+    // non utilisé reste sur le compte pour la commande suivante.
+    expect(devis.credit).toBe(1_000);
+    expect(devis.total).toBe(0);
+  });
+
+  it('le crédit vient APRÈS la remise, jamais avant', async () => {
+    const { service } = harnais({
+      variants: [variante({ price: 6_000 })],
+      remise: { status: 'ok', remise: 1_000, code: 'BIENVENUE10', local: true },
+      creditBalanceXof: 10_000,
+    });
+
+    const devis = await service.quote(
+      { items: items(['var-1', 1]), city: 'Abidjan' },
+      'compte-1',
+    );
+
+    // 6 000 − 1 000 de remise − 5 000 de crédit (plafonné) = 0, pas −1 000.
+    expect(devis.remise).toBe(1_000);
+    expect(devis.credit).toBe(5_000);
+    expect(devis.total).toBe(0);
   });
 });

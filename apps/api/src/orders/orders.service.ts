@@ -24,6 +24,7 @@ import {
   normalizeOrderPayment,
   resolveOrderPaymentMethod,
 } from '../payments/resolve-method';
+import { ReferralCreditService } from '../referrals/referral-credit.service';
 import { SieveSession, type SieveSessionRow } from '../sieve/model';
 import { SieveScrapeService } from '../sieve/sieve.service';
 import type { CreateOrderDto } from './dto/create-order.dto';
@@ -38,6 +39,9 @@ const orderSelect = {
   subtotal: true,
   deliveryFee: true,
   total: true,
+  // Montant de crédit parrainage consommé : le client doit pouvoir vérifier
+  // que son crédit a bien servi (et combien il en a utilisé).
+  credit: true,
   note: true,
   guestName: true,
   guestPhone: true,
@@ -94,6 +98,9 @@ export class OrdersService {
     private readonly promos: PromoCodesService,
     private readonly sieveSession: SieveSession,
     private readonly sieveScrape: SieveScrapeService,
+    // Le crédit de parrainage n'est pas un moyen de paiement : c'est un avoir
+    // du compte, consommé sous le même verrou que la commande.
+    private readonly credit: ReferralCreditService,
   ) {}
 
   /**
@@ -109,14 +116,24 @@ export class OrdersService {
     userId: string,
     dto: CreateOrderDto,
     guest?: GuestOrderCustomer,
+    creditUserId?: string | null,
   ) {
     // Bascule SSOT (docs/refonte/08, phase 4) : quand cette base possède le
     // stock, la création passe par le checkout transactionnel local — plus
     // aucune réservation distante. Défaut `site` : le comportement établi
     // ci-dessous reste seul en production jusqu'à la bascule assumée.
     if (currentStockMode() === 'local') {
-      return this.checkout.create(userId, dto, guest);
+      return this.checkout.create(userId, dto, guest, creditUserId);
     }
+
+    // ── À QUI appartient le crédit ───────────────────────────────────────
+    //
+    // Sans invité, la commande est passée par un compte connecté : le crédit
+    // est le sien. Avec invité, la commande est rattachée à un profil
+    // TECHNIQUE (solde nul) : le crédit ne peut venir que du compte connecté
+    // qui a passé la commande, désigné par l'appelant — jamais d'un numéro de
+    // téléphone, qui ne prouve rien.
+    const creditOwnerId = guest ? (creditUserId ?? null) : userId;
 
     // Rejouer une requête perdue ne doit jamais créer une seconde commande.
     const replayed = await this.prisma.db.order.findUnique({
@@ -408,10 +425,22 @@ export class OrdersService {
       });
     }
 
-    const totals = computeCartTotals(
-      lines.map((l) => ({ unitPrice: l.unitPrice, quantity: l.quantity })),
-      { remise: remise.remise },
-    );
+    const lignes = lines.map((l) => ({
+      unitPrice: l.unitPrice,
+      quantity: l.quantity,
+    }));
+
+    // ── Crédit de parrainage : proposé ici, consommé SOUS VERROU plus bas ──
+    //
+    // Le solde est lu avant la transaction pour que le montant annoncé au
+    // client soit complet (devis, écran de commande). Il ne fait pas autorité
+    // pour autant : c'est la consommation, dans la transaction, qui décide du
+    // montant réellement débité. Ceinture ici, bretelles là-bas.
+    const soldeCredit = creditOwnerId ? await this.credit.balance(creditOwnerId) : 0;
+    const totals = computeCartTotals(lignes, {
+      remise: remise.remise,
+      credit: soldeCredit,
+    });
 
     // ── Réservation du stock auprès du SITE ───────────────────────────────
     //
@@ -471,6 +500,24 @@ export class OrdersService {
     let created;
     try {
       created = await this.prisma.db.$transaction(async (tx) => {
+        // ── Crédit de parrainage : consommé ICI, sous le verrou de la tx ───
+        //
+        // Le montant visé vient du solde lu plus haut ; `consume` le débite
+        // conditionnellement (jamais plus que le solde réel) et rend ce qu'il a
+        // réellement pris. Le perdant d'une course entre deux commandes du
+        // même compte facture alors la différence, au lieu d'encaisser un
+        // crédit qui n'existait plus.
+        const creditConsomme = creditOwnerId
+          ? await this.credit.consume(tx, creditOwnerId, totals.credit)
+          : 0;
+        const factures =
+          creditConsomme === totals.credit
+            ? totals
+            : computeCartTotals(lignes, {
+                remise: remise.remise,
+                credit: creditConsomme,
+              });
+
         // Compteur annuel atomique : deux commandes simultanées obtiennent des
         // séquences distinctes, donc jamais la même référence.
         const counter = await tx.orderCounter.upsert({
@@ -502,9 +549,14 @@ export class OrdersService {
             userId,
             addressId: dto.addressId,
             status: 'PENDING',
-            subtotal: totals.subtotal,
-            deliveryFee: totals.deliveryFee,
-            total: totals.total,
+            subtotal: factures.subtotal,
+            deliveryFee: factures.deliveryFee,
+            total: factures.total,
+            // Le crédit consommé et son propriétaire sont figés sur la
+            // commande : sans eux, une annulation ne saurait ni combien rendre
+            // ni à qui.
+            credit: factures.credit,
+            creditUserId: creditOwnerId,
             note: dto.note ?? null,
             guestName: guest?.name ?? null,
             guestPhone: guest?.phone ?? null,
@@ -536,7 +588,10 @@ export class OrdersService {
                 // quel compte ce client-là a transféré.
                 methodCode: directMethod?.code ?? null,
                 receivingNumber: directMethod?.receivingNumber ?? null,
-                amount: totals.total,
+                // Le crédit ne réduit pas ce que le client doit en ligne : il
+                // le réduit AVANT, dans le total. Le montant réclamé est donc
+                // le total facturé, sans exception.
+                amount: factures.total,
                 // Le paiement à la livraison — comme le transfert direct — est
                 // en attente ; aucun statut ne peut être décidé par le client.
                 status: 'PENDING',

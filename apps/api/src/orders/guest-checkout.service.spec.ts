@@ -97,7 +97,22 @@ describe('GuestCheckoutService', () => {
         phone: '+2250700050452',
         deliveryLocation: 'Cocody, Riviera 3 — près du rond-point',
       },
+      // Aucun compte connecté : aucun crédit ne peut être consommé, et
+      // surtout pas celui d'un numéro déclaré dans la requête.
+      null,
     );
+  });
+
+  it('transmet le compte CONNECTÉ comme propriétaire du crédit, jamais le profil de livraison', async () => {
+    const { service, orders, guest } = makeHarness();
+
+    await service.create(validDto, 'compte-connecte-1');
+
+    const [, , , creditUserId] = (orders.create as jest.Mock).mock.calls[0];
+    // Le profil technique invité a un solde nul : le crédit vient du compte
+    // qui a passé la commande, désigné par la session — pas du téléphone.
+    expect(creditUserId).toBe('compte-connecte-1');
+    expect(creditUserId).not.toBe(guest.id);
   });
 
   it('prépare le même paiement Mobile Money que le site sans créer de compte', async () => {
@@ -130,6 +145,7 @@ describe('GuestCheckoutService', () => {
         paymentMethodCode: 'ORANGE_MONEY',
       }),
       expect.any(Object),
+      null,
     );
     expect(paymentTokens.issue).toHaveBeenCalledWith('AGR-2026-0001');
   });
