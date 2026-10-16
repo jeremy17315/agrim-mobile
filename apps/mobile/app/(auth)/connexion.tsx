@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import {
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -18,7 +19,7 @@ import { phoneSchema } from '@agrim/contracts';
 import { describeError } from '@/api/errors';
 import { Banner, Button, Icon, Input, Text } from '@/components/ui';
 import { useAuthStore } from '@/store/auth';
-import { palette, radius, spacing } from '@/theme/tokens';
+import { palette, spacing } from '@/theme/tokens';
 
 /**
  * Connexion par numéro de téléphone.
@@ -79,16 +80,17 @@ export default function ConnexionScreen() {
         ]}
         keyboardShouldPersistTaps="handled"
       >
+        {/* Le logo officiel AGRIM, tel que fourni par la marque : l'épi, le
+            lettrage et la signature y figurent déjà, on ne les réécrit donc
+            pas en texte à côté. Aucun habillage ajouté (pas de carré vert,
+            pas d'icône générique) — c'est le visuel de la marque. */}
         <View style={styles.brand}>
-          <View style={styles.logo}>
-            <Icon name="wheat" size={26} color="white" />
-          </View>
-          <Text variant="display" color="greenDeep">
-            AGRIM
-          </Text>
-          <Text variant="caption" color="muted">
-            Développer autrement
-          </Text>
+          <Image
+            source={require('../../assets/logo-agrim.png')}
+            style={styles.logo}
+            resizeMode="contain"
+            accessibilityLabel="Logo AGRIM"
+          />
         </View>
 
         <View style={styles.form}>
@@ -182,15 +184,11 @@ const styles = StyleSheet.create({
     gap: spacing.xxl,
     paddingBottom: spacing.xxxl,
   },
-  brand: { alignItems: 'center', gap: spacing.xs },
+  brand: { alignItems: 'center' },
+  // Rapport 3,02 conservé (1200 × 398) : le logo n'est jamais déformé.
   logo: {
-    width: 62,
-    height: 62,
-    borderRadius: radius.lg,
-    backgroundColor: palette.green,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.sm,
+    width: 212,
+    height: 70,
   },
   form: { gap: spacing.md },
   switch: {

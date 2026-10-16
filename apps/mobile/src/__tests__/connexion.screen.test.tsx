@@ -61,6 +61,16 @@ it('connecte avec des identifiants valides', async () => {
   });
 });
 
+it('affiche le logo officiel AGRIM, et non une icône générique', () => {
+  render(<ConnexionScreen />);
+
+  // Le visuel de la marque porte l'épi, le lettrage et la signature : il est
+  // affiché tel quel, on ne les réécrit pas en texte à côté.
+  expect(screen.getByLabelText('Logo AGRIM')).toBeTruthy();
+  expect(screen.queryByText('AGRIM')).toBeNull();
+  expect(screen.queryByText('Développer autrement')).toBeNull();
+});
+
 it('normalise un numéro saisi avec des espaces', async () => {
   render(<ConnexionScreen />);
 
