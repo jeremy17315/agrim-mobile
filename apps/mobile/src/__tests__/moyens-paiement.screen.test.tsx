@@ -199,6 +199,17 @@ describe('Payer avec ce téléphone (un seul appareil)', () => {
     );
   });
 
+  it('sans lien publié, le QR reste une VOIE DE PAIEMENT expliquée', () => {
+    // C'est la question posée : « à quoi sert le QR si je ne peux pas le
+    // scanner avec ce téléphone ? » Réponse affichée : capture d'écran puis
+    // scan depuis la galerie. Le QR n'est donc pas un ornement.
+    render(<MoyensDePaiementScreen />);
+
+    expect(screen.getByTestId('qr-marchand')).toBeTruthy();
+    expect(screen.getByText(/Depuis ce téléphone, faites une capture/)).toBeTruthy();
+    expect(screen.getByText(/galerie/)).toBeTruthy();
+  });
+
   it('sans lien publié, n’offre aucun bouton d’ouverture', () => {
     render(<MoyensDePaiementScreen />);
 

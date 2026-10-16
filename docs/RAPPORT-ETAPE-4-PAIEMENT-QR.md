@@ -26,6 +26,31 @@ Et votre question, qui a tout remis à plat :
 que par un **autre** appareil. Présenter le QR comme le moyen de payer revenait à proposer un geste
 impossible au cas le plus courant — celui d'un client seul avec son téléphone.
 
+Puis vous avez posé la question qui va au fond :
+
+> **« Si le QR n'est pas utilisable pour payer, à quoi sert de l'afficher ? Les gens vont plutôt
+> utiliser directement leur application, non ? »**
+
+**Oui.** C'est le geste que fera la majorité des clients, et c'est maintenant le premier bouton de
+l'écran, avant le numéro. J'ai vérifié ce qui existe réellement chez vos opérateurs avant de vous
+répondre (sources en §6) :
+
+- **Wave propose bien un lien de paiement**, que le marchand génère depuis son compte Business et
+  envoie par WhatsApp ou SMS. C'est confirmé par la fiche officielle de l'application Wave Business :
+  « Envoyez des liens à vos clients pour recevoir des paiements à distance ». Le format public est
+  `pay.wave.com/m/{identifiant}/c/ci`.
+- **Pour Orange Money et MTN MoMo, les sources se contredisent** : l'un annonce un lien de paiement
+  chez les trois, l'autre affirme qu'Orange n'en a pas. **Je ne tranche pas à votre place** — c'est à
+  vérifier avec eux, et c'est précisément pour ça que le code USSD et le numéro restent affichés.
+- **Le QR n'est pas inutile pour autant** : un QR affiché peut être **capturé, puis scanné depuis la
+  galerie** du même téléphone (Google Lens sur Android, appui long sur l'image dans Photos sur
+  iPhone). Ce n'est pas aussi direct qu'un bouton, mais ça marche avec un seul appareil. La légende
+  du QR l'explique désormais.
+
+⚠️ Dans mon premier rapport j'avais écrit « le QR de Wave contient une adresse » comme un fait
+acquis : c'était une affirmation non vérifiée. Elle se trouve confirmée pour Wave, mais **je ne
+l'affirme pour aucun autre opérateur sans l'avoir lu dans vos comptes**.
+
 ---
 
 ## 2. Ce qui a été implémenté, en clair
@@ -33,9 +58,13 @@ impossible au cas le plus courant — celui d'un client seul avec son téléphon
 | # | Ce qui apparaît | Où |
 |---|---|---|
 | 1 | Écran **« Payer AGRIM »** : un bloc par compte marchand publié (MTN MoMo, Orange Money, Wave) avec le **numéro officiel** (copiable), le **bénéficiaire**, les **instructions** et le **QR marchand** | Nouvel écran `/paiement/moyens`, ouvert depuis **Mon compte** et depuis le **panier** |
-| 2 | **« PAYER AVEC WAVE »** — un bouton qui **ouvre l'application de l'opérateur** avec le compte marchand d'AGRIM déjà rempli | Les deux écrans ci-dessous |
+| 2 | Carte **« PAYER DEPUIS CE TÉLÉPHONE »** : bouton **« PAYER AVEC WAVE »** qui ouvre l'application de l'opérateur sur le compte marchand d'AGRIM | Écran « Payer AGRIM » et écran de paiement |
 | 3 | **Code USSD à composer**, avec le **montant exact déjà écrit** sur une commande, plus un bouton « composer » | Idem |
-| 4 | **Le QR marchand**, pour qui paie depuis un autre écran | Idem |
+| 4 | **Le QR marchand**, pour qui paie depuis un autre écran — ou qui **capture l'écran et scanne depuis sa galerie** | Idem |
+
+L'ordre à l'écran est celui de l'efficacité : **le numéro officiel** (marche partout, même sans
+internet), puis **« PAYER DEPUIS CE TÉLÉPHONE »** (le geste que fera la majorité), puis **le QR**
+(pour les autres cas).
 
 **Quatre règles tenues par le code :**
 
@@ -57,8 +86,10 @@ impossible au cas le plus courant — celui d'un client seul avec son téléphon
   écran, ou en montrant son téléphone à un vendeur. La légende le dit explicitement. Si vous voulez
   plus tard **scanner depuis l'application AGRIM**, c'est un autre travail (caméra native + nouvelle
   version).
-- **Lien puis QR, dans cet ordre** : le geste qui marche pour tout le monde d'abord, la commodité
-  ensuite.
+- **Numéro, puis « payer depuis ce téléphone », puis QR.** Le numéro d'abord parce qu'il marche
+  partout, même sans internet ; le bouton ensuite parce que c'est le geste que fera la majorité ; le
+  QR en dernier, pour les autres cas. Si vous préférez le bouton AVANT le numéro, dites-le : c'est
+  une ligne à déplacer.
 - **Deux entrées, aucune sur l'accueil** : Mon compte et panier, comme la page Contact.
 - **Contenu du QR et lien saisis par AGRIM** (recommandé) : vous me les donnez, je les publie. Un
   dépôt d'image officielle demanderait de rouvrir une route de téléversement que le projet a
@@ -97,7 +128,7 @@ impossible au cas le plus courant — celui d'un client seul avec son téléphon
 | `app/paiement/[reference].tsx` | Les gestes avec le **montant exact** de la commande, puis le QR. |
 | `app/_layout.tsx`, `app/(tabs)/compte.tsx`, `app/(tabs)/panier.tsx` | Route déclarée (publique) + les deux entrées. |
 | `src/api/payments.ts` | Le moyen lu depuis le serveur porte `qrPayload` et `paymentUrl` (défaut `null`). |
-| `src/__tests__/moyens-paiement.screen.test.tsx` | **14 tests** : numéro/bénéficiaire/QR exact, aucun numéro inventé, copie, **ouverture du lien tel quel**, repli sur un QR-lien, QR brut ⇒ aucun bouton, échec d'ouverture annoncé, aucun code avec montant hors commande, code fixe composé, iPhone informé. |
+| `src/__tests__/moyens-paiement.screen.test.tsx` | **15 tests** : numéro/bénéficiaire/QR exact, aucun numéro inventé, copie, **ouverture du lien tel quel**, repli sur un QR-lien, QR brut ⇒ aucun bouton, échec d'ouverture annoncé, aucun code avec montant hors commande, code fixe composé, iPhone informé. |
 | `src/__tests__/paiement.screen.test.tsx` | **11 tests** : QR tel quel, lien ouvert, **code avec le montant réel de la commande**, aucun bouton sans publication. |
 | `src/lib/paymentActions.test.ts` | **Nouveau.** Ouverture réussie / refusée sans planter, iOS exclu. |
 | `package.json`, `package-lock.json` | `react-native-qrcode-svg` (dessine avec `react-native-svg`, déjà présent — rien de natif à reconstruire). |
@@ -118,7 +149,7 @@ vérification. La base est repartie à zéro (0 compte marchand, 0 appareil).
 |---|---|
 | Contrats partagés | **6 suites / 59 tests — 100 %** |
 | API (`npx jest --runInBand`) | **41 suites / 490 tests — 100 %** |
-| Mobile (`npx jest`) | **38 suites / 339 tests — 100 %** |
+| Mobile (`npx jest`) | **38 suites / 340 tests — 100 %** |
 | `npm run lint` (API, mobile, contrats) | **0 erreur, 0 avertissement** |
 | `npm run typecheck` (API, mobile) | **0 erreur** |
 
@@ -156,19 +187,36 @@ Pour que les blocs MTN / Orange / Wave apparaissent, il me faut, **pour chacun d
 
 1. **Le numéro marchand**, tel qu'il doit être composé.
 2. **Le nom du bénéficiaire** à afficher (ex. « AGRIM SARL »).
-3. **Le lien de paiement**, si l'opérateur vous en a fourni un — c'est lui qui donne le bouton
-   « PAYER AVEC … ». Pour **Wave**, c'est souvent l'adresse contenue dans le QR : envoyez-moi la photo
-   du QR, je la lis et je publie les deux d'un coup.
-4. **Le code USSD**, si vous en utilisez un (ex. `#144*1*1*{numéro}*{montant}#`) — dites-moi simplement
-   le code, je place les jetons.
-5. **La photo ou le contenu du QR**, pour qui paiera depuis un autre écran.
+3. **Le lien de paiement** — **c'est le plus important**, c'est lui qui donne le bouton
+   « PAYER AVEC … ». Chez **Wave**, il se génère depuis le compte Business (« Recevoir de l'argent » →
+   « Créer un lien de paiement ») et ressemble à `pay.wave.com/m/…/c/ci`. Envoyez-le-moi tel quel.
+   **Si l'opérateur ne fournit pas de lien**, ce n'est pas un problème : le code USSD et le numéro
+   prennent le relais, et le bouton ne s'affiche pas.
+4. **Le code USSD**, si vous en utilisez un (ex. `#144*1*1*{numéro}*{montant}#`) — dites-moi le code,
+   je place les jetons.
+5. **La photo du QR marchand** — j'en tire le contenu exact, et le lien s'il y est.
 
 Dites-moi aussi si les numéros doivent s'afficher dans un ordre précis (aujourd'hui : MTN, Orange, Wave
 comme vous les avez cités — l'ordre se règle en administration).
 
 ---
 
-## 6. Ce qui n'est PAS dans cette étape
+## 6. Ce que j'ai vérifié — et ce qui reste à vérifier
+
+Vérifié (sources publiques, 16 octobre 2026) :
+
+| Affirmation | Source | État |
+|---|---|---|
+| Wave propose un lien de paiement marchand | Fiche officielle **Wave Business** (Play Store / App Store) : « Envoyez des liens à vos clients pour recevoir des paiements à distance » | **Confirmé** |
+| Le format public est `pay.wave.com/m/…/c/ci` | Page publique d'un marchand Wave | **Confirmé** (format) |
+| Un QR peut être scanné depuis une image enregistrée, sur le même téléphone | Google Lens (Android), appui long dans Photos (iOS 16+) | **Confirmé** |
+| Orange Money et MTN MoMo proposent un lien de paiement | Deux sources se contredisent | **Non tranché** — à vérifier avec eux |
+| iOS n'ouvre pas les codes USSD depuis une application | Comportement système d'Apple | **Confirmé** (d'où l'absence du bouton sur iPhone) |
+
+Ce que je ne peux pas vérifier à votre place : **le contenu exact de VOS comptes marchands** (numéros,
+liens, codes, QR). Je n'en inventerai aucun.
+
+## 7. Ce qui n'est PAS dans cette étape
 
 - **Aucun écran dans l'application pour saisir numéros, liens, codes ou QR.** Ils se publient par
   l'API d'administration. Un écran « Direction → Moyens de paiement » est la suite logique : vous
@@ -181,7 +229,7 @@ comme vous les avez cités — l'ordre se règle en administration).
 
 ---
 
-## 7. Prochaine étape, dès votre validation
+## 8. Prochaine étape, dès votre validation
 
 1. **Publier vos comptes réels** (dès que vous m'envoyez numéros, liens et QR) — immédiat, sans
    nouvelle version de l'application.

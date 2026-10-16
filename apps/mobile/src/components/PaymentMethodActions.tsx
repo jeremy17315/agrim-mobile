@@ -9,7 +9,7 @@ import {
   type DirectPaymentMethod,
 } from '@agrim/contracts';
 
-import { Button, Icon, Text } from '@/components/ui';
+import { Button, Card, Icon, Text } from '@/components/ui';
 import { canDialUssd, openPublishedLink } from '@/lib/paymentActions';
 import { palette, spacing } from '@/theme/tokens';
 
@@ -67,7 +67,12 @@ export function PaymentMethodActions({
   };
 
   return (
-    <View style={styles.bloc}>
+    /* Une carte, comme le numéro : c'est le geste que fera la majorité des
+       clients (ouvrir l'application de leur opérateur), il doit se voir. */
+    <Card style={styles.carte}>
+      <Text variant="micro" color="muted">
+        PAYER DEPUIS CE TÉLÉPHONE
+      </Text>
       {lien ? (
         <>
           <Button
@@ -140,12 +145,12 @@ export function PaymentMethodActions({
           votre transfert.
         </Text>
       ) : null}
-    </View>
+    </Card>
   );
 }
 
 const styles = StyleSheet.create({
-  bloc: { gap: spacing.sm },
+  carte: { gap: spacing.sm },
   code: {
     backgroundColor: palette.bg,
     borderColor: palette.line,
